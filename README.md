@@ -18,7 +18,7 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 | --- | --- | --- |
 | Move box (attached wires stretch) | Shift Box ← ↑ ↓ → | `Alt+Arrows` |
 | Resize box | Size Box ±W ±H | `Alt+Shift+Arrows` |
-| Toggle shape / color tag | `{s}` `{d}` `cBLU` … | |
+| Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
 
 Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
@@ -31,7 +31,22 @@ below into plain ditaa that the Java renderer accepts.
 Standard ditaa, plus a few extensions:
 
 - **Boxes**: `+--+` corners, `/--\` and `\--/` rounded corners; `=` or `:` in a wall, or `{*}`, makes it dashed.
-- **Shapes**: `{s}` storage, `{d}` document, `{io}` parallelogram, `{mo}` trapezoid, `{o}` pill.
+- **Shapes**: `{c}` decision diamond, `{s}` storage, `{d}` document, `{io}` parallelogram, `{mo}` trapezoid, `{o}` pill.
+- **Decision diamonds** (`{c}`, as in ditaa 0.9+, PlantUML and Asciidoctor Diagram): draw an ordinary box with
+  `{c}` inside. Put `+` ports at the centre of each wall and they become the diamond's four vertices, so
+  flowchart branches attach there; a wire hitting the wall anywhere else ends on the slanted edge. Give the
+  box an odd width and height so the centres fall on a character (the `<Diamond?>` stamp does this, and
+  resizing a diamond grows or shrinks it by 2 to keep it that way):
+
+  ```
+         +-------+-------+
+         |               |    no
+  ------>+  Valid? {c}   +------->
+         |               |
+         +-------+-------+
+                 | yes
+                 v
+  ```
 - **Colors**: `cBLU cGRE cYEL cRED cPNK cBLK`, `c#RRGGBB`, ditaa-style `cRGB` (uppercase hex).
 - **Wires**: `-` `|` solid, `=` `:` dashed, spaced `= = = >` dashed, `*` junction dot, `< > ^ v` arrowheads.
 - **Inline border arrows** (extension): an arrowhead can sit directly on a box wall, e.g. `+---^---+`, saving a row.

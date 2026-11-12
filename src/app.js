@@ -89,6 +89,39 @@
                           |
                   retry feedback loop`,
 
+    flowchart: `        /-------------\\
+        |  Start {o}  |
+        \\------+------/
+               |
+               v
+        +------+------+
+        | Read input  |
+        +------+------+
+               |
+               v
+       +-------+-------+           +-------+-------+
+       |               |    no     |  Show error   |
+       +  Valid? {c}   +---------->|  cRED         |
+       |               |           +-------+-------+
+       +-------+-------+                   |
+               | yes                       |
+               v                           |
+       +-------+-------+                   |
+       |               |    no             |
+       +  Cached? {c}  +------+            |
+       |  cYEL         |      |            |
+       +-------+-------+      |            |
+               | yes          v            |
+               |       +------+------+     |
+               |       |   Process   |     |
+               |       |   cGRE      |     |
+               |       +------+------+     |
+               |              |            |
+               v              v            |
+        /------+--------------+-------\\    |
+        |          End {o}            |<---+
+        \\-----------------------------/`,
+
     nested: `+-----------------------------------------------+
 |  Cluster  c#E0E7FF                            |
 |                                               |
@@ -408,6 +441,14 @@
     const { r, c } = getCursorRC();
     applyGridOperationResult(Grid2DEditor.smartStampArrow(editor.value, r, c, activeBox(), type), msg);
   };
+  $('stamp-diamond').addEventListener('click', () => {
+    const { r, c } = getCursorRC();
+    applyGridOperationResult(
+      Grid2DEditor.smartStampBox(editor.value, r, c, Grid2DEditor.diamondTemplate()),
+      'Stamped {c} decision diamond (ports on all 4 vertices)'
+    );
+  });
+
   $('stamp-arrow-right').addEventListener('click', stampArrow('solid-right', 'Attached solid arrow (click +Box+ next)'));
   $('stamp-darrow-right').addEventListener('click', stampArrow('dashed-right', 'Attached dashed arrow (click +Box+ next)'));
   $('stamp-arrow-down').addEventListener('click', stampArrow('solid-down', 'Attached down arrow (click +Box+ next)'));

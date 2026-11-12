@@ -19,16 +19,24 @@
     cBLK: { fill: '#334155', stroke: '#0f172a', text: '#f8fafc', badge: '#475569' }
   };
 
-  const SHAPE_TAGS = { '{s}': 'storage', '{d}': 'document', '{io}': 'io', '{mo}': 'manual', '{o}': 'ellipse' };
+  // {c} = choice / conditional diamond (as in ditaa 0.9+, PlantUML and Asciidoctor Diagram)
+  const SHAPE_TAGS = { '{s}': 'storage', '{d}': 'document', '{io}': 'io', '{mo}': 'manual', '{o}': 'ellipse', '{c}': 'choice' };
   const NAMED_COLOR_RE = /\bc(?:BLU|GRE|YEL|RED|PNK|BLK)\b/;
   // Shape tags, named colors, c#RRGGBB and ditaa-style cRGB (uppercase hex only, so words like "cafe" stay text).
-  const TAG_RE = /\{(?:s|d|io|mo|o|\*)\}|\bc(?:BLU|GRE|YEL|RED|PNK|BLK)\b|\bc#[0-9a-fA-F]{6}\b|\bc[0-9A-F]{3}\b/g;
+  const TAG_RE = /\{(?:s|d|io|mo|o|c|\*)\}|\bc(?:BLU|GRE|YEL|RED|PNK|BLK)\b|\bc#[0-9a-fA-F]{6}\b|\bc[0-9A-F]{3}\b/g;
 
   // "# [D] = Diagram Engine", "# D: Diagram Engine", "[D] = Diagram Engine"
   const LEGEND_RE = /^\s*#?\s*(?:\[([A-Za-z0-9_]+)\]|([A-Za-z0-9_]{1,3}))\s*(?:=|:)\s*(.+)$/;
 
   const isAlnum = (ch) => /[A-Za-z0-9]/.test(ch);
+  // Characters that form horizontal lines / box corners; a column between two of them is continued.
+  const lineCh = (ch) => '-=+*<>/\\.\''.includes(ch);
+  // Two adjacent non-blank characters that are not a line and not next to a vertical line: text.
+  const isWordPair = (L, R) =>
+    L !== ' ' && R !== ' ' && !(lineCh(L) && lineCh(R)) && L !== '|' && L !== ':' && R !== '|' && R !== ':';
   const isVertish = (ch) => ch === '|' || ch === ':' || ch === '+' || ch === '^' || ch === 'v' || ch === '*';
+  // Vertical lines plus rounded corners: a row inserted between two of these continues the line.
+  const vLineCh = (ch) => isVertish(ch) || ch === '/' || ch === '\\' || ch === '.' || ch === "'";
 
   function textColorFor(hex) {
     const n = parseInt(hex.slice(1), 16);
@@ -104,8 +112,20 @@
       const inlineBorderArrows = [];
 
       const boxes = this.detectBoxes(grid, numRows, numCols, cellRole, inlineBorderArrows, legends);
+
+      // Border cells of diamond ({c}) boxes, so wires and arrowheads can end on the slanted edges.
+      const diamondAt = Array.from({ length: numRows }, () => Array(numCols).fill(null));
+      for (const b of boxes) {
+        if (b.shape !== 'choice') continue;
+        for (let r = b.r1; r <= b.r2; r++) {
+          for (let c = b.c1; c <= b.c2; c++) {
+            if (r === b.r1 || r === b.r2 || c === b.c1 || c === b.c2) diamondAt[r][c] = b;
+          }
+        }
+      }
+
       const { wires, arrows, junctions, freeTexts } = this.detectWiresAndText(
-        grid, numRows, numCols, cellRole, inlineBorderArrows
+        grid, numRows, numCols, cellRole, inlineBorderArrows, diamondAt
       );
 
       return { grid, numRows, numCols, boxes, wires, arrows, junctions, freeTexts, legends };
@@ -288,14 +308,50 @@
     }
 
     /** Traces exterior wires, arrowheads, junction dots (*) and free text labels. */
-    detectWiresAndText(grid, numRows, numCols, cellRole, inlineBorderArrows) {
+    /** Pixel geometry of a box as drawn (border lines run through the centres of the border cells). */
+    boxGeom(box) {
+      const x = (box.c1 + 0.5) * this.cellW;
+      const y = (box.r1 + 0.5) * this.cellH;
+      const w = (box.c2 - box.c1) * this.cellW;
+      const h = (box.r2 - box.r1) * this.cellH;
+      return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
+    }
+
+    /**
+     * Where a wire meets a diamond's edge. `side` is the side of the bounding box the wire
+     * arrives at; `along` is the wire's y (left/right) or x (top/bottom) in px. Returns the
+     * x (left/right) or y (top/bottom) of the edge. A wire along the very edge of the bounding
+     * box only touches the diamond at a vertex, so it runs on to that vertex.
+     */
+    diamondEdge(box, side, along) {
+      const { w, h, cx, cy } = this.boxGeom(box);
+      const horiz = side === 'left' || side === 'right';
+      const t = Math.max(0, horiz ? 1 - Math.abs(along - cy) / (h / 2) : 1 - Math.abs(along - cx) / (w / 2));
+      return {
+        left: cx - (w / 2) * t,
+        right: cx + (w / 2) * t,
+        top: cy - (h / 2) * t,
+        bottom: cy + (h / 2) * t
+      }[side];
+    }
+
+    detectWiresAndText(grid, numRows, numCols, cellRole, inlineBorderArrows, diamondAt) {
       const wires = [];
       const arrows = [];
       const junctions = [];
       const freeTexts = [];
+      const diamond = (r, c) => (r >= 0 && r < numRows && c >= 0 && c < numCols ? diamondAt[r][c] : null);
 
       for (const ia of inlineBorderArrows) {
-        arrows.push({ r: ia.r, c: ia.c, dir: ia.dir, inline: true, wall: ia.wall });
+        const a = { r: ia.r, c: ia.c, dir: ia.dir, inline: true, wall: ia.wall };
+        const d = diamond(ia.r, ia.c);
+        if (d) {
+          // Inline arrow on a diamond wall: draw the tip on the slanted edge
+          const ax = (ia.c + 0.5) * this.cellW, ay = (ia.r + 0.5) * this.cellH;
+          if (ia.wall === 'top' || ia.wall === 'bottom') a.tipY = this.diamondEdge(d, ia.wall, ax);
+          else a.tipX = this.diamondEdge(d, ia.wall, ay);
+        }
+        arrows.push(a);
       }
 
       const at = (r, c) => (r >= 0 && r < numRows && c >= 0 && c < numCols ? grid[r][c] : ' ');
@@ -392,8 +448,14 @@
             let x1 = (startC + 0.5) * this.cellW;
             let x2 = (endC + 0.5) * this.cellW;
             const y = (r + 0.5) * this.cellH;
-            if (startC > 0 && cellRole[r][startC - 1] === 'box-border') x1 = (startC - 0.5) * this.cellW;
-            if (endC + 1 < numCols && cellRole[r][endC + 1] === 'box-border') x2 = (endC + 1.5) * this.cellW;
+            if (startC > 0 && cellRole[r][startC - 1] === 'box-border') {
+              const d = diamond(r, startC - 1);
+              x1 = d ? this.diamondEdge(d, 'right', y) : (startC - 0.5) * this.cellW;
+            }
+            if (endC + 1 < numCols && cellRole[r][endC + 1] === 'box-border') {
+              const d = diamond(r, endC + 1);
+              x2 = d ? this.diamondEdge(d, 'left', y) : (endC + 1.5) * this.cellW;
+            }
             if (x2 > x1) wires.push({ x1, y1: y, x2, y2: y, dashed });
           }
           c++;
@@ -421,8 +483,14 @@
             const x = (c + 0.5) * this.cellW;
             let y1 = (startR + 0.5) * this.cellH;
             let y2 = (endR + 0.5) * this.cellH;
-            if (startR > 0 && cellRole[startR - 1][c] === 'box-border') y1 = (startR - 0.5) * this.cellH;
-            if (endR + 1 < numRows && cellRole[endR + 1][c] === 'box-border') y2 = (endR + 1.5) * this.cellH;
+            if (startR > 0 && cellRole[startR - 1][c] === 'box-border') {
+              const d = diamond(startR - 1, c);
+              y1 = d ? this.diamondEdge(d, 'bottom', x) : (startR - 0.5) * this.cellH;
+            }
+            if (endR + 1 < numRows && cellRole[endR + 1][c] === 'box-border') {
+              const d = diamond(endR + 1, c);
+              y2 = d ? this.diamondEdge(d, 'top', x) : (endR + 1.5) * this.cellH;
+            }
             if (y2 > y1) wires.push({ x1: x, y1, x2: x, y2, dashed });
           }
           r++;
@@ -435,6 +503,13 @@
         const d = { '>': [0, 1], '<': [0, -1], '^': [-1, 0], v: [1, 0] }[a.dir];
         const nr = a.r + d[0], nc = a.c + d[1];
         a.touchesBox = nr >= 0 && nr < numRows && nc >= 0 && nc < numCols && cellRole[nr][nc] === 'box-border';
+        const dia = a.touchesBox && diamond(nr, nc);
+        if (dia) {
+          const ax = (a.c + 0.5) * this.cellW, ay = (a.r + 0.5) * this.cellH;
+          const side = { '>': 'left', '<': 'right', '^': 'bottom', v: 'top' }[a.dir];
+          if (a.dir === '>' || a.dir === '<') a.tipX = this.diamondEdge(dia, side, ay);
+          else a.tipY = this.diamondEdge(dia, side, ax);
+        }
       }
 
       // Remaining unclaimed characters become free text labels (single spaces join words)
@@ -544,6 +619,9 @@
         } else if (box.shape === 'manual') {
           const inset = Math.min(14, w * 0.12);
           svg += `<path d="M ${x} ${y} L ${x + w} ${y} L ${x + w - inset} ${y + h} L ${x + inset} ${y + h} Z" ${common}${filterAttr} />`;
+        } else if (box.shape === 'choice') {
+          // Conditional diamond: vertices at the centres of the four walls (the ASCII '+' ports)
+          svg += `<polygon points="${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}" ${common} stroke-linejoin="round"${filterAttr} />`;
         } else if (box.shape === 'ellipse') {
           svg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h / 2}" ry="${h / 2}" ${common}${filterAttr} />`;
         } else {
@@ -577,10 +655,16 @@
             svg += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="${palette.text}" font-family="JetBrains Mono, monospace" font-size="13" font-weight="700">[${esc(box.macroKey)}]</text>`;
           }
         } else if (box.lines.length > 0) {
-          const lineSpacing = 16;
-          const startY = cy - ((box.lines.length - 1) * lineSpacing) / 2 + 4.5;
+          // A diamond's usable width is about half its bounding box: shrink text to fit.
+          let fontSize = 13;
+          if (box.shape === 'choice') {
+            const maxLen = Math.max(...box.lines.map((l) => l.length));
+            fontSize = Math.max(9, Math.min(13, (w * 0.55) / (maxLen * 0.6)));
+          }
+          const lineSpacing = Math.round(fontSize * 1.25);
+          const startY = cy - ((box.lines.length - 1) * lineSpacing) / 2 + fontSize * 0.35;
           box.lines.forEach((line, idx) => {
-            svg += `<text x="${cx}" y="${startY + idx * lineSpacing}" text-anchor="middle" fill="${palette.text}" font-size="13" font-weight="600">${esc(line)}</text>`;
+            svg += `<text x="${cx}" y="${startY + idx * lineSpacing}" text-anchor="middle" fill="${palette.text}" font-size="${+fontSize.toFixed(1)}" font-weight="600">${esc(line)}</text>`;
           });
         }
         svg += `</g>`;
@@ -605,16 +689,16 @@
         const ay = (a.r + 0.5) * this.cellH;
         let pts = '';
         if (a.dir === '>') {
-          const tipX = a.inline ? ax : a.touchesBox ? ax + this.cellW - 1 : ax + 4;
+          const tipX = a.tipX ?? (a.inline ? ax : a.touchesBox ? ax + this.cellW - 1 : ax + 4);
           pts = `${tipX},${ay} ${tipX - 9},${ay - 4.5} ${tipX - 9},${ay + 4.5}`;
         } else if (a.dir === '<') {
-          const tipX = a.inline ? ax : a.touchesBox ? ax - this.cellW + 1 : ax - 4;
+          const tipX = a.tipX ?? (a.inline ? ax : a.touchesBox ? ax - this.cellW + 1 : ax - 4);
           pts = `${tipX},${ay} ${tipX + 9},${ay - 4.5} ${tipX + 9},${ay + 4.5}`;
         } else if (a.dir === '^') {
-          const tipY = a.inline ? ay : a.touchesBox ? ay - this.cellH + 1 : ay - 5;
+          const tipY = a.tipY ?? (a.inline ? ay : a.touchesBox ? ay - this.cellH + 1 : ay - 5);
           pts = `${ax},${tipY} ${ax - 4.5},${tipY + 9.5} ${ax + 4.5},${tipY + 9.5}`;
         } else if (a.dir === 'v') {
-          const tipY = a.inline ? ay : a.touchesBox ? ay + this.cellH - 1 : ay + 5;
+          const tipY = a.tipY ?? (a.inline ? ay : a.touchesBox ? ay + this.cellH - 1 : ay + 5);
           pts = `${ax},${tipY} ${ax - 4.5},${tipY - 9.5} ${ax + 4.5},${tipY - 9.5}`;
         }
         svg += `<polygon points="${pts}" fill="${a.inline ? '#10b981' : wireStroke}" />`;
@@ -724,7 +808,7 @@
         const sp = Array(width).fill(' ');
         for (let c = 0; c < width; c++) {
           const a = at(k, c), b = at(k + 1, c);
-          if (isVertish(a) && isVertish(b)) sp[c] = a === ':' || b === ':' ? ':' : '|';
+          if (vLineCh(a) && vLineCh(b)) sp[c] = a === ':' || b === ':' ? ':' : '|';
         }
         for (const { c, ch } of spacers.get(k)) sp[c] = ch;
         out.splice(k + 1, 0, sp.join('').replace(/\s+$/, ''));
@@ -857,7 +941,13 @@
         const checkC = cursorC - offset;
         if (chAt(cursorR, checkC) === '>') {
           stampC = checkC + 1;
-          stampR = Math.max(0, cursorR - Math.floor(boxH / 2));
+          stampR = cursorR - Math.floor(boxH / 2);
+          if (stampR < 0) {
+            // Not enough room above the arrow to centre the box on it: add blank rows on top
+            for (let i = 0; i < -stampR; i++) state.grid.unshift(Array(state.cols).fill(' '));
+            state.rows += -stampR;
+            stampR = 0;
+          }
           attached = true;
           break;
         }
@@ -952,41 +1042,76 @@
 
     /**
      * Toggles a shape/color tag on a box. Adding a color replaces any other color;
-     * adding a shape replaces any other shape. Tags are written into the first
-     * interior row (bottom-up) with room; the box is never overflowed.
+     * adding a shape replaces any other shape. Only cells the box itself owns are read or
+     * written: boxes nested inside a container keep their own tags. Tags are written into
+     * the first owned run of cells (bottom-up) with room; nothing is ever overflowed.
      */
     static toggleTag(rawText, box, tag) {
       const state = this.toGridState(rawText);
-      const inner = box.c2 - box.c1 - 1;
-      const interiorRows = [];
-      for (let r = box.r1 + 1; r < box.r2; r++) interiorRows.push(r);
-      const read = (r) => state.grid[r].slice(box.c1 + 1, box.c2).join('');
-      const write = (r, s) => {
-        for (let i = 0; i < inner; i++) state.grid[r][box.c1 + 1 + i] = s[i] || ' ';
+      const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
+      const children = new DitaaParser().parse(rawText).boxes.filter(
+        (b) => !same(b, box) && b.r1 >= box.r1 && b.r2 <= box.r2 && b.c1 >= box.c1 && b.c2 <= box.c2
+      );
+      const owned = (r, c) => !children.some((b) => r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2);
+
+      // Maximal runs of owned interior cells, row by row
+      const runs = [];
+      for (let r = box.r1 + 1; r < box.r2; r++) {
+        let c = box.c1 + 1;
+        while (c < box.c2) {
+          if (!owned(r, c)) { c++; continue; }
+          const c0 = c;
+          while (c < box.c2 && owned(r, c)) c++;
+          runs.push({ r, c0, len: c - c0 });
+        }
+      }
+      const read = (run) => state.grid[run.r].slice(run.c0, run.c0 + run.len).join('');
+      const write = (run, str) => {
+        for (let i = 0; i < run.len; i++) state.grid[run.r][run.c0 + i] = str[i] || ' ';
       };
-      const blank = (s, re) => s.replace(re, (m) => ' '.repeat(m.length));
-      const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const blank = (str, re) => str.replace(re, (m) => ' '.repeat(m.length));
+      const esc = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
       const tagSrc = esc(tag) + (/^c/.test(tag) ? '\\b' : '');
-      if (interiorRows.some((r) => new RegExp(tagSrc).test(read(r)))) {
-        interiorRows.forEach((r) => write(r, blank(read(r), new RegExp(tagSrc, 'g'))));
+      if (runs.some((run) => new RegExp(tagSrc).test(read(run)))) {
+        runs.forEach((run) => write(run, blank(read(run), new RegExp(tagSrc, 'g'))));
         return { text: this.fromGridState(state), cursorR: box.r1 + 1, cursorC: box.c1 + 1, msg: `Removed ${tag}` };
       }
 
       const isColor = /^c/.test(tag);
       const conflictRe = isColor
         ? /\bc(?:BLU|GRE|YEL|RED|PNK|BLK)\b|\bc#[0-9a-fA-F]{6}\b|\bc[0-9A-F]{3}\b/g
-        : tag === '{*}' ? null : /\{(?:s|d|io|mo|o)\}/g;
-      if (conflictRe) interiorRows.forEach((r) => write(r, blank(read(r), conflictRe)));
+        : tag === '{*}' ? null : /\{(?:s|d|io|mo|o|c)\}/g;
+      // Replacing a tag keeps its position: try the run that held the old tag first.
+      let preferred = -1;
+      let preferredAt = 0;
+      if (conflictRe) {
+        runs.forEach((run, i) => {
+          const before = read(run);
+          const m = before.match(new RegExp(conflictRe.source));
+          if (m && preferred === -1) { preferred = i; preferredAt = m.index; }
+          write(run, blank(before, conflictRe));
+        });
+      }
+      if (preferred !== -1) {
+        const run = runs[preferred];
+        const str = read(run);
+        if (preferredAt + tag.length <= run.len && str.slice(preferredAt, preferredAt + tag.length).trim() === '') {
+          write(run, str.slice(0, preferredAt) + tag + str.slice(preferredAt + tag.length));
+          return { text: this.fromGridState(state), cursorR: run.r, cursorC: run.c0 + preferredAt, msg: `Applied ${tag}` };
+        }
+      }
 
-      for (let i = interiorRows.length - 1; i >= 0; i--) {
-        const r = interiorRows[i];
-        const body = read(r).replace(/\s+$/, '');
+      const order = runs.map((_, i) => runs.length - 1 - i);
+      if (preferred !== -1) order.unshift(preferred);
+      for (const i of order) {
+        const run = runs[i];
+        const body = read(run).replace(/\s+$/, '');
         const candidates = body.trim() === '' ? ['  ' + tag, ' ' + tag, tag] : [body + ' ' + tag];
-        const fit = candidates.find((s) => s.length <= inner);
+        const fit = candidates.find((str) => str.length <= run.len);
         if (fit) {
-          write(r, fit.padEnd(inner));
-          return { text: this.fromGridState(state), cursorR: r, cursorC: box.c1 + 1, msg: `Applied ${tag}` };
+          write(run, fit.padEnd(run.len));
+          return { text: this.fromGridState(state), cursorR: run.r, cursorC: run.c0, msg: `Applied ${tag}` };
         }
       }
       return { error: `Box too narrow for ${tag} — widen it first (Alt+Shift+→)` };
@@ -996,6 +1121,10 @@
      * Shifts a box by (dr, dc) and stretches/compresses wires attached to its walls.
      */
     static shiftBoxWithElasticWires(rawText, box, dr, dc) {
+      return this.guardOtherBoxes(rawText, this.shiftBoxUnchecked(rawText, box, dr, dc), 'move');
+    }
+
+    static shiftBoxUnchecked(rawText, box, dr, dc) {
       if (!box) return null;
       if (box.r1 + dr < 0 || box.c1 + dc < 0) return { error: 'Box is already at the edge' };
 
@@ -1101,8 +1230,205 @@
      * Resizes a box horizontally (dw = ±2) or vertically (dh = ±1). Shrinking is refused
      * when it would delete label text or a wire port on the wall.
      */
+    /**
+     * A conditional-diamond box: odd width and odd height so the '+' ports at the centre of
+     * each wall sit exactly on the diamond's vertices. The {c} tag shares the middle row with
+     * the label, so the blank rows above and below can be removed to shrink it to 3 rows.
+     *
+     *   +-------+-------+
+     *   |               |
+     *   +  Valid? {c}   +
+     *   |               |
+     *   +-------+-------+
+     */
+    static diamondTemplate(label = 'Decision?') {
+      const text = `${label} {c}`;
+      let inner = Math.max(15, text.length + 4);
+      if (inner % 2 === 0) inner++;
+      const half = (inner - 1) / 2;
+      const wall = '+' + '-'.repeat(half) + '+' + '-'.repeat(half) + '+';
+      const left = Math.floor((inner - text.length) / 2);
+      const blank = '|' + ' '.repeat(inner) + '|';
+      return [wall, blank, '+' + (' '.repeat(left) + text).padEnd(inner) + '+', blank, wall];
+    }
+
+    /**
+     * Inserts a column before index `at` in EVERY row (like growing a box taller inserts a
+     * full-width row), so boxes beside the resized one move as a whole instead of tearing.
+     * Horizontal lines and box walls crossing the column are continued, and an arrowhead
+     * touching something keeps touching it. Returns an error, changing nothing, if the
+     * column would split a word or tag in any row. Rows r1..r2 of `box` are its own.
+     */
+    static insertColumnEverywhere(state, at, box) {
+      const splitAt = this.findTextBoundary(state, at, box);
+      if (splitAt) return { error: `Cannot widen: it would split "${splitAt.word}" on line ${splitAt.r + 1}` };
+      for (let r = 0; r < state.rows; r++) {
+        const row = state.grid[r];
+        while (row.length < at) row.push(' ');
+        const L = row[at - 1] || ' ', R = row[at] || ' ';
+        const fill = L === '=' || R === '=' ? '=' : '-';
+        let ch = ' ';
+        if (r >= box.r1 && r <= box.r2) {
+          if (r === box.r1 || r === box.r2) ch = fill;
+        } else if (L === '>' && R !== ' ' && R !== '-' && R !== '=') {
+          ch = '>'; // keep "-->|" / "-->+" touching: move the arrowhead, extend the wire behind it
+          row[at - 1] = row[at - 2] === '=' ? '=' : '-';
+        } else if (R === '<' && L !== ' ' && L !== '-' && L !== '=') {
+          ch = '<';
+          row[at] = (row[at + 1] || ' ') === '=' ? '=' : '-';
+        } else if (lineCh(L) && lineCh(R)) {
+          ch = fill;
+        }
+        row.splice(at, 0, ch);
+      }
+      state.cols++;
+      for (const row of state.grid) while (row.length < state.cols) row.push(' ');
+      return null;
+    }
+
+    /**
+     * Removes column `at` from EVERY row. Returns an error, changing nothing, if that would
+     * delete text, a corner or a vertical line, or join two words together.
+     */
+    static removeColumnEverywhere(state, at, box) {
+      for (let r = 0; r < state.rows; r++) {
+        const row = state.grid[r];
+        const ch = row[at] || ' ';
+        const L = row[at - 1] || ' ', R = row[at + 1] || ' ';
+        let ok;
+        if (r >= box.r1 && r <= box.r2) {
+          ok = r === box.r1 || r === box.r2 ? ch === '-' || ch === '=' : ch === ' ';
+        } else if (ch === '-' || ch === '=') {
+          ok = !isAlnum(L) && !isAlnum(R);
+        } else {
+          ok = ch === ' ' && !(isWordPair(L, R));
+        }
+        if (!ok) {
+          return { error: `Cannot narrow: ${ch === ' ' ? 'it would join text' : `"${ch}" is in the way`} on line ${r + 1}` };
+        }
+      }
+      for (const row of state.grid) row.splice(at, 1);
+      state.cols--;
+      return null;
+    }
+
+    /** First row where a column inserted before `at` would land inside a word or tag. */
+    static findTextBoundary(state, at, box) {
+      for (let r = 0; r < state.rows; r++) {
+        if (r >= box.r1 && r <= box.r2) continue;
+        const row = state.grid[r];
+        if (isWordPair(row[at - 1] || ' ', row[at] || ' ')) {
+          let a = at - 1, b = at;
+          while (a > 0 && row[a - 1] !== ' ') a--;
+          while (b < row.length && row[b] !== ' ') b++;
+          return { r, word: row.slice(a, b).join('') };
+        }
+      }
+      return null;
+    }
+
+    /** Inserts a full-width row before index `at`, continuing vertical lines that cross it. */
+    static insertRowEverywhere(state, at, box) {
+      const row = Array(state.cols).fill(' ');
+      for (let c = 0; c < state.cols; c++) {
+        const A = state.grid[at - 1][c], B = state.grid[at][c];
+        if (c >= box.c1 && c <= box.c2) {
+          if (c === box.c1 || c === box.c2) row[c] = A === ':' || B === ':' ? ':' : '|';
+        } else if (vLineCh(A) && vLineCh(B)) {
+          row[c] = A === ':' || B === ':' ? ':' : '|';
+        }
+      }
+      state.grid.splice(at, 0, row);
+      state.rows++;
+    }
+
+    /** True if row `at` can be deleted without losing text, corners or box walls. */
+    static canRemoveRow(state, at, box) {
+      for (let c = 0; c < state.cols; c++) {
+        const ch = state.grid[at][c];
+        if (c >= box.c1 && c <= box.c2) {
+          const wallCol = c === box.c1 || c === box.c2;
+          if (wallCol ? !(ch === '|' || ch === ':') : ch !== ' ') return false;
+        } else if (!(ch === ' ' || ch === '|' || ch === ':')) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    /**
+     * Resizes a diamond ({c}) box by 2 columns / 2 rows at a time, adding or removing one on
+     * each side of the centre, across the whole diagram. The centre ports stay on the
+     * diamond's vertices and every wire attached to them keeps its connection.
+     */
+    static resizeDiamond(rawText, box, dw, dh) {
+      const curW = box.c2 - box.c1;
+      const curH = box.r2 - box.r1;
+      if (curW + dw < 4 || curH + dh < 2) return { error: 'Diamond is already at its minimum size' };
+      const state = this.toGridState(rawText, box.r2 + 2, box.c2 + 2);
+
+      if (dw > 0) {
+        const err = this.insertColumnEverywhere(state, box.c1 + 1, box) ||
+          this.insertColumnEverywhere(state, box.c2 + 1, box);
+        if (err) return err;
+      } else if (dw < 0) {
+        const err = this.removeColumnEverywhere(state, box.c2 - 1, box) ||
+          this.removeColumnEverywhere(state, box.c1 + 1, box);
+        if (err) return err;
+      }
+
+      if (dh > 0) {
+        this.insertRowEverywhere(state, box.r1 + 1, box);
+        this.insertRowEverywhere(state, box.r2 + 1, box);
+      } else if (dh < 0) {
+        if (!this.canRemoveRow(state, box.r1 + 1, box) || !this.canRemoveRow(state, box.r2 - 1, box)) {
+          return { error: 'Cannot shorten: text or wires are in the way' };
+        }
+        state.grid.splice(box.r2 - 1, 1);
+        state.grid.splice(box.r1 + 1, 1);
+        state.rows -= 2;
+      }
+
+      return {
+        text: this.fromGridState(state),
+        cursorR: Math.floor((box.r1 + box.r2 + dh) / 2),
+        cursorC: Math.floor((box.c1 + box.c2 + dw) / 2)
+      };
+    }
+
+    /**
+     * Atomic safety net for grid operations on one box: parses the diagram before and after
+     * and refuses the whole operation if any box disappears or any box's label, tags, shape
+     * or legend key changes (the operated box keeps those too; only its size/position may
+     * change). Glyph-level checks can't see that, e.g. removing the last interior column of
+     * a small empty box elsewhere collapses it.
+     */
+    static guardOtherBoxes(rawText, res, verb) {
+      if (!res || res.error) return res;
+      const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
+      const parser = new DitaaParser();
+      const before = parser.parse(rawText).boxes;
+      const remaining = parser.parse(res.text).boxes.map(sig);
+      for (const b of before) {
+        const i = remaining.indexOf(sig(b));
+        if (i === -1) {
+          const name = b.macroKey ? `[${b.macroKey}]` : b.lines[0] ? `"${b.lines[0]}"` : `the box at line ${b.r1 + 1}`;
+          return { error: `Cannot ${verb}: it would break ${name}` };
+        }
+        remaining.splice(i, 1);
+      }
+      if (remaining.length > 0) return { error: `Cannot ${verb}: it would merge lines into a new box` };
+      return res;
+    }
+
     static resizeBox(rawText, box, dw, dh) {
+      const verb = dw > 0 ? 'widen' : dw < 0 ? 'narrow' : dh > 0 ? 'make taller' : 'make shorter';
+      return this.guardOtherBoxes(rawText, this.resizeBoxUnchecked(rawText, box, dw, dh), verb);
+    }
+
+    static resizeBoxUnchecked(rawText, box, dw, dh) {
       if (!box) return null;
+      if (box.shape === 'choice') return this.resizeDiamond(rawText, box, Math.sign(dw) * 2, Math.sign(dh) * 2);
       const curW = box.c2 - box.c1;
       const curH = box.r2 - box.r1;
       if (curW + dw < 3 || curH + dh < 2) return { error: 'Box is already at its minimum size' };
@@ -1110,35 +1436,19 @@
       const state = this.toGridState(rawText, box.r2 + Math.max(0, dh) + 2, box.c2 + Math.max(0, dw) + 2);
       const { grid } = state;
 
-      if (dw < 0) {
-        const k = -dw;
-        for (let r = box.r1; r <= box.r2; r++) {
-          for (let c = box.c2 - k; c < box.c2; c++) {
-            const ch = grid[r][c];
-            const ok = r === box.r1 || r === box.r2 ? ch === '-' || ch === '=' : ch === ' ';
-            if (!ok) return { error: 'Cannot narrow: text or a wire port is in the way' };
-          }
-        }
+      // Widen/narrow by inserting/removing whole columns just inside the right wall, so
+      // neighbouring boxes of any height move as a unit and nothing is torn.
+      for (let i = 0; i < Math.abs(dw); i++) {
+        const err = dw > 0
+          ? this.insertColumnEverywhere(state, box.c2, box)
+          : this.removeColumnEverywhere(state, box.c2 - 1 - i, box);
+        if (err) return err;
       }
       if (dh < 0) {
         const targetR = box.r2 - 1;
         for (let c = box.c1 + 1; c < box.c2; c++) {
           if (grid[targetR][c] !== ' ') return { error: 'Cannot shorten: the bottom row has text' };
         }
-      }
-
-      if (dw !== 0) {
-        for (let r = box.r1; r <= box.r2; r++) {
-          const isTopOrBot = r === box.r1 || r === box.r2;
-          const fillCh = isTopOrBot ? (grid[r][box.c1 + 1] === '=' ? '=' : '-') : ' ';
-          if (dw > 0) {
-            grid[r].splice(box.c2, 0, ...Array(dw).fill(fillCh));
-            state.cols = Math.max(state.cols, grid[r].length);
-          } else {
-            grid[r].splice(box.c2 + dw, -dw);
-          }
-        }
-        for (const row of grid) while (row.length < state.cols) row.push(' ');
       }
 
       if (dh > 0) {
@@ -1151,7 +1461,7 @@
         for (let c = 0; c < state.cols; c++) {
           if (c >= box.c1 && c <= box.c2) continue;
           const a = grid[box.r2 - 1][c], b = grid[box.r2][c];
-          if (isVertish(a) && isVertish(b)) newRow[c] = a === ':' || b === ':' ? ':' : '|';
+          if (vLineCh(a) && vLineCh(b)) newRow[c] = a === ':' || b === ':' ? ':' : '|';
         }
         grid.splice(box.r2, 0, newRow);
         state.rows++;
