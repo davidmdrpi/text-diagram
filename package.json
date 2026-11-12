@@ -1,0 +1,10 @@
+{
+  "name": "text-diagram",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Inline browser editor for ditaa-style ASCII diagrams with live SVG rendering.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  }
+}
