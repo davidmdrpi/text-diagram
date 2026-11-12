@@ -367,3 +367,129 @@ test('stamping a diamond on an arrow near the top adds rows so the arrow still h
   assert.equal(arrow.tipX, p.boxGeom(b).x);
   assert.equal(res.text.split('\n')[res.cursorR][res.cursorC], '+', 'cursor on the right port for chaining');
 });
+
+/* ---------------- Review follow-ups: operations must not damage other boxes ---------------- */
+
+test('regression (PR #3 review): widening a diamond never splits another box label or tag', () => {
+  const text = [
+    '+-------------------------------+',
+    '| ABCDEFGHIJKLMNOPQRSTUVWX cBLU |',
+    '+-------------------------------+',
+    '',
+    ...Grid2DEditor.diamondTemplate('Q?').map((l) => '       ' + l)
+  ].join('\n');
+  assert.equal(parse(text).boxes.length, 2);
+  const dia = parse(text).boxes.find((b) => b.shape === 'choice');
+  const res = Grid2DEditor.resizeBox(text, dia, 2, 0);
+  assert.ok(res.error, 'refused');
+  assert.match(res.error, /ABCDEFGHIJKLMNOPQRSTUVWX/);
+
+  // Same layout with a short label clear of the inserted columns: widening works and the
+  // other box keeps its label and color.
+  const ok = text.replace('ABCDEFGHIJKLMNOPQRSTUVWX cBLU', '         Top cBLU            ');
+  const res2 = Grid2DEditor.resizeBox(ok, parse(ok).boxes.find((b) => b.shape === 'choice'), 2, 0);
+  assert.ok(!res2.error, res2.error);
+  const top = parse(res2.text).boxes.find((b) => b.shape !== 'choice');
+  assert.deepEqual(top.lines, ['Top']);
+  assert.equal(top.colorKey, 'cBLU');
+});
+
+test('regression (PR #3 review): arrows near a diamond corner end on the slanted edge', () => {
+  const text = ' |\n v\n' + Grid2DEditor.diamondTemplate('OK?').join('\n');
+  const p = new DitaaParser();
+  const ast = p.parse(text);
+  const { cx, cy, w, h } = p.boxGeom(ast.boxes[0]);
+  const ax = 1.5 * p.cellW;
+  const edgeY = cy - (h / 2) * (1 - Math.abs(ax - cx) / (w / 2));
+  assert.equal(edgeY, 76.5);
+  assert.equal(ast.arrows[0].tipY, edgeY);
+  assert.equal(ast.wires[0].y2, edgeY);
+});
+
+test('regression (PR #1 review): widening a box keeps a taller neighbour intact, and round-trips', () => {
+  const text = '+---+  +---+\n| A |  | B |\n|   |  |   |\n+---+  |   |\n       +---+';
+  const a = parse(text).boxes.find((b) => b.lines[0] === 'A');
+  const wide = Grid2DEditor.resizeBox(text, a, 2, 0);
+  const ast = parse(wide.text);
+  assert.equal(ast.boxes.length, 2);
+  assert.deepEqual(ast.boxes.map((b) => b.lines).sort(), [['A'], ['B']]);
+  const back = Grid2DEditor.resizeBox(wide.text, ast.boxes.find((b) => b.lines[0] === 'A'), -2, 0);
+  assert.equal(back.text, text);
+});
+
+test('narrowing never joins two words or deletes text in other rows', () => {
+  const text = '+------+\n| A    |\n+------+\n    x y';
+  const res = Grid2DEditor.resizeBox(text, parse(text).boxes[0], -2, 0);
+  assert.ok(res.error);
+  assert.match(res.error, /join text|in the way/);
+});
+
+test('widening keeps an arrowhead touching the box it points at', () => {
+  // The inserted column falls exactly between the '>' and the box it points at
+  const text = '+----+\n| A  |\n+----+\n\n---->+---+\n     |   |\n     +---+';
+  const res = Grid2DEditor.resizeBox(text, parse(text).boxes[0], 2, 0);
+  assert.ok(!res.error, res.error);
+  assert.equal(res.text.split('\n')[4], '------>+---+');
+  const ast = parse(res.text);
+  assert.equal(ast.boxes.length, 2);
+  assert.ok(ast.arrows.find((a) => a.dir === '>').touchesBox);
+});
+
+test('regression (PR #1 review): recolouring a container keeps its children\'s tags', () => {
+  const text = [
+    '+--------------------------+',
+    '| cBLU                     |',
+    '|  +------+   +------+     |',
+    '|  | cRED |   | {s}  |     |',
+    '|  +------+   +------+     |',
+    '+--------------------------+'
+  ].join('\n');
+  const outer = () => parse(text).boxes.find((b) => b.isContainer);
+  const yellow = Grid2DEditor.toggleTag(text, outer(), 'cYEL');
+  const boxes = parse(yellow.text).boxes;
+  assert.deepEqual(boxes.map((b) => b.colorKey), ['cYEL', 'cRED', null]);
+  assert.equal(yellow.text.split('\n')[1], '| cYEL                     |', 'new color replaces the old one in place');
+
+  const doc = Grid2DEditor.toggleTag(text, outer(), '{d}');
+  const after = parse(doc.text).boxes;
+  assert.equal(after.find((b) => b.isContainer).shape, 'document');
+  assert.equal(after.find((b) => !b.isContainer && b.colorKey === null).shape, 'storage', 'child shape untouched');
+  assert.equal(after.find((b) => b.colorKey === 'cRED').shape, 'rect');
+});
+
+test('no resize or tag operation on one box changes any other box (all presets)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
+  const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
+
+  const ops = [
+    ['wider', (t, b) => Grid2DEditor.resizeBox(t, b, 2, 0)],
+    ['narrower', (t, b) => Grid2DEditor.resizeBox(t, b, -2, 0)],
+    ['taller', (t, b) => Grid2DEditor.resizeBox(t, b, 0, 1)],
+    ['shorter', (t, b) => Grid2DEditor.resizeBox(t, b, 0, -1)],
+    ['cRED', (t, b) => Grid2DEditor.toggleTag(t, b, 'cRED')],
+    ['{s}', (t, b) => Grid2DEditor.toggleTag(t, b, '{s}')]
+  ];
+  for (const [name, text] of Object.entries(PRESETS)) {
+    const before = parse(text).boxes;
+    before.forEach((box, i) => {
+      for (const [opName, op] of ops) {
+        const res = op(text, box);
+        if (!res || res.error) continue;
+        const after = parse(res.text).boxes;
+        const others = (list, skip) => list.filter((_, j) => j !== skip).map(sig).sort();
+        // the operated box keeps its position in detection order unless tags changed it
+        const isTag = opName === 'cRED' || opName === '{s}';
+        if (isTag) {
+          assert.equal(after.length, before.length, `${name} box#${i} ${opName}: box count`);
+          assert.deepEqual(others(after, i), others(before, i), `${name} box#${i} ${opName}: other boxes changed`);
+        } else {
+          assert.deepEqual(after.map(sig).sort(), before.map(sig).sort(), `${name} box#${i} ${opName}: boxes changed`);
+        }
+      }
+    });
+  }
+});
