@@ -210,7 +210,7 @@ test('all presets parse and render', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
   const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
   const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
-  const expected = { arch: 7, showcase: 7, microservices: 6, legacy_comparison: 4, nested: 4 };
+  const expected = { arch: 7, showcase: 7, microservices: 6, legacy_comparison: 4, flowchart: 7, nested: 4 };
   for (const [k, text] of Object.entries(PRESETS)) {
     const ast = parse(text);
     assert.equal(ast.boxes.length, expected[k], k);
@@ -218,4 +218,152 @@ test('all presets parse and render', () => {
     for (const mode of ['both', 'inline', 'card', 'off']) render(text, { legendMode: mode });
     DitaaParser.exportStrictLegacyDitaa(text);
   }
+});
+
+/* ---------------- {c} conditional diamonds ---------------- */
+
+const DIAMOND = [
+  '       +-------+-------+',
+  '       |               |',
+  '------>+  Valid? {c}   +------>',
+  '       |               |',
+  '       +-------+-------+',
+  '               |',
+  '               v'
+].join('\n');
+
+test('{c} is parsed as a choice diamond and rendered as a polygon through the wall centres', () => {
+  const p = new DitaaParser();
+  const ast = p.parse(DIAMOND);
+  assert.equal(ast.boxes.length, 1);
+  const b = ast.boxes[0];
+  assert.equal(b.shape, 'choice');
+  assert.deepEqual(b.lines, ['Valid?']);
+  const { x, y, w, h } = p.boxGeom(b);
+  assert.ok(p.renderSVG(ast).includes(`points="${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}"`));
+});
+
+test('wires attached to the centre ports end exactly on the diamond vertices', () => {
+  const p = new DitaaParser();
+  const ast = p.parse(DIAMOND);
+  const { x, y, w, h, cx, cy } = p.boxGeom(ast.boxes[0]);
+  const horiz = ast.wires.filter((wi) => wi.y1 === wi.y2);
+  assert.ok(horiz.some((wi) => wi.y1 === cy && wi.x2 === x), 'incoming wire ends on the left vertex');
+  assert.ok(horiz.some((wi) => wi.y1 === cy && wi.x1 === x + w), 'outgoing wire starts on the right vertex');
+  const vert = ast.wires.find((wi) => wi.x1 === wi.x2);
+  assert.equal(vert.x1, cx);
+  assert.equal(vert.y1, y + h, 'down wire starts on the bottom vertex');
+  const arrowIn = ast.arrows.find((a) => a.dir === '>' && a.c === 6);
+  assert.equal(arrowIn.tipX, x, 'arrow tip on the left vertex');
+});
+
+test('a wire hitting a diamond off-centre is clipped to the slanted edge', () => {
+  const text = [
+    '    +-------+-------+',
+    '--->|               |',
+    '    +    Q? {c}     +',
+    '    |               |',
+    '    +-------+-------+'
+  ].join('\n');
+  const p = new DitaaParser();
+  const ast = p.parse(text);
+  const { x, cx } = p.boxGeom(ast.boxes[0]);
+  const a = ast.arrows.find((ar) => ar.dir === '>');
+  assert.ok(a.tipX > x && a.tipX < cx, `tip ${a.tipX} should be on the edge between ${x} and ${cx}`);
+  const wire = ast.wires.find((wi) => wi.y1 === wi.y2);
+  assert.equal(wire.x2, a.tipX);
+});
+
+test('diamondTemplate has odd dimensions with ports at the wall centres', () => {
+  for (const label of ['Decision?', 'Is the user logged in?']) {
+    const t = Grid2DEditor.diamondTemplate(label);
+    const W = t[0].length;
+    assert.equal(t.length, 5);
+    assert.equal(W % 2, 1, label);
+    assert.ok(t.every((l) => l.length === W), label);
+    const mid = (W - 1) / 2;
+    assert.equal(t[0][mid], '+');
+    assert.equal(t[4][mid], '+');
+    assert.equal(t[2][0], '+');
+    assert.equal(t[2][W - 1], '+');
+    const b = parse(t.join('\n')).boxes[0];
+    assert.equal(b.shape, 'choice', label);
+    assert.deepEqual(b.lines, [label]);
+  }
+});
+
+test('stamping a diamond on an arrow tip puts the arrow on the left vertex', () => {
+  const res = Grid2DEditor.smartStampBox('\n\n------>', 2, 7, Grid2DEditor.diamondTemplate('Ok?'));
+  const p = new DitaaParser();
+  const ast = p.parse(res.text);
+  assert.equal(ast.boxes[0].shape, 'choice');
+  assert.equal(ast.arrows[0].tipX, p.boxGeom(ast.boxes[0]).x);
+});
+
+test('resizing a diamond keeps ports on the vertices and wires attached, and round-trips', () => {
+  let text = DIAMOND;
+  const steps = [[2, 0], [0, 1], [0, -1], [-2, 0]];
+  for (const [dw, dh] of steps) {
+    const box = parse(text).boxes[0];
+    const res = Grid2DEditor.resizeBox(text, box, dw, dh);
+    assert.ok(!res.error, res.error);
+    text = res.text;
+    const p = new DitaaParser();
+    const ast = p.parse(text);
+    const b = ast.boxes[0];
+    assert.equal((b.c2 - b.c1) % 2, 0, 'odd width');
+    assert.equal((b.r2 - b.r1) % 2, 0, 'odd height');
+    const lines = text.split('\n');
+    const midR = (b.r1 + b.r2) / 2, midC = (b.c1 + b.c2) / 2;
+    assert.equal(lines[b.r1][midC], '+', 'top port centred');
+    assert.equal(lines[b.r2][midC], '+', 'bottom port centred');
+    assert.equal(lines[midR][b.c1], '+', 'left port centred');
+    assert.equal(lines[midR][b.c2], '+', 'right port centred');
+    assert.equal(ast.wires.length, 3, `all wires still attached after ${dw},${dh}`);
+  }
+  assert.equal(text, DIAMOND);
+});
+
+test('a diamond refuses to shrink through its label, and shrinks to 3 rows when it can', () => {
+  const box = parse(DIAMOND).boxes[0];
+  const res = Grid2DEditor.resizeBox(DIAMOND, box, 0, -1);
+  assert.ok(!res.error);
+  const small = parse(res.text).boxes[0];
+  assert.equal(small.r2 - small.r1, 2);
+  assert.ok(Grid2DEditor.resizeBox(res.text, small, 0, -1).error);
+  let text = DIAMOND;
+  let res2;
+  for (let i = 0; i < 10; i++) {
+    res2 = Grid2DEditor.resizeBox(text, parse(text).boxes[0], -2, 0);
+    if (res2.error) break;
+    text = res2.text;
+    assert.deepEqual(parse(text).boxes[0].lines, ['Valid?'], 'label intact');
+  }
+  assert.ok(res2.error, 'narrowing stops before cutting the label');
+  assert.match(text, /\+Valid\? \{c\} ?\+/);
+});
+
+test('{c} tag button replaces other shapes and toggles off', () => {
+  const text = '+--------------+\n|  Check {s}   |\n+--------------+';
+  const res = Grid2DEditor.toggleTag(text, parse(text).boxes[0], '{c}');
+  const b = parse(res.text).boxes[0];
+  assert.equal(b.shape, 'choice');
+  assert.ok(!res.text.includes('{s}'));
+  assert.equal(parse(Grid2DEditor.toggleTag(res.text, b, '{c}').text).boxes[0].shape, 'rect');
+});
+
+test('legacy export keeps {c} (supported by ditaa 0.9+)', () => {
+  const res = DitaaParser.exportStrictLegacyDitaa(DIAMOND);
+  assert.equal(res.sanitizedText, DIAMOND);
+});
+
+test('stamping a diamond on an arrow near the top adds rows so the arrow still hits the vertex', () => {
+  const p = new DitaaParser();
+  const res = Grid2DEditor.smartStampBox('------>', 0, 7, Grid2DEditor.diamondTemplate('Ok?'));
+  const ast = p.parse(res.text);
+  const b = ast.boxes[0];
+  const arrow = ast.arrows.find((a) => a.dir === '>');
+  assert.equal(arrow.r, (b.r1 + b.r2) / 2, 'arrow is on the middle row');
+  assert.equal(arrow.tipX, p.boxGeom(b).x);
+  assert.equal(res.text.split('\n')[res.cursorR][res.cursorC], '+', 'cursor on the right port for chaining');
 });

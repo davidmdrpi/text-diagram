@@ -19,10 +19,11 @@
     cBLK: { fill: '#334155', stroke: '#0f172a', text: '#f8fafc', badge: '#475569' }
   };
 
-  const SHAPE_TAGS = { '{s}': 'storage', '{d}': 'document', '{io}': 'io', '{mo}': 'manual', '{o}': 'ellipse' };
+  // {c} = choice / conditional diamond (as in ditaa 0.9+, PlantUML and Asciidoctor Diagram)
+  const SHAPE_TAGS = { '{s}': 'storage', '{d}': 'document', '{io}': 'io', '{mo}': 'manual', '{o}': 'ellipse', '{c}': 'choice' };
   const NAMED_COLOR_RE = /\bc(?:BLU|GRE|YEL|RED|PNK|BLK)\b/;
   // Shape tags, named colors, c#RRGGBB and ditaa-style cRGB (uppercase hex only, so words like "cafe" stay text).
-  const TAG_RE = /\{(?:s|d|io|mo|o|\*)\}|\bc(?:BLU|GRE|YEL|RED|PNK|BLK)\b|\bc#[0-9a-fA-F]{6}\b|\bc[0-9A-F]{3}\b/g;
+  const TAG_RE = /\{(?:s|d|io|mo|o|c|\*)\}|\bc(?:BLU|GRE|YEL|RED|PNK|BLK)\b|\bc#[0-9a-fA-F]{6}\b|\bc[0-9A-F]{3}\b/g;
 
   // "# [D] = Diagram Engine", "# D: Diagram Engine", "[D] = Diagram Engine"
   const LEGEND_RE = /^\s*#?\s*(?:\[([A-Za-z0-9_]+)\]|([A-Za-z0-9_]{1,3}))\s*(?:=|:)\s*(.+)$/;
@@ -104,8 +105,20 @@
       const inlineBorderArrows = [];
 
       const boxes = this.detectBoxes(grid, numRows, numCols, cellRole, inlineBorderArrows, legends);
+
+      // Border cells of diamond ({c}) boxes, so wires and arrowheads can end on the slanted edges.
+      const diamondAt = Array.from({ length: numRows }, () => Array(numCols).fill(null));
+      for (const b of boxes) {
+        if (b.shape !== 'choice') continue;
+        for (let r = b.r1; r <= b.r2; r++) {
+          for (let c = b.c1; c <= b.c2; c++) {
+            if (r === b.r1 || r === b.r2 || c === b.c1 || c === b.c2) diamondAt[r][c] = b;
+          }
+        }
+      }
+
       const { wires, arrows, junctions, freeTexts } = this.detectWiresAndText(
-        grid, numRows, numCols, cellRole, inlineBorderArrows
+        grid, numRows, numCols, cellRole, inlineBorderArrows, diamondAt
       );
 
       return { grid, numRows, numCols, boxes, wires, arrows, junctions, freeTexts, legends };
@@ -288,14 +301,51 @@
     }
 
     /** Traces exterior wires, arrowheads, junction dots (*) and free text labels. */
-    detectWiresAndText(grid, numRows, numCols, cellRole, inlineBorderArrows) {
+    /** Pixel geometry of a box as drawn (border lines run through the centres of the border cells). */
+    boxGeom(box) {
+      const x = (box.c1 + 0.5) * this.cellW;
+      const y = (box.r1 + 0.5) * this.cellH;
+      const w = (box.c2 - box.c1) * this.cellW;
+      const h = (box.r2 - box.r1) * this.cellH;
+      return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
+    }
+
+    /**
+     * Where a wire meets a diamond's edge. `side` is the side of the bounding box the wire
+     * arrives at; `along` is the wire's y (left/right) or x (top/bottom) in px. Returns the
+     * x (left/right) or y (top/bottom) of the edge. Near the corners of the bounding box the
+     * diamond edge is too far away, so the wire keeps ending on the box outline there.
+     */
+    diamondEdge(box, side, along) {
+      const { x, y, w, h, cx, cy } = this.boxGeom(box);
+      const horiz = side === 'left' || side === 'right';
+      const t = horiz ? 1 - Math.abs(along - cy) / (h / 2) : 1 - Math.abs(along - cx) / (w / 2);
+      if (t < 0.2) return { left: x, right: x + w, top: y, bottom: y + h }[side];
+      return {
+        left: cx - (w / 2) * t,
+        right: cx + (w / 2) * t,
+        top: cy - (h / 2) * t,
+        bottom: cy + (h / 2) * t
+      }[side];
+    }
+
+    detectWiresAndText(grid, numRows, numCols, cellRole, inlineBorderArrows, diamondAt) {
       const wires = [];
       const arrows = [];
       const junctions = [];
       const freeTexts = [];
+      const diamond = (r, c) => (r >= 0 && r < numRows && c >= 0 && c < numCols ? diamondAt[r][c] : null);
 
       for (const ia of inlineBorderArrows) {
-        arrows.push({ r: ia.r, c: ia.c, dir: ia.dir, inline: true, wall: ia.wall });
+        const a = { r: ia.r, c: ia.c, dir: ia.dir, inline: true, wall: ia.wall };
+        const d = diamond(ia.r, ia.c);
+        if (d) {
+          // Inline arrow on a diamond wall: draw the tip on the slanted edge
+          const ax = (ia.c + 0.5) * this.cellW, ay = (ia.r + 0.5) * this.cellH;
+          if (ia.wall === 'top' || ia.wall === 'bottom') a.tipY = this.diamondEdge(d, ia.wall, ax);
+          else a.tipX = this.diamondEdge(d, ia.wall, ay);
+        }
+        arrows.push(a);
       }
 
       const at = (r, c) => (r >= 0 && r < numRows && c >= 0 && c < numCols ? grid[r][c] : ' ');
@@ -392,8 +442,14 @@
             let x1 = (startC + 0.5) * this.cellW;
             let x2 = (endC + 0.5) * this.cellW;
             const y = (r + 0.5) * this.cellH;
-            if (startC > 0 && cellRole[r][startC - 1] === 'box-border') x1 = (startC - 0.5) * this.cellW;
-            if (endC + 1 < numCols && cellRole[r][endC + 1] === 'box-border') x2 = (endC + 1.5) * this.cellW;
+            if (startC > 0 && cellRole[r][startC - 1] === 'box-border') {
+              const d = diamond(r, startC - 1);
+              x1 = d ? this.diamondEdge(d, 'right', y) : (startC - 0.5) * this.cellW;
+            }
+            if (endC + 1 < numCols && cellRole[r][endC + 1] === 'box-border') {
+              const d = diamond(r, endC + 1);
+              x2 = d ? this.diamondEdge(d, 'left', y) : (endC + 1.5) * this.cellW;
+            }
             if (x2 > x1) wires.push({ x1, y1: y, x2, y2: y, dashed });
           }
           c++;
@@ -421,8 +477,14 @@
             const x = (c + 0.5) * this.cellW;
             let y1 = (startR + 0.5) * this.cellH;
             let y2 = (endR + 0.5) * this.cellH;
-            if (startR > 0 && cellRole[startR - 1][c] === 'box-border') y1 = (startR - 0.5) * this.cellH;
-            if (endR + 1 < numRows && cellRole[endR + 1][c] === 'box-border') y2 = (endR + 1.5) * this.cellH;
+            if (startR > 0 && cellRole[startR - 1][c] === 'box-border') {
+              const d = diamond(startR - 1, c);
+              y1 = d ? this.diamondEdge(d, 'bottom', x) : (startR - 0.5) * this.cellH;
+            }
+            if (endR + 1 < numRows && cellRole[endR + 1][c] === 'box-border') {
+              const d = diamond(endR + 1, c);
+              y2 = d ? this.diamondEdge(d, 'top', x) : (endR + 1.5) * this.cellH;
+            }
             if (y2 > y1) wires.push({ x1: x, y1, x2: x, y2, dashed });
           }
           r++;
@@ -435,6 +497,13 @@
         const d = { '>': [0, 1], '<': [0, -1], '^': [-1, 0], v: [1, 0] }[a.dir];
         const nr = a.r + d[0], nc = a.c + d[1];
         a.touchesBox = nr >= 0 && nr < numRows && nc >= 0 && nc < numCols && cellRole[nr][nc] === 'box-border';
+        const dia = a.touchesBox && diamond(nr, nc);
+        if (dia) {
+          const ax = (a.c + 0.5) * this.cellW, ay = (a.r + 0.5) * this.cellH;
+          const side = { '>': 'left', '<': 'right', '^': 'bottom', v: 'top' }[a.dir];
+          if (a.dir === '>' || a.dir === '<') a.tipX = this.diamondEdge(dia, side, ay);
+          else a.tipY = this.diamondEdge(dia, side, ax);
+        }
       }
 
       // Remaining unclaimed characters become free text labels (single spaces join words)
@@ -544,6 +613,9 @@
         } else if (box.shape === 'manual') {
           const inset = Math.min(14, w * 0.12);
           svg += `<path d="M ${x} ${y} L ${x + w} ${y} L ${x + w - inset} ${y + h} L ${x + inset} ${y + h} Z" ${common}${filterAttr} />`;
+        } else if (box.shape === 'choice') {
+          // Conditional diamond: vertices at the centres of the four walls (the ASCII '+' ports)
+          svg += `<polygon points="${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}" ${common} stroke-linejoin="round"${filterAttr} />`;
         } else if (box.shape === 'ellipse') {
           svg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h / 2}" ry="${h / 2}" ${common}${filterAttr} />`;
         } else {
@@ -577,10 +649,16 @@
             svg += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="${palette.text}" font-family="JetBrains Mono, monospace" font-size="13" font-weight="700">[${esc(box.macroKey)}]</text>`;
           }
         } else if (box.lines.length > 0) {
-          const lineSpacing = 16;
-          const startY = cy - ((box.lines.length - 1) * lineSpacing) / 2 + 4.5;
+          // A diamond's usable width is about half its bounding box: shrink text to fit.
+          let fontSize = 13;
+          if (box.shape === 'choice') {
+            const maxLen = Math.max(...box.lines.map((l) => l.length));
+            fontSize = Math.max(9, Math.min(13, (w * 0.55) / (maxLen * 0.6)));
+          }
+          const lineSpacing = Math.round(fontSize * 1.25);
+          const startY = cy - ((box.lines.length - 1) * lineSpacing) / 2 + fontSize * 0.35;
           box.lines.forEach((line, idx) => {
-            svg += `<text x="${cx}" y="${startY + idx * lineSpacing}" text-anchor="middle" fill="${palette.text}" font-size="13" font-weight="600">${esc(line)}</text>`;
+            svg += `<text x="${cx}" y="${startY + idx * lineSpacing}" text-anchor="middle" fill="${palette.text}" font-size="${+fontSize.toFixed(1)}" font-weight="600">${esc(line)}</text>`;
           });
         }
         svg += `</g>`;
@@ -605,16 +683,16 @@
         const ay = (a.r + 0.5) * this.cellH;
         let pts = '';
         if (a.dir === '>') {
-          const tipX = a.inline ? ax : a.touchesBox ? ax + this.cellW - 1 : ax + 4;
+          const tipX = a.tipX ?? (a.inline ? ax : a.touchesBox ? ax + this.cellW - 1 : ax + 4);
           pts = `${tipX},${ay} ${tipX - 9},${ay - 4.5} ${tipX - 9},${ay + 4.5}`;
         } else if (a.dir === '<') {
-          const tipX = a.inline ? ax : a.touchesBox ? ax - this.cellW + 1 : ax - 4;
+          const tipX = a.tipX ?? (a.inline ? ax : a.touchesBox ? ax - this.cellW + 1 : ax - 4);
           pts = `${tipX},${ay} ${tipX + 9},${ay - 4.5} ${tipX + 9},${ay + 4.5}`;
         } else if (a.dir === '^') {
-          const tipY = a.inline ? ay : a.touchesBox ? ay - this.cellH + 1 : ay - 5;
+          const tipY = a.tipY ?? (a.inline ? ay : a.touchesBox ? ay - this.cellH + 1 : ay - 5);
           pts = `${ax},${tipY} ${ax - 4.5},${tipY + 9.5} ${ax + 4.5},${tipY + 9.5}`;
         } else if (a.dir === 'v') {
-          const tipY = a.inline ? ay : a.touchesBox ? ay + this.cellH - 1 : ay + 5;
+          const tipY = a.tipY ?? (a.inline ? ay : a.touchesBox ? ay + this.cellH - 1 : ay + 5);
           pts = `${ax},${tipY} ${ax - 4.5},${tipY - 9.5} ${ax + 4.5},${tipY - 9.5}`;
         }
         svg += `<polygon points="${pts}" fill="${a.inline ? '#10b981' : wireStroke}" />`;
@@ -857,7 +935,13 @@
         const checkC = cursorC - offset;
         if (chAt(cursorR, checkC) === '>') {
           stampC = checkC + 1;
-          stampR = Math.max(0, cursorR - Math.floor(boxH / 2));
+          stampR = cursorR - Math.floor(boxH / 2);
+          if (stampR < 0) {
+            // Not enough room above the arrow to centre the box on it: add blank rows on top
+            for (let i = 0; i < -stampR; i++) state.grid.unshift(Array(state.cols).fill(' '));
+            state.rows += -stampR;
+            stampR = 0;
+          }
           attached = true;
           break;
         }
@@ -976,7 +1060,7 @@
       const isColor = /^c/.test(tag);
       const conflictRe = isColor
         ? /\bc(?:BLU|GRE|YEL|RED|PNK|BLK)\b|\bc#[0-9a-fA-F]{6}\b|\bc[0-9A-F]{3}\b/g
-        : tag === '{*}' ? null : /\{(?:s|d|io|mo|o)\}/g;
+        : tag === '{*}' ? null : /\{(?:s|d|io|mo|o|c)\}/g;
       if (conflictRe) interiorRows.forEach((r) => write(r, blank(read(r), conflictRe)));
 
       for (let i = interiorRows.length - 1; i >= 0; i--) {
@@ -1101,8 +1185,137 @@
      * Resizes a box horizontally (dw = ±2) or vertically (dh = ±1). Shrinking is refused
      * when it would delete label text or a wire port on the wall.
      */
+    /**
+     * A conditional-diamond box: odd width and odd height so the '+' ports at the centre of
+     * each wall sit exactly on the diamond's vertices. The {c} tag shares the middle row with
+     * the label, so the blank rows above and below can be removed to shrink it to 3 rows.
+     *
+     *   +-------+-------+
+     *   |               |
+     *   +  Valid? {c}   +
+     *   |               |
+     *   +-------+-------+
+     */
+    static diamondTemplate(label = 'Decision?') {
+      const text = `${label} {c}`;
+      let inner = Math.max(15, text.length + 4);
+      if (inner % 2 === 0) inner++;
+      const half = (inner - 1) / 2;
+      const wall = '+' + '-'.repeat(half) + '+' + '-'.repeat(half) + '+';
+      const left = Math.floor((inner - text.length) / 2);
+      const blank = '|' + ' '.repeat(inner) + '|';
+      return [wall, blank, '+' + (' '.repeat(left) + text).padEnd(inner) + '+', blank, wall];
+    }
+
+    /** Inserts a column before index `at` in EVERY row, continuing horizontal lines that cross it. */
+    static insertColumnEverywhere(state, at, box) {
+      const horizish = (ch) => ch === '-' || ch === '=' || ch === '+' || ch === '*' || ch === '<' || ch === '>';
+      for (let r = 0; r < state.rows; r++) {
+        const row = state.grid[r];
+        while (row.length < at) row.push(' ');
+        const L = row[at - 1] || ' ', R = row[at] || ' ';
+        let ch = ' ';
+        if (r >= box.r1 && r <= box.r2) {
+          if (r === box.r1 || r === box.r2) ch = L === '=' || R === '=' ? '=' : '-';
+        } else if (horizish(L) && horizish(R)) {
+          ch = L === '=' || R === '=' ? '=' : '-';
+        }
+        row.splice(at, 0, ch);
+      }
+      state.cols++;
+      for (const row of state.grid) while (row.length < state.cols) row.push(' ');
+    }
+
+    /** Inserts a full-width row before index `at`, continuing vertical lines that cross it. */
+    static insertRowEverywhere(state, at, box) {
+      const row = Array(state.cols).fill(' ');
+      for (let c = 0; c < state.cols; c++) {
+        const A = state.grid[at - 1][c], B = state.grid[at][c];
+        if (c >= box.c1 && c <= box.c2) {
+          if (c === box.c1 || c === box.c2) row[c] = A === ':' || B === ':' ? ':' : '|';
+        } else if (isVertish(A) && isVertish(B)) {
+          row[c] = A === ':' || B === ':' ? ':' : '|';
+        }
+      }
+      state.grid.splice(at, 0, row);
+      state.rows++;
+    }
+
+    /** True if column `at` can be deleted without losing text, corners or box walls. */
+    static canRemoveColumn(state, at, box) {
+      for (let r = 0; r < state.rows; r++) {
+        const ch = state.grid[r][at] || ' ';
+        if (r >= box.r1 && r <= box.r2) {
+          const wallRow = r === box.r1 || r === box.r2;
+          if (wallRow ? !(ch === '-' || ch === '=') : ch !== ' ') return false;
+        } else if (ch === '-' || ch === '=') {
+          if (isAlnum(state.grid[r][at - 1] || ' ') || isAlnum(state.grid[r][at + 1] || ' ')) return false;
+        } else if (ch !== ' ') {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    /** True if row `at` can be deleted without losing text, corners or box walls. */
+    static canRemoveRow(state, at, box) {
+      for (let c = 0; c < state.cols; c++) {
+        const ch = state.grid[at][c];
+        if (c >= box.c1 && c <= box.c2) {
+          const wallCol = c === box.c1 || c === box.c2;
+          if (wallCol ? !(ch === '|' || ch === ':') : ch !== ' ') return false;
+        } else if (!(ch === ' ' || ch === '|' || ch === ':')) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    /**
+     * Resizes a diamond ({c}) box by 2 columns / 2 rows at a time, adding or removing one on
+     * each side of the centre, across the whole diagram. The centre ports stay on the
+     * diamond's vertices and every wire attached to them keeps its connection.
+     */
+    static resizeDiamond(rawText, box, dw, dh) {
+      const curW = box.c2 - box.c1;
+      const curH = box.r2 - box.r1;
+      if (curW + dw < 4 || curH + dh < 2) return { error: 'Diamond is already at its minimum size' };
+      const state = this.toGridState(rawText, box.r2 + 2, box.c2 + 2);
+
+      if (dw > 0) {
+        this.insertColumnEverywhere(state, box.c1 + 1, box);
+        this.insertColumnEverywhere(state, box.c2 + 1, box);
+      } else if (dw < 0) {
+        if (!this.canRemoveColumn(state, box.c1 + 1, box) || !this.canRemoveColumn(state, box.c2 - 1, box)) {
+          return { error: 'Cannot narrow: text or wires are in the way' };
+        }
+        for (const row of state.grid) row.splice(box.c2 - 1, 1);
+        for (const row of state.grid) row.splice(box.c1 + 1, 1);
+        state.cols -= 2;
+      }
+
+      if (dh > 0) {
+        this.insertRowEverywhere(state, box.r1 + 1, box);
+        this.insertRowEverywhere(state, box.r2 + 1, box);
+      } else if (dh < 0) {
+        if (!this.canRemoveRow(state, box.r1 + 1, box) || !this.canRemoveRow(state, box.r2 - 1, box)) {
+          return { error: 'Cannot shorten: text or wires are in the way' };
+        }
+        state.grid.splice(box.r2 - 1, 1);
+        state.grid.splice(box.r1 + 1, 1);
+        state.rows -= 2;
+      }
+
+      return {
+        text: this.fromGridState(state),
+        cursorR: Math.floor((box.r1 + box.r2 + dh) / 2),
+        cursorC: Math.floor((box.c1 + box.c2 + dw) / 2)
+      };
+    }
+
     static resizeBox(rawText, box, dw, dh) {
       if (!box) return null;
+      if (box.shape === 'choice') return this.resizeDiamond(rawText, box, Math.sign(dw) * 2, Math.sign(dh) * 2);
       const curW = box.c2 - box.c1;
       const curH = box.r2 - box.r1;
       if (curW + dw < 3 || curH + dh < 2) return { error: 'Box is already at its minimum size' };
