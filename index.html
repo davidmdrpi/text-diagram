@@ -1,0 +1,2166 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ditaa Studio Pro — Live ASCII-to-SVG Renderer & Legacy Exporter</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom scrollbars and canvas utilities */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
+    ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.5); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.8); }
+    
+    #ascii-editor {
+      tab-size: 4;
+      line-height: 1.35;
+      letter-spacing: 0px;
+      font-variant-ligatures: none;
+    }
+
+    .checkerboard-bg {
+      background-color: #f8fafc;
+      background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+      background-size: 16px 16px;
+    }
+    .dark .checkerboard-bg {
+      background-color: #0b1120;
+      background-image: radial-gradient(#1e293b 1px, transparent 1px);
+      background-size: 16px 16px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans h-screen flex flex-col overflow-hidden select-none">
+
+  <!-- Top Navigation & Global Controls -->
+  <header class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0 z-20">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-mono font-bold text-sm shadow-inner">
+        +^v+
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-bold text-base tracking-tight text-white">ditaa Studio <span class="text-xs font-mono uppercase px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Local Engine</span></h1>
+        </div>
+        <p class="text-xs text-slate-400">Zero-dependency 2D ASCII Grid Parser • Inline <code class="text-indigo-300">+--^--+</code> Border Healing • 4x4 Legend Macros</p>
+      </div>
+    </div>
+
+    <!-- Preset Selector -->
+    <div class="flex items-center gap-2 flex-wrap">
+      <label for="preset-select" class="text-xs font-medium text-slate-400">Preset Diagram:</label>
+      <select id="preset-select" class="bg-slate-800 text-slate-100 text-xs font-medium rounded-lg px-3 py-1.5 border border-slate-700 focus:outline-none focus:border-indigo-500 transition">
+        <option value="arch">1. Pipeline w/ Inline '^' Arrows & 4x4 Legend</option>
+        <option value="showcase">2. Complete ditaa Shapes, Colors & Wires Catalog</option>
+        <option value="microservices">3. Dense 4x4 Box Grid with Macro Legend</option>
+        <option value="legacy_comparison">4. Inline '^' Stress Test (Zero-Line Waste)</option>
+      </select>
+
+      <div class="h-5 w-px bg-slate-800 mx-1"></div>
+
+      <!-- Export & Backend Sanitizer Actions -->
+      <button id="btn-legacy-modal" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition shadow-sm" title="Expand inline border arrows into strict multi-row legacy ditaa for your company backend">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+        Export Strict Backend ditaa
+      </button>
+
+      <button id="btn-download-svg" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        SVG
+      </button>
+
+      <button id="btn-download-png" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        PNG
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace Split View -->
+  <main class="flex-1 flex flex-col lg:flex-row overflow-hidden">
+
+    <!-- LEFT PANE: Monospace ASCII Editor & 2D Spatial Manipulation Toolbar -->
+    <section class="w-full lg:w-[48%] h-1/2 lg:h-full flex flex-col border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-900/70">
+      
+      <!-- Row 1: Smart 2D Stamp Bar (Cursor & Arrow Aware!) -->
+      <div class="px-3 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mr-0.5">2D Stamp:</span>
+          <button id="stamp-box" class="text-xs font-mono px-2 py-1 rounded bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/40 transition shadow-sm" title="Smart Stamp Box: Connects to arrows at cursor or stamps in 2D grid">+Box+</button>
+          <button id="stamp-rbox" class="text-xs font-mono px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-200 border border-indigo-500/30 transition" title="Smart Stamp Rounded Box">/Round\</button>
+          <button id="stamp-4x4" class="text-xs font-mono px-2 py-1 rounded bg-purple-600/25 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 transition" title="Smart Stamp 4x3 Legend Macro Box">[D] 4x3</button>
+
+          <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
+
+          <button id="stamp-arrow-right" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach solid right arrow from active box or cursor">──&gt;</button>
+          <button id="stamp-darrow-right" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach dotted/dashed right arrow from active box or cursor">==&gt;</button>
+          <button id="stamp-arrow-down" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach vertical down arrow from active box bottom">│v</button>
+          <button id="stamp-inline-up" class="text-xs font-mono px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/30 transition" title="Stamp inline '^' arrow directly on box border">+--^--+</button>
+
+          <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
+
+          <button data-tag="{s}" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition" title="Inject {s} Cylinder Tag into Active Box">{s}</button>
+          <button data-tag="{d}" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 transition" title="Inject {d} Document Tag into Active Box">{d}</button>
+          <button data-tag="cBLU" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cBLU</button>
+          <button data-tag="cGRE" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cGRE</button>
+          <button data-tag="cYEL" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-yellow-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cYEL</button>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button id="btn-undo" class="text-xs font-mono px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="Undo (Ctrl+Z)">↶</button>
+          <button id="btn-redo" class="text-xs font-mono px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="Redo (Ctrl+Y)">↷</button>
+          <button id="btn-clear" class="text-xs text-slate-400 hover:text-rose-400 px-2 py-1 rounded transition">Clear</button>
+        </div>
+      </div>
+
+      <!-- Row 2: Active Box Shift & Resize Deck (With Elastic Wire Stretching!) -->
+      <div class="px-3 py-1.5 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap">
+          <!-- Shift Box Controls -->
+          <div class="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-emerald-400 mr-1" title="Moves entire 2D box and stretches/shrinks attached arrows! (Shortcut: Alt + Arrow Keys)">Shift Box:</span>
+            <button id="shift-left" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Left 1 Col & Stretch Right Wires (Alt+Left)">←</button>
+            <button id="shift-up" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Up 1 Row & Stretch Bottom Wires (Alt+Up)">↑</button>
+            <button id="shift-down" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Down 1 Row & Stretch Top Wires (Alt+Down)">↓</button>
+            <button id="shift-right" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Right 1 Col & Stretch Left Wires (Alt+Right)">→</button>
+          </div>
+
+          <!-- Resize Box Controls -->
+          <div class="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-amber-400 mr-1" title="Expands or shrinks the selected box walls and pushes connected wires! (Shortcut: Alt+Shift+Arrow)">Size Box:</span>
+            <button id="resize-wider" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Expand Box Width +2 Cols (Alt+Shift+Right)">↔ +W</button>
+            <button id="resize-narrower" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shrink Box Width -2 Cols (Alt+Shift+Left)">&gt;&lt; -W</button>
+            <button id="resize-taller" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Expand Box Height +1 Row (Alt+Shift+Down)">↕ +H</button>
+            <button id="resize-shorter" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shrink Box Height -1 Row (Alt+Shift+Up)">^v -H</button>
+          </div>
+        </div>
+
+        <!-- Active Box Status Pill -->
+        <div id="active-box-pill" class="text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800/90 text-slate-400 border border-slate-700 truncate max-w-[230px]" title="Click inside any ASCII box or click a box in the SVG preview to select it">
+          No Box Selected (Click box)
+        </div>
+      </div>
+
+      <!-- Editor Container -->
+      <div class="relative flex-1 flex overflow-hidden">
+        <textarea
+          id="ascii-editor"
+          spellcheck="false"
+          wrap="off"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          class="w-full h-full bg-slate-950 text-slate-100 font-mono text-[13px] p-4 focus:outline-none resize-none overflow-auto selection:bg-indigo-500/30"
+          placeholder="Paste or type any ditaa ASCII diagram here..."></textarea>
+      </div>
+
+      <!-- Editor Footer Status Bar -->
+      <div class="px-3 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono text-slate-400">
+        <div class="flex items-center gap-4">
+          <span id="cursor-pos" class="text-emerald-400 font-semibold">Row 1, Col 1</span>
+          <span id="grid-dims">Grid: 0x0</span>
+          <span id="detected-stats" class="text-indigo-400">0 Boxes • 0 Legends</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-500 hidden sm:inline">Shortcuts: <code class="text-slate-300">Alt+Arrows</code> Shift • <code class="text-slate-300">Alt+Shift+Arrows</code> Resize</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANE: Interactive SVG Studio & Parser Controls -->
+    <section class="w-full lg:w-[52%] h-1/2 lg:h-full flex flex-col bg-slate-950 relative overflow-hidden">
+      <!-- Parser Feature Toggles & Zoom Controls Bar -->
+      <div class="px-3 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-3 flex-wrap text-xs">
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white" title="Allow ^, v, <, > directly on box borders without breaking polygon fill">
+            <input id="toggle-inline-arrows" type="checkbox" checked class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
+            <span>Inline <code class="text-emerald-400">+--^--+</code> Arrows</span>
+          </label>
+
+          <div class="flex items-center gap-1.5">
+            <span class="text-slate-400">4x4 Legend:</span>
+            <select id="select-legend-mode" class="bg-slate-800 text-slate-200 text-xs rounded px-2 py-0.5 border border-slate-700 focus:outline-none">
+              <option value="both">Inline + Legend Card</option>
+              <option value="inline">Inline Box Expand Only</option>
+              <option value="card">Badge + Bottom Card</option>
+              <option value="off">Raw ASCII Text Only</option>
+            </select>
+          </div>
+
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+            <input id="toggle-shadows" type="checkbox" checked class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
+            <span>Shadows</span>
+          </label>
+
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+            <input id="toggle-grid" type="checkbox" class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
+            <span>Cell Grid</span>
+          </label>
+
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+            <input id="toggle-light-canvas" type="checkbox" checked class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
+            <span>Light BG</span>
+          </label>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button id="btn-zoom-out" class="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-mono" title="Zoom Out">−</button>
+          <span id="zoom-label" class="text-xs font-mono text-slate-400 w-12 text-center">100%</span>
+          <button id="btn-zoom-in" class="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-mono" title="Zoom In">+</button>
+          <button id="btn-zoom-reset" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px]">Fit</button>
+        </div>
+      </div>
+
+      <!-- Interactive SVG Viewport -->
+      <div id="canvas-viewport" class="flex-1 overflow-auto flex items-center justify-center p-6 checkerboard-bg relative cursor-grab active:cursor-grabbing">
+        <div id="svg-wrapper" class="transition-transform duration-75 origin-center shadow-2xl rounded-xl overflow-hidden border border-slate-300/80 dark:border-slate-800 bg-white">
+          <!-- Rendered SVG Injected Here -->
+        </div>
+      </div>
+
+      <!-- Bottom Quick Reference Legend Drawer -->
+      <div class="px-4 py-2 bg-slate-900 border-t border-slate-800 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono">
+          <span><strong class="text-slate-200">Shapes:</strong> {s}=Cylinder {d}=Doc {io}=I/O {mo}=Trapezoid {o}=Pill {*}=Dashed</span>
+          <span><strong class="text-slate-200">Colors:</strong> cBLU cGRE cYEL cRED cPNK cBLK</span>
+          <span><strong class="text-slate-200">Wires:</strong> -=Solid ==Dashed :=VertDashed *=Node</span>
+        </div>
+        <span id="toast-indicator" class="text-emerald-400 font-medium opacity-0 transition-opacity duration-300">Copied to clipboard!</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL: Export Strict Legacy Backend ditaa -->
+  <div id="legacy-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-slate-900 border border-slate-700 rounded-xl max-w-3xl w-full shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-bold text-white flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono text-xs">Backend Sanitizer</span>
+            Strict Legacy ditaa Exporter
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">Automatically heals <code class="text-emerald-300">+---^---+</code> inline border arrows into closed <code class="text-amber-300">+-------+</code> walls and inserts the required extra vertical arrow row so your company's Java <code class="font-mono">ditaa</code> server renders full polygon fills.</p>
+        </div>
+        <button id="btn-close-modal" class="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
+      </div>
+      <div class="p-4 flex-1 overflow-auto bg-slate-950">
+        <pre id="legacy-ascii-output" class="font-mono text-xs text-emerald-300 leading-snug select-all overflow-x-auto p-3 rounded-lg bg-slate-900 border border-slate-800"></pre>
+      </div>
+      <div class="px-5 py-3 border-t border-slate-800 flex items-center justify-between bg-slate-900">
+        <span id="legacy-diff-summary" class="text-xs font-mono text-slate-400"></span>
+        <div class="flex items-center gap-2">
+          <button id="btn-copy-legacy" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">Copy Sanitized ASCII</button>
+          <button id="btn-apply-legacy" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition">Load Into Editor</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /*************************************************************************
+     * 1. PRESET DIAGRAMS (Demonstrating Inline '^', Shapes, Dotted Wires & 4x4 Legends)
+     *************************************************************************/
+    const PRESETS = {
+      arch: `+-------------------+        = = = = = >       /-------------------\\
+|    API Gateway    |     dashed/dotted wire   |   Auth Verifier   |
+|    cBLU           +------=------------------>|   {mo} cYEL       |
++---------+---^-----+                          \\---------+---------/
+          |   |                                          :
+          |   | inline '^' on border                     : dashed vertical
+          |   | (zero extra line wasted!)                v
+          |   +--------------------------------+---------+---------+
+          |                                    |   Session Cache   |
+          v                                    |   {s} cPNK {*}    |
++---------+---------+                          +-------------------+
+|     [D] cGRE      |
++---------+---------+       +-----+       +-----+       /-----+-----\\
+          |                 | [A] +------>| [Q] +------>| [S] {d}   |
+          +---------------->|cYEL |       |cBLU |       | cGRE      |
+                            +-----+       +--+--+       \\-----------/
+                                ^            |
+                                +-----=------+
+
+# Legend Macros (Automatically expands compact 4x4 boxes above!):
+# [D] = Diagram Engine
+# [A] = Audit Worker
+# [Q] = Queue Broker
+# [S] = Cold Archive`,
+
+      showcase: `+--------------------+     solid wire      /--------------------\\
+|  Sharp Rectangle   +-------------------->|  Rounded Box       |
+|  cBLU              |                     |  cGRE              |
++---------+----------+                     \\---------+----------/
+          |                                          :
+          |                           dashed wire    :
+          v                                          v
++---------+----------+     dashed arrow    +---------+----------+
+|  Storage Cylinder  +---------=---------->|  Document Shape    |
+|  {s} cYEL          |                     |  {d} cPNK          |
++--------------------+                     +--------------------+
+
++--------------------+                     +--------------------+
+|  I/O Parallelogram |     junction dot    |  Manual Trapezoid  |
+|  {io} cRED         +----------*--------->|  {mo} cBLU         |
++--------------------+          |          +---------^----------+
+                                |                    |
+                                |          /---------+----------\\
+                                +--------->|  Pill / Ellipse    |
+                                           |  {o} {*} cYEL      |
+                                           \\--------------------/`,
+
+      microservices: `      +-----+         +-----+         +-----+         +-----+
+      | [G] +-------->| [A] +-------->| [R] +-------->| [W] |
+      |cBLU |         |cYEL |         |cGRE |         |cPNK |
+      +--+--+         +--+--+         +--+--^         +--+--+
+         |               |               |  |            :
+         |               v               |  +------------+
+         |            +--+--+            v
+         +----------->| [L] |         +--+--+
+                      | {d} |         | [D] |
+                      +-----+         | {s} |
+                                      +-----+
+
+# Legend (Toggle '4x4 Legend' mode above to compare inline vs table):
+# [G] = Edge Gateway
+# [A] = Auth Token Service
+# [R] = Rate Limiter
+# [W] = Webhook Dispatcher
+# [L] = Audit Log Stream
+# [D] = Primary Postgres DB`,
+
+      legacy_comparison: `+-------------------------------------------------------+
+|  INLINE '^' BORDER ARROWS (NO EXTRA ROW NEEDED!)      |
+|  cBLU                                                 |
++------+------------------+------------------+----------+
+       |                  |                  |
+       v                  v                  v
+  +----+----+        +----+----+        +----+----+
+  | Node 01 |        | Node 02 |        | Node 03 |
+  | cGRE    |        | cYEL    |        | cPNK    |
+  +----^----+        +----^----+        +----^----+
+       |                  |                  |
+       +------------------+------------------+
+                          |
+                  retry feedback loop`
+    };
+
+    /*************************************************************************
+     * 2. COLOR & SHAPE PALETTE DEFINITIONS
+     *************************************************************************/
+    const COLOR_MAP = {
+      cBLU: { fill: '#dbeafe', stroke: '#1e40af', text: '#1e3a8a', badge: '#bfdbfe' },
+      cGRE: { fill: '#dcfce7', stroke: '#166534', text: '#14532d', badge: '#bbf7d0' },
+      cYEL: { fill: '#fef9c3', stroke: '#854d0e', text: '#713f12', badge: '#fef08a' },
+      cRED: { fill: '#fee2e2', stroke: '#991b1b', text: '#7f1d1d', badge: '#fecaca' },
+      cPNK: { fill: '#fce7f3', stroke: '#9d174d', text: '#831843', badge: '#fbcfe8' },
+      cBLK: { fill: '#334155', stroke: '#0f172a', text: '#f8fafc', badge: '#475569' }
+    };
+
+    /*************************************************************************
+     * 3. CORE 2D ASCII-TO-SVG PARSER ENGINE
+     *************************************************************************/
+    class DitaaParser {
+      constructor(options = {}) {
+        this.cellW = options.cellW || 10;
+        this.cellH = options.cellH || 18;
+        this.healInlineArrows = options.healInlineArrows !== false;
+        this.legendMode = options.legendMode || 'both';
+        this.showShadows = options.showShadows !== false;
+        this.showGrid = options.showGrid || false;
+        this.lightCanvas = options.lightCanvas !== false;
+      }
+
+      /**
+       * Main entry point: parses ASCII text into structured boxes, wires,
+       * arrowheads, junctions, and legends, then compiles to an SVG string.
+       */
+      parse(rawText) {
+        const allLines = rawText.replace(/\r\n/g, '\n').split('\n');
+        const legends = {};
+        const diagramLines = [];
+
+        // 1. Extract Legend definitions (# [D] = Diagram Engine or # D: Diagram Engine)
+        const legendRegex = /^\s*#?\s*(?:\[([A-Za-z0-9_]+)\]|([A-Za-z0-9_]{1,3}))\s*(?:=|:)\s*(.+)$/;
+        for (let i = 0; i < allLines.length; i++) {
+          const line = allLines[i];
+          const match = line.match(legendRegex);
+          if (match && (line.trim().startsWith('#') || line.trim().startsWith('['))) {
+            const key = (match[1] || match[2]).trim();
+            const val = match[3].trim();
+            legends[key] = val;
+          } else if (line.trim().startsWith('#')) {
+            // Comment line in legend section — skip rendering in raw grid
+          } else {
+            diagramLines.push(line);
+          }
+        }
+
+        // Trim trailing empty lines
+        while (diagramLines.length > 0 && diagramLines[diagramLines.length - 1].trim() === '') {
+          diagramLines.pop();
+        }
+
+        const numRows = diagramLines.length;
+        const numCols = diagramLines.reduce((max, l) => Math.max(max, l.length), 0);
+
+        // Build 2D padded character grid
+        const grid = [];
+        for (let r = 0; r < numRows; r++) {
+          const rowChars = [];
+          const line = diagramLines[r] || '';
+          for (let c = 0; c < numCols; c++) {
+            rowChars.push(c < line.length ? line[c] : ' ');
+          }
+          grid.push(rowChars);
+        }
+
+        // Track which character cells belong to box perimeters or box interiors
+        const cellRole = Array.from({ length: numRows }, () => Array(numCols).fill('empty'));
+        const inlineBorderArrows = [];
+
+        // 2. Detect Closed Boxes (including inline border arrows if enabled)
+        const boxes = this.detectBoxes(grid, numRows, numCols, cellRole, inlineBorderArrows, legends);
+
+        // 3. Detect Exterior Wires, Junctions, Arrows, and Free Text Labels
+        const { wires, arrows, junctions, freeTexts } = this.detectWiresAndText(
+          grid,
+          numRows,
+          numCols,
+          cellRole,
+          inlineBorderArrows
+        );
+
+        return {
+          grid,
+          numRows,
+          numCols,
+          boxes,
+          wires,
+          arrows,
+          junctions,
+          freeTexts,
+          legends
+        };
+      }
+
+      isCornerChar(ch) {
+        return ch === '+' || ch === '/' || ch === '\\' || ch === '.' || ch === "'";
+      }
+
+      isHorizWallChar(ch, allowInlineArrow) {
+        if (ch === '-' || ch === '=' || ch === '+' || ch === '*') return true;
+        if (allowInlineArrow && (ch === '^' || ch === 'v')) return true;
+        return false;
+      }
+
+      isVertWallChar(ch, allowInlineArrow) {
+        if (ch === '|' || ch === ':' || ch === '+' || ch === '*') return true;
+        if (allowInlineArrow && (ch === '<' || ch === '>')) return true;
+        return false;
+      }
+
+      /**
+       * Scans the 2D character grid for minimal closed rectangles bounded by
+       * corner characters and continuous horizontal/vertical walls.
+       */
+      detectBoxes(grid, numRows, numCols, cellRole, inlineBorderArrows, legends) {
+        const boxes = [];
+        const usedTopLeft = new Set();
+
+        for (let r1 = 0; r1 < numRows - 2; r1++) {
+          for (let c1 = 0; c1 < numCols - 2; c1++) {
+            const tl = grid[r1][c1];
+            if (!(tl === '+' || tl === '/' || tl === '.')) continue;
+
+            // Find candidate top-right corners on the same row r1
+            for (let c2 = c1 + 2; c2 < numCols; c2++) {
+              const tr = grid[r1][c2];
+              if (!this.isHorizWallChar(tr, this.healInlineArrows) && !(tr === '+' || tr === '\\' || tr === '.')) {
+                break; // Wall broken
+              }
+
+              if (tr === '+' || tr === '\\' || tr === '.' || (this.healInlineArrows && (tr === '^' || tr === 'v'))) {
+                // Verify top wall is continuous
+                let topValid = true;
+                for (let c = c1 + 1; c < c2; c++) {
+                  if (!this.isHorizWallChar(grid[r1][c], this.healInlineArrows)) {
+                    topValid = false;
+                    break;
+                  }
+                }
+                if (!topValid) continue;
+
+                // Search downward for matching bottom corners at (r2, c1) and (r2, c2)
+                let foundBottom = false;
+                for (let r2 = r1 + 2; r2 < numRows; r2++) {
+                  const leftCh = grid[r2][c1];
+                  const rightCh = grid[r2][c2];
+
+                  // Check if vertical walls between r1+1 .. r2-1 are valid
+                  let vertValid = true;
+                  for (let r = r1 + 1; r < r2; r++) {
+                    if (
+                      !this.isVertWallChar(grid[r][c1], this.healInlineArrows) ||
+                      !this.isVertWallChar(grid[r][c2], this.healInlineArrows)
+                    ) {
+                      vertValid = false;
+                      break;
+                    }
+                  }
+                  if (!vertValid) break;
+
+                  const isBottomCornerLeft =
+                    leftCh === '+' || leftCh === '\\' || leftCh === "'" || (this.healInlineArrows && (leftCh === '^' || leftCh === 'v'));
+                  const isBottomCornerRight =
+                    rightCh === '+' || rightCh === '/' || rightCh === "'" || (this.healInlineArrows && (rightCh === '^' || rightCh === 'v'));
+
+                  if (isBottomCornerLeft && isBottomCornerRight) {
+                    // Check bottom horizontal wall between c1+1 .. c2-1
+                    let botValid = true;
+                    for (let c = c1 + 1; c < c2; c++) {
+                      if (!this.isHorizWallChar(grid[r2][c], this.healInlineArrows)) {
+                        botValid = false;
+                        break;
+                      }
+                    }
+
+                    if (botValid) {
+                      // Ensure this box doesn't simply wrap already-claimed interior cells
+                      const key = `${r1},${c1},${r2},${c2}`;
+                      if (!usedTopLeft.has(key)) {
+                        usedTopLeft.add(key);
+                        const box = this.extractBoxMetadata(
+                          grid,
+                          r1,
+                          c1,
+                          r2,
+                          c2,
+                          cellRole,
+                          inlineBorderArrows,
+                          legends
+                        );
+                        boxes.push(box);
+                        foundBottom = true;
+                        break;
+                      }
+                    }
+                  }
+                }
+                if (foundBottom) break;
+              }
+            }
+          }
+        }
+        return boxes;
+      }
+
+      /**
+       * Extracts interior text, strips ditaa tags ({s}, {d}, {io}, {mo}, {o}, {*}, cBLU, etc.),
+       * records inline border arrows, and marks perimeter/interior cells.
+       */
+      extractBoxMetadata(grid, r1, c1, r2, c2, cellRole, inlineBorderArrows, legends) {
+        const rounded =
+          grid[r1][c1] === '/' ||
+          grid[r1][c2] === '\\' ||
+          grid[r2][c1] === '\\' ||
+          grid[r2][c2] === '/' ||
+          grid[r1][c1] === '.' ||
+          grid[r2][c1] === "'";
+
+        let dashedBorder = false;
+
+        // Mark top and bottom walls & inspect for inline arrows or '=' dashed borders
+        for (let c = c1; c <= c2; c++) {
+          const topCh = grid[r1][c];
+          const botCh = grid[r2][c];
+          if (topCh === '=') dashedBorder = true;
+          if (botCh === '=') dashedBorder = true;
+
+          if (this.healInlineArrows && (topCh === '^' || topCh === 'v')) {
+            inlineBorderArrows.push({ r: r1, c, dir: topCh, wall: 'top' });
+          }
+          if (this.healInlineArrows && (botCh === '^' || botCh === 'v')) {
+            inlineBorderArrows.push({ r: r2, c, dir: botCh, wall: 'bottom' });
+          }
+
+          cellRole[r1][c] = 'box-border';
+          cellRole[r2][c] = 'box-border';
+        }
+
+        // Mark left and right walls & inspect for inline arrows or ':' dashed borders
+        for (let r = r1; r <= r2; r++) {
+          const leftCh = grid[r][c1];
+          const rightCh = grid[r][c2];
+          if (leftCh === ':') dashedBorder = true;
+          if (rightCh === ':') dashedBorder = true;
+
+          if (this.healInlineArrows && (leftCh === '<' || leftCh === '>')) {
+            inlineBorderArrows.push({ r, c: c1, dir: leftCh, wall: 'left' });
+          }
+          if (this.healInlineArrows && (rightCh === '<' || rightCh === '>')) {
+            inlineBorderArrows.push({ r, c: c2, dir: rightCh, wall: 'right' });
+          }
+
+          cellRole[r][c1] = 'box-border';
+          cellRole[r][c2] = 'box-border';
+        }
+
+        // Extract raw interior text lines
+        const rawLines = [];
+        for (let r = r1 + 1; r < r2; r++) {
+          let lineStr = '';
+          for (let c = c1 + 1; c < c2; c++) {
+            cellRole[r][c] = 'box-interior';
+            lineStr += grid[r][c];
+          }
+          rawLines.push(lineStr);
+        }
+
+        // Parse and strip ditaa tags from interior text
+        let shape = 'rect';
+        let colorKey = null;
+        let customHex = null;
+
+        const cleanedLines = rawLines.map((line) => {
+          let l = line;
+
+          // Shape tags
+          if (/\{s\}/.test(l)) { shape = 'storage'; l = l.replace(/\{s\}/g, ''); }
+          if (/\{d\}/.test(l)) { shape = 'document'; l = l.replace(/\{d\}/g, ''); }
+          if (/\{io\}/.test(l)) { shape = 'io'; l = l.replace(/\{io\}/g, ''); }
+          if (/\{mo\}/.test(l)) { shape = 'manual'; l = l.replace(/\{mo\}/g, ''); }
+          if (/\{o\}/.test(l)) { shape = 'ellipse'; l = l.replace(/\{o\}/g, ''); }
+          if (/\{\*\}/.test(l)) { dashedBorder = true; l = l.replace(/\{\*\}/g, ''); }
+
+          // Color tags
+          const colorMatch = l.match(/\b(cBLU|cGRE|cYEL|cRED|cPNK|cBLK)\b/);
+          if (colorMatch) {
+            colorKey = colorMatch[1];
+            l = l.replace(colorMatch[0], '');
+          }
+
+          const hexMatch = l.match(/\bc#([0-9a-fA-F]{6})\b/);
+          if (hexMatch) {
+            customHex = '#' + hexMatch[1];
+            l = l.replace(hexMatch[0], '');
+          }
+
+          return l.trim();
+        }).filter((l) => l.length > 0);
+
+        // Check if the cleaned label matches a 4x4 Legend Macro (e.g., "[D]" or "D")
+        let macroKey = null;
+        let macroExpanded = null;
+        if (cleanedLines.length === 1) {
+          const singleToken = cleanedLines[0].trim();
+          const bracketMatch = singleToken.match(/^\[([A-Za-z0-9_]+)\]$/);
+          const bareKey = bracketMatch ? bracketMatch[1] : singleToken;
+          if (legends[bareKey]) {
+            macroKey = bareKey;
+            macroExpanded = legends[bareKey];
+          }
+        }
+
+        return {
+          r1,
+          c1,
+          r2,
+          c2,
+          rounded,
+          dashedBorder,
+          shape,
+          colorKey,
+          customHex,
+          lines: cleanedLines,
+          macroKey,
+          macroExpanded
+        };
+      }
+
+      /**
+       * Traces exterior wires (horizontal, vertical, dashed), arrowheads,
+       * junction dots (*), and free text labels outside of boxes.
+       */
+      detectWiresAndText(grid, numRows, numCols, cellRole, inlineBorderArrows) {
+        const wires = [];
+        const arrows = [];
+        const junctions = [];
+        const freeTexts = [];
+
+        // First add all inline border arrows collected during box boundary detection
+        for (const ia of inlineBorderArrows) {
+          arrows.push({ r: ia.r, c: ia.c, dir: ia.dir, inline: true, wall: ia.wall });
+        }
+
+        // Helper to test if a cell can connect to a wire
+        const isHorizWireConnectable = (r, c) => {
+          if (r < 0 || r >= numRows || c < 0 || c >= numCols) return false;
+          const ch = grid[r][c];
+          if (cellRole[r][c] === 'box-interior') return false;
+          return (
+            ch === '-' ||
+            ch === '=' ||
+            ch === '+' ||
+            ch === '*' ||
+            ch === '>' ||
+            ch === '<' ||
+            ch === '.' ||
+            ch === "'" ||
+            cellRole[r][c] === 'box-border'
+          );
+        };
+
+        const isVertWireConnectable = (r, c) => {
+          if (r < 0 || r >= numRows || c < 0 || c >= numCols) return false;
+          const ch = grid[r][c];
+          if (cellRole[r][c] === 'box-interior') return false;
+          return (
+            ch === '|' ||
+            ch === ':' ||
+            ch === '+' ||
+            ch === '*' ||
+            ch === '^' ||
+            ch === 'v' ||
+            ch === '.' ||
+            ch === "'" ||
+            cellRole[r][c] === 'box-border'
+          );
+        };
+
+        // Mark exterior wire characters vs free text characters
+        for (let r = 0; r < numRows; r++) {
+          for (let c = 0; c < numCols; c++) {
+            if (cellRole[r][c] !== 'empty') continue;
+            const ch = grid[r][c];
+            if (ch === ' ') continue;
+
+            if (ch === '-' || ch === '=') {
+              // Ensure it's not a hyphen inside a word like "client-side"
+              const leftChar = c > 0 ? grid[r][c - 1] : ' ';
+              const rightChar = c + 1 < numCols ? grid[r][c + 1] : ' ';
+              const surroundedByLetters = /[A-Za-z0-9]/.test(leftChar) && /[A-Za-z0-9]/.test(rightChar);
+              if (!surroundedByLetters) {
+                cellRole[r][c] = 'wire-h';
+              }
+            } else if (ch === '|' || ch === ':') {
+              const upConn = isVertWireConnectable(r - 1, c);
+              const downConn = isVertWireConnectable(r + 1, c);
+              if (upConn || downConn || ch === '|') {
+                cellRole[r][c] = 'wire-v';
+              }
+            } else if (ch === '+' || ch === '.' || ch === "'") {
+              const hasWireNeighbor =
+                isHorizWireConnectable(r, c - 1) ||
+                isHorizWireConnectable(r, c + 1) ||
+                isVertWireConnectable(r - 1, c) ||
+                isVertWireConnectable(r + 1, c);
+              if (hasWireNeighbor) {
+                cellRole[r][c] = 'wire-corner';
+              }
+            } else if (ch === '*') {
+              const hasWireNeighbor =
+                isHorizWireConnectable(r, c - 1) ||
+                isHorizWireConnectable(r, c + 1) ||
+                isVertWireConnectable(r - 1, c) ||
+                isVertWireConnectable(r + 1, c);
+              if (hasWireNeighbor) {
+                cellRole[r][c] = 'wire-junction';
+                junctions.push({ r, c });
+              }
+            } else if (ch === '>' || ch === '<' || ch === '^' || ch === 'v') {
+              // Check if connected to a wire or box border
+              const connected =
+                ((ch === '>' || ch === '<') && (isHorizWireConnectable(r, c - 1) || isHorizWireConnectable(r, c + 1))) ||
+                ((ch === '^' || ch === 'v') && (isVertWireConnectable(r - 1, c) || isVertWireConnectable(r + 1, c)));
+              if (connected) {
+                cellRole[r][c] = 'wire-arrow';
+                arrows.push({ r, c, dir: ch, inline: false });
+              }
+            }
+          }
+        }
+
+        // Trace Horizontal Wire Segments
+        const isHorizNode = (r, c) => {
+          if (r < 0 || r >= numRows || c < 0 || c >= numCols) return false;
+          const role = cellRole[r][c];
+          const ch = grid[r][c];
+          if (role === 'wire-h' || role === 'wire-corner' || role === 'wire-junction') return true;
+          if (role === 'wire-arrow' && (ch === '<' || ch === '>')) return true;
+          return false;
+        };
+
+        for (let r = 0; r < numRows; r++) {
+          let c = 0;
+          while (c < numCols) {
+            if (isHorizNode(r, c)) {
+              let startC = c;
+              let dashed = grid[r][c] === '=';
+              while (c + 1 < numCols && isHorizNode(r, c + 1)) {
+                c++;
+                if (grid[r][c] === '=') dashed = true;
+              }
+              let endC = c;
+
+              // Extend to adjacent box border on left or right
+              let x1 = (startC + 0.5) * this.cellW;
+              let x2 = (endC + 0.5) * this.cellW;
+              const y = (r + 0.5) * this.cellH;
+
+              if (startC > 0 && cellRole[r][startC - 1] === 'box-border') {
+                x1 = (startC - 0.5) * this.cellW;
+              }
+              if (endC + 1 < numCols && cellRole[r][endC + 1] === 'box-border') {
+                x2 = (endC + 1.5) * this.cellW;
+              }
+
+              if (endC > startC || x2 > x1) {
+                wires.push({ x1, y1: y, x2, y2: y, dashed });
+              }
+            }
+            c++;
+          }
+        }
+
+        // Trace Vertical Wire Segments
+        const isVertNode = (r, c) => {
+          if (r < 0 || r >= numRows || c < 0 || c >= numCols) return false;
+          const role = cellRole[r][c];
+          const ch = grid[r][c];
+          if (role === 'wire-v' || role === 'wire-corner' || role === 'wire-junction') return true;
+          if (role === 'wire-arrow' && (ch === '^' || ch === 'v')) return true;
+          return false;
+        };
+
+        for (let c = 0; c < numCols; c++) {
+          let r = 0;
+          while (r < numRows) {
+            if (isVertNode(r, c)) {
+              let startR = r;
+              let dashed = grid[r][c] === ':';
+              while (r + 1 < numRows && isVertNode(r + 1, c)) {
+                r++;
+                if (grid[r][c] === ':') dashed = true;
+              }
+              let endR = r;
+
+              const x = (c + 0.5) * this.cellW;
+              let y1 = (startR + 0.5) * this.cellH;
+              let y2 = (endR + 0.5) * this.cellH;
+
+              // Connect smoothly into top/bottom box borders (including inline '^'/'v' borders!)
+              if (startR > 0 && cellRole[startR - 1][c] === 'box-border') {
+                y1 = (startR - 0.5) * this.cellH;
+              }
+              if (endR + 1 < numRows && cellRole[endR + 1][c] === 'box-border') {
+                y2 = (endR + 1.5) * this.cellH;
+              }
+
+              if (endR > startR || y2 > y1) {
+                wires.push({ x1: x, y1, x2: x, y2, dashed });
+              }
+            }
+            r++;
+          }
+        }
+
+        // Also detect spaced dotted arrows like "= = = >"
+        for (let r = 0; r < numRows; r++) {
+          for (let c = 0; c < numCols; c++) {
+            if (cellRole[r][c] === 'empty' && grid[r][c] === '=') {
+              cellRole[r][c] = 'wire-h';
+            }
+          }
+        }
+
+        // Collect Remaining Unclaimed Characters as Free Text Labels
+        for (let r = 0; r < numRows; r++) {
+          let c = 0;
+          while (c < numCols) {
+            if (cellRole[r][c] === 'empty' && grid[r][c] !== ' ') {
+              let startC = c;
+              let text = '';
+              while (
+                c < numCols &&
+                cellRole[r][c] === 'empty' &&
+                (grid[r][c] !== ' ' || (c + 1 < numCols && cellRole[r][c + 1] === 'empty' && grid[r][c + 1] !== ' '))
+              ) {
+                text += grid[r][c];
+                c++;
+              }
+              freeTexts.push({
+                r,
+                c: startC,
+                text: text.trim()
+              });
+            } else {
+              c++;
+            }
+          }
+        }
+
+        return { wires, arrows, junctions, freeTexts };
+      }
+
+      /**
+       * Renders the parsed AST into a standalone, crisp SVG string.
+       */
+      renderSVG(ast, selectedBoxIndex = -1) {
+        const { numRows, numCols, boxes, wires, arrows, junctions, freeTexts, legends } = ast;
+        const padX = 28;
+        const padY = 28;
+
+        const legendKeys = Object.keys(legends);
+        const showLegendCard =
+          legendKeys.length > 0 && (this.legendMode === 'both' || this.legendMode === 'card');
+
+        const legendRowsCount = showLegendCard ? Math.ceil(legendKeys.length / 2) : 0;
+        const legendHeight = showLegendCard ? 54 + legendRowsCount * 28 : 0;
+
+        const contentW = Math.max(numCols * this.cellW, 320);
+        const contentH = Math.max(numRows * this.cellH, 160);
+        const svgW = contentW + padX * 2;
+        const svgH = contentH + padY * 2 + legendHeight;
+
+        const bgFill = this.lightCanvas ? '#ffffff' : '#0f172a';
+        const wireStroke = this.lightCanvas ? '#1e293b' : '#e2e8f0';
+        const defaultBoxFill = this.lightCanvas ? '#f8fafc' : '#1e293b';
+        const defaultBoxStroke = this.lightCanvas ? '#334155' : '#94a3b8';
+        const defaultTextFill = this.lightCanvas ? '#0f172a' : '#f8fafc';
+        const freeTextFill = this.lightCanvas ? '#475569' : '#cbd5e1';
+
+        let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}" style="font-family: 'Inter', system-ui, sans-serif;">`;
+
+        // Definitions (Drop Shadow Filter)
+        svg += `<defs>
+          <filter id="ditaa-shadow" x="-10%" y="-10%" width="130%" height="130%">
+            <feDropShadow dx="2" dy="3" stdDeviation="2.5" flood-color="#0f172a" flood-opacity="${this.lightCanvas ? '0.14' : '0.45'}" />
+          </filter>
+        </defs>`;
+
+        // Background
+        svg += `<rect width="100%" height="100%" fill="${bgFill}" />`;
+
+        svg += `<g transform="translate(${padX}, ${padY})">`;
+
+        // Optional 2D Character Cell Grid Overlay
+        if (this.showGrid) {
+          svg += `<g stroke="${this.lightCanvas ? '#e2e8f0' : '#1e293b'}" stroke-width="0.75">`;
+          for (let r = 0; r <= numRows; r++) {
+            const y = r * this.cellH;
+            svg += `<line x1="0" y1="${y}" x2="${contentW}" y2="${y}" />`;
+          }
+          for (let c = 0; c <= numCols; c++) {
+            const x = c * this.cellW;
+            svg += `<line x1="${x}" y1="0" x2="${x}" y2="${contentH}" />`;
+          }
+          svg += `</g>`;
+        }
+
+        // 1. Render Exterior Wires (Behind Boxes or Connecting to Borders)
+        svg += `<g stroke="${wireStroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">`;
+        for (const w of wires) {
+          const dashAttr = w.dashed ? ` stroke-dasharray="5,4"` : '';
+          svg += `<line x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}"${dashAttr} />`;
+        }
+        svg += `</g>`;
+
+        // 2. Render Boxes & Specialized Shapes
+        for (let bIdx = 0; bIdx < boxes.length; bIdx++) {
+          const box = boxes[bIdx];
+          const isSelected = bIdx === selectedBoxIndex;
+          const x = (box.c1 + 0.5) * this.cellW;
+          const y = (box.r1 + 0.5) * this.cellH;
+          const w = (box.c2 - box.c1) * this.cellW;
+          const h = (box.r2 - box.r1) * this.cellH;
+
+          const palette = box.colorKey && COLOR_MAP[box.colorKey]
+            ? COLOR_MAP[box.colorKey]
+            : box.customHex
+            ? { fill: box.customHex, stroke: defaultBoxStroke, text: defaultTextFill, badge: '#e2e8f0' }
+            : { fill: defaultBoxFill, stroke: defaultBoxStroke, text: defaultTextFill, badge: '#e2e8f0' };
+
+          const filterAttr = this.showShadows ? ` filter="url(#ditaa-shadow)"` : '';
+          const dashAttr = box.dashedBorder ? ` stroke-dasharray="5,4"` : '';
+
+          svg += `<g class="ditaa-box cursor-pointer" data-box-index="${bIdx}">`;
+
+          if (isSelected) {
+            svg += `<rect x="${x - 4}" y="${y - 4}" width="${w + 8}" height="${h + 8}" rx="${box.rounded ? 12 : 5}" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-dasharray="4,2" />`;
+          }
+
+          if (box.shape === 'storage') {
+            // Cylinder / Database Shape {s}
+            const ry = Math.min(10, Math.max(6, h * 0.15));
+            const bodyPath = `M ${x} ${y + ry} L ${x} ${y + h - ry} A ${w / 2} ${ry} 0 0 0 ${x + w} ${y + h - ry} L ${x + w} ${y + ry} Z`;
+            svg += `<path d="${bodyPath}" fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="2"${filterAttr}${dashAttr} />`;
+            svg += `<ellipse cx="${x + w / 2}" cy="${y + ry}" rx="${w / 2}" ry="${ry}" fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="2"${dashAttr} />`;
+          } else if (box.shape === 'document') {
+            // Document Wavy Bottom Shape {d}
+            const waveAmp = Math.min(8, h * 0.14);
+            const docPath = `M ${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h - waveAmp} Q ${x + w * 0.75} ${y + h - waveAmp * 2.4} ${x + w / 2} ${y + h - waveAmp} T ${x} ${y + h - waveAmp} Z`;
+            svg += `<path d="${docPath}" fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="2"${filterAttr}${dashAttr} />`;
+          } else if (box.shape === 'io') {
+            // Parallelogram Input/Output {io}
+            const slant = Math.min(14, w * 0.12);
+            const ioPath = `M ${x + slant} ${y} L ${x + w} ${y} L ${x + w - slant} ${y + h} L ${x} ${y + h} Z`;
+            svg += `<path d="${ioPath}" fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="2"${filterAttr}${dashAttr} />`;
+          } else if (box.shape === 'manual') {
+            // Trapezoid Manual Operation {mo}
+            const inset = Math.min(14, w * 0.12);
+            const moPath = `M ${x} ${y} L ${x + w} ${y} L ${x + w - inset} ${y + h} L ${x + inset} ${y + h} Z`;
+            svg += `<path d="${moPath}" fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="2"${filterAttr}${dashAttr} />`;
+          } else if (box.shape === 'ellipse') {
+            // Pill / Ellipse Shape {o}
+            svg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h / 2}" ry="${h / 2}" fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="2"${filterAttr}${dashAttr} />`;
+          } else {
+            // Standard Sharp or Rounded Rectangle
+            const rx = box.rounded ? 9 : 2;
+            svg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" ry="${rx}" fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="2"${filterAttr}${dashAttr} />`;
+          }
+
+          // Render Box Text or 4x4 Legend Macro Expansion
+          const cx = x + w / 2;
+          const cy = y + h / 2;
+
+          if (box.macroKey && this.legendMode !== 'off') {
+            if (this.legendMode === 'inline' || this.legendMode === 'both') {
+              // Small Corner Key Pill Badge + Expanded Text
+              const badgeW = Math.max(18, box.macroKey.length * 8 + 8);
+              svg += `<rect x="${x + 4}" y="${y + 4}" width="${badgeW}" height="14" rx="4" fill="${palette.stroke}" />`;
+              svg += `<text x="${x + 4 + badgeW / 2}" y="${y + 13.5}" text-anchor="middle" fill="#ffffff" font-family="JetBrains Mono, monospace" font-size="9" font-weight="700">${this.escapeXml(box.macroKey)}</text>`;
+
+              // Wrap expanded macro label into 1 or 2 crisp lines that fit the box
+              const words = box.macroExpanded.split(/\s+/);
+              let displayLines = [box.macroExpanded];
+              if (box.macroExpanded.length > 10 && words.length >= 2) {
+                const mid = Math.ceil(words.length / 2);
+                displayLines = [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
+              }
+              const maxLen = Math.max(...displayLines.map((l) => l.length));
+              const fontSize = Math.min(12, Math.max(8.5, Math.floor((w - 10) / (maxLen * 0.58))));
+              const lineSpacing = fontSize + 3;
+              const startY = cy - ((displayLines.length - 1) * lineSpacing) / 2 + 4;
+
+              displayLines.forEach((dl, idx) => {
+                svg += `<text x="${cx}" y="${startY + idx * lineSpacing}" text-anchor="middle" fill="${palette.text}" font-size="${fontSize}" font-weight="600">${this.escapeXml(dl)}</text>`;
+              });
+            } else {
+              // Compact Key Badge Mode
+              svg += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="${palette.text}" font-family="JetBrains Mono, monospace" font-size="13" font-weight="700">[${this.escapeXml(box.macroKey)}]</text>`;
+            }
+          } else if (box.lines.length > 0) {
+            const lineSpacing = 16;
+            const totalH = (box.lines.length - 1) * lineSpacing;
+            const startY = cy - totalH / 2 + 4.5;
+            box.lines.forEach((line, idx) => {
+              svg += `<text x="${cx}" y="${startY + idx * lineSpacing}" text-anchor="middle" fill="${palette.text}" font-size="13" font-weight="600">${this.escapeXml(line)}</text>`;
+            });
+          }
+
+          svg += `</g>`;
+        }
+
+        // 3. Render Junction Bullets (*)
+        for (const j of junctions) {
+          const jx = (j.c + 0.5) * this.cellW;
+          const jy = (j.r + 0.5) * this.cellH;
+          svg += `<circle cx="${jx}" cy="${jy}" r="4" fill="${wireStroke}" />`;
+        }
+
+        // 4. Render Standard & Inline Border Arrowheads (<, >, ^, v)
+        for (const a of arrows) {
+          const ax = (a.c + 0.5) * this.cellW;
+          const ay = (a.r + 0.5) * this.cellH;
+          let pts = '';
+
+          if (a.dir === '>') {
+            const tipX = a.inline ? ax : ax + 4;
+            pts = `${tipX},${ay} ${tipX - 9},${ay - 4.5} ${tipX - 9},${ay + 4.5}`;
+          } else if (a.dir === '<') {
+            const tipX = a.inline ? ax : ax - 4;
+            pts = `${tipX},${ay} ${tipX + 9},${ay - 4.5} ${tipX + 9},${ay + 4.5}`;
+          } else if (a.dir === '^') {
+            const tipY = a.inline ? ay : ay - 5;
+            pts = `${ax},${tipY} ${ax - 4.5},${tipY + 9.5} ${ax + 4.5},${tipY + 9.5}`;
+          } else if (a.dir === 'v') {
+            const tipY = a.inline ? ay : ay + 5;
+            pts = `${ax},${tipY} ${ax - 4.5},${tipY - 9.5} ${ax + 4.5},${tipY - 9.5}`;
+          }
+
+          const arrowColor = a.inline ? '#10b981' : wireStroke;
+          svg += `<polygon points="${pts}" fill="${arrowColor}" />`;
+        }
+
+        // 5. Render Exterior Free Text Labels
+        for (const ft of freeTexts) {
+          const tx = ft.c * this.cellW;
+          const ty = (ft.r + 0.72) * this.cellH;
+          svg += `<text x="${tx}" y="${ty}" fill="${freeTextFill}" font-family="JetBrains Mono, monospace" font-size="11.5" font-weight="500">${this.escapeXml(ft.text)}</text>`;
+        }
+
+        // 6. Render Bottom Vector Legend Card (if Legends exist and mode is 'both' or 'card')
+        if (showLegendCard) {
+          const cardY = contentH + 16;
+          const cardH = legendHeight - 16;
+          const cardFill = this.lightCanvas ? '#f1f5f9' : '#1e293b';
+          const cardBorder = this.lightCanvas ? '#cbd5e1' : '#334155';
+
+          svg += `<g transform="translate(0, ${cardY})">`;
+          svg += `<rect x="0" y="0" width="${contentW}" height="${cardH}" rx="8" fill="${cardFill}" stroke="${cardBorder}" stroke-width="1.5" />`;
+          svg += `<text x="14" y="20" fill="${defaultTextFill}" font-size="11" font-weight="700" letter-spacing="0.04em">DIAGRAM LEGEND MACROS</text>`;
+
+          const colWidth = Math.floor((contentW - 28) / 2);
+          legendKeys.forEach((k, idx) => {
+            const col = idx % 2;
+            const row = Math.floor(idx / 2);
+            const lx = 14 + col * colWidth;
+            const ly = 32 + row * 26;
+
+            svg += `<rect x="${lx}" y="${ly}" width="26" height="18" rx="4" fill="#4f46e5" />`;
+            svg += `<text x="${lx + 13}" y="${ly + 12.5}" text-anchor="middle" fill="#ffffff" font-family="JetBrains Mono, monospace" font-size="10.5" font-weight="700">${this.escapeXml(k)}</text>`;
+            svg += `<text x="${lx + 34}" y="${ly + 13}" fill="${defaultTextFill}" font-size="12" font-weight="500">${this.escapeXml(legends[k])}</text>`;
+          });
+          svg += `</g>`;
+        }
+
+        svg += `</g></svg>`;
+        return svg;
+      }
+
+      /**
+       * Converts enhanced ditaa (with inline +---^---+ border arrows) into strict
+       * legacy ditaa by healing the box border to '-' and inserting a dedicated
+       * vertical arrow row immediately below/above so legacy Java ditaa doesn't break polygons.
+       */
+       static exportStrictLegacyDitaa(rawText) {
+        const lines = rawText.replace(/\r\n/g, '\n').split('\n');
+        const outLines = [];
+        let healedArrowsCount = 0;
+        let insertedRowsCount = 0;
+
+        for (let r = 0; r < lines.length; r++) {
+          const line = lines[r];
+          if (line.trim().startsWith('#')) {
+            outLines.push(line);
+            continue;
+          }
+
+          // Detect inline '^' or 'v' sitting inside a horizontal box border (+---^---+)
+          const inlineHorizRegex = /([+/\\.-][-=]*?)([\^v])([0-9a-zA-Z-=]*?[+/\\'-])/g;
+          let hasInlineUpOnBottom = [];
+          let chars = line.split('');
+
+          for (let c = 1; c < chars.length - 1; c++) {
+            const ch = chars[c];
+            const prev = chars[c - 1];
+            const next = chars[c + 1];
+            const isHorizNeighbor = (x) => x === '-' || x === '=' || x === '+';
+
+            if ((ch === '^' || ch === 'v') && isHorizNeighbor(prev) && isHorizNeighbor(next)) {
+              const belowCh = r + 1 < lines.length && c < lines[r + 1].length ? lines[r + 1][c] : ' ';
+              const aboveCh = r > 0 && c < lines[r - 1].length ? lines[r - 1][c] : ' ';
+
+              if (ch === '^' && (belowCh === '|' || belowCh === ':' || belowCh === '+')) {
+                chars[c] = '+'; // Heal the box border for legacy Java ditaa
+                hasInlineUpOnBottom.push({ col: c, dir: '^', wireChar: belowCh === ':' ? ':' : '|' });
+                healedArrowsCount++;
+              } else if (ch === 'v' && (aboveCh === '|' || aboveCh === ':' || aboveCh === '+')) {
+                chars[c] = '+';
+                hasInlineUpOnBottom.push({ col: c, dir: 'v', wireChar: aboveCh === ':' ? ':' : '|' });
+                healedArrowsCount++;
+              }
+            }
+          }
+
+          const healedLine = chars.join('');
+          outLines.push(healedLine);
+
+          // If this line had an upward inline arrow from a wire below, insert the legacy arrow spacer row
+          const upArrows = hasInlineUpOnBottom.filter((a) => a.dir === '^');
+          if (upArrows.length > 0 && r + 1 < lines.length) {
+            const nextLine = lines[r + 1];
+            const spacerChars = Array(Math.max(healedLine.length, nextLine.length)).fill(' ');
+            // Copy vertical continuation pipes from the row below
+            for (let c = 0; c < nextLine.length; c++) {
+              if (nextLine[c] === '|' || nextLine[c] === ':') {
+                spacerChars[c] = nextLine[c];
+              }
+            }
+            for (const ua of upArrows) {
+              spacerChars[ua.col] = '^';
+            }
+            outLines.push(spacerChars.join('').replace(/\s+$/, ''));
+            insertedRowsCount++;
+          }
+        }
+
+        return {
+          sanitizedText: outLines.join('\n'),
+          healedArrowsCount,
+          insertedRowsCount
+        };
+      }
+
+      escapeXml(unsafe) {
+        return unsafe
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&apos;');
+      }
+    }
+
+    /*************************************************************************
+     * 4. 2D SPATIAL GRID MANIPULATION ENGINE (STAMP, SHIFT, RESIZE & STRETCH)
+     *************************************************************************/
+    class Grid2DEditor {
+      /**
+       * Splits raw textarea content into diagram lines and trailing # legend lines,
+       * converting the diagram section into a mutable 2D char array.
+       */
+      static toGridState(rawText, minRows = 1, minCols = 1) {
+        const allLines = rawText.replace(/\r\n/g, '\n').split('\n');
+        const legendLines = [];
+        const diagramLines = [];
+
+        for (let i = 0; i < allLines.length; i++) {
+          const line = allLines[i];
+          if (line.trim().startsWith('#')) {
+            legendLines.push(line);
+          } else {
+            diagramLines.push(line);
+          }
+        }
+
+        const rows = Math.max(diagramLines.length, minRows, 1);
+        const cols = Math.max(
+          diagramLines.reduce((m, l) => Math.max(m, l.length), 0),
+          minCols,
+          1
+        );
+
+        const grid = [];
+        for (let r = 0; r < rows; r++) {
+          const line = diagramLines[r] || '';
+          const rowArr = [];
+          for (let c = 0; c < cols; c++) {
+            rowArr.push(c < line.length ? line[c] : ' ');
+          }
+          grid.push(rowArr);
+        }
+
+        return { grid, rows, cols, legendLines };
+      }
+
+      static ensureSize(state, reqRows, reqCols) {
+        while (state.rows < reqRows) {
+          state.grid.push(Array(state.cols).fill(' '));
+          state.rows++;
+        }
+        if ( reqCols > state.cols ) {
+          const extra = reqCols - state.cols;
+          for (let r = 0; r < state.rows; r++) {
+            for (let k = 0; k < extra; k++) state.grid[r].push(' ');
+          }
+          state.cols = reqCols;
+        }
+      }
+
+      static fromGridState(state) {
+        const outDiagram = state.grid.map((r) => r.join('').replace(/\s+$/, ''));
+        // Remove trailing blank diagram rows
+        while (outDiagram.length > 1 && outDiagram[outDiagram.length - 1] === '') {
+          outDiagram.pop();
+        }
+        if (state.legendLines.length > 0) {
+          return outDiagram.join('\n') + '\n\n' + state.legendLines.join('\n');
+        }
+        return outDiagram.join('\n');
+      }
+
+      static getRowColFromIndex(text, index) {
+        const upTo = text.substring(0, Math.max(0, index));
+        const lines = upTo.split('\n');
+        return {
+          r: lines.length - 1,
+          c: lines[lines.length - 1].length
+        };
+      }
+
+      static getIndexFromRowCol(text, targetR, targetC) {
+        const lines = text.split('\n');
+        let idx = 0;
+        for (let r = 0; r < lines.length; r++) {
+          if (r === targetR) {
+            return idx + Math.min(targetC, lines[r].length);
+          }
+          idx += lines[r].length + 1;
+        }
+        return text.length;
+      }
+
+      /**
+       * Smart Cursor-Aware 2D Box Stamp:
+       * - If the cursor is at or right after a horizontal arrow tip (`-->` or `==>`),
+       *   automatically aligns the new box vertically so its middle row connects to the arrow tip!
+       * - If the cursor is directly below a vertical arrow (`v`), centers the new box under the arrow!
+       * - Stamps into the 2D character matrix without pushing left-hand content down.
+       */
+      static smartStampBox(rawText, cursorR, cursorC, boxTemplateLines, legendEntry = null) {
+        const boxH = boxTemplateLines.length;
+        const boxW = Math.max(...boxTemplateLines.map((l) => l.length));
+
+        const state = this.toGridState(rawText, cursorR + boxH + 4, cursorC + boxW + 10);
+        const { grid } = state;
+
+        let stampR = cursorR;
+        let stampC = cursorC;
+        let connectLeftWallRow = -1;
+        let connectTopWallCol = -1;
+
+        const chAt = (r, c) =>
+          r >= 0 && r < state.rows && c >= 0 && c < state.cols ? grid[r][c] : ' ';
+
+        // Check if cursor is on or immediately to the right of a '>' arrow tip
+        for (let offset = 0; offset <= 2; offset++) {
+          const checkC = cursorC - offset;
+          if (chAt(cursorR, checkC) === '>') {
+            stampC = checkC + 1;
+            stampR = Math.max(0, cursorR - Math.floor(boxH / 2));
+            connectLeftWallRow = cursorR;
+            break;
+          }
+        }
+
+        // Check if cursor is on or immediately below a 'v' vertical arrow tip
+        if (connectLeftWallRow === -1) {
+          for (let rOff = 0; rOff <= 1; rOff++) {
+            const checkR = cursorR - rOff;
+            if (chAt(checkR, cursorC) === 'v') {
+              stampR = checkR + 1;
+              stampC = Math.max(0, cursorC - Math.floor(boxW / 2));
+              connectTopWallCol = cursorC;
+              break;
+            }
+          }
+        }
+
+        // Ensure rows if stampR was clamped to 0 while arrow was near row 0
+        this.ensureSize(state, stampR + boxH + 2, stampC + boxW + 4);
+
+        // Stamp the 2D box characters onto the grid
+        for (let br = 0; br < boxH; br++) {
+          const line = boxTemplateLines[br];
+          for (let bc = 0; bc < line.length; bc++) {
+            state.grid[stampR + br][stampC + bc] = line[bc];
+          }
+        }
+
+        // Add legend macro entry if requested and not already present
+        if (legendEntry) {
+          const exists = state.legendLines.some((l) => l.includes(legendEntry.key));
+          if (!exists) {
+            state.legendLines.push(`# [${legendEntry.key}] = ${legendEntry.val}`);
+          }
+        }
+
+        // Position cursor on the right border middle of the newly stamped box for instant chaining!
+        const nextCursorR = stampR + Math.floor(boxH / 2);
+        const nextCursorC = stampC + boxW - 1;
+
+        return {
+          text: this.fromGridState(state),
+          cursorR: nextCursorR,
+          cursorC: nextCursorC
+        };
+      }
+
+      /**
+       * Smart Arrow Stamper:
+       * - If a box is currently selected, attaches a '+' port on its right (or bottom) wall
+       *   and draws the arrow outward in the 2D grid, placing the cursor right after the tip!
+       */
+      static smartStampArrow(rawText, cursorR, cursorC, activeBox, type = 'solid-right') {
+        const arrowLen = 7;
+        const state = this.toGridState(rawText, cursorR + 8, cursorC + arrowLen + 8);
+
+        let startR = cursorR;
+        let startC = cursorC;
+
+        if (type === 'solid-right' || type === 'dashed-right') {
+          const wireChar = type === 'dashed-right' ? '=' : '-';
+          if (activeBox) {
+            startR = Math.floor((activeBox.r1 + activeBox.r2) / 2);
+            startC = activeBox.c2;
+            this.ensureSize(state, startR + 2, startC + arrowLen + 4);
+            state.grid[startR][startC] = '+';
+            for (let i = 1; i < arrowLen; i++) {
+              state.grid[startR][startC + i] = wireChar;
+            }
+            state.grid[startR][startC + arrowLen] = '>';
+            return {
+              text: this.fromGridState(state),
+              cursorR: startR,
+              cursorC: startC + arrowLen + 1
+            };
+          } else {
+            this.ensureSize(state, startR + 2, startC + arrowLen + 4);
+            for (let i = 0; i < arrowLen - 1; i++) {
+              state.grid[startR][startC + i] = wireChar;
+            }
+            state.grid[startR][startC + arrowLen - 1] = '>';
+            return {
+              text: this.fromGridState(state),
+              cursorR: startR,
+              cursorC: startC + arrowLen
+            };
+          }
+        } else if (type === 'solid-down') {
+          if (activeBox) {
+            startR = activeBox.r2;
+            startC = Math.floor((activeBox.c1 + activeBox.c2) / 2);
+            this.ensureSize(state, startR + 5, startC + 4);
+            state.grid[startR][startC] = '+';
+            state.grid[startR + 1][startC] = '|';
+            state.grid[startR + 2][startC] = '|';
+            state.grid[startR + 3][startC] = 'v';
+            return {
+              text: this.fromGridState(state),
+              cursorR: startR + 4,
+              cursorC: startC
+            };
+          } else {
+            this.ensureSize(state, startR + 4, startC + 4);
+            state.grid[startR][startC] = '|';
+            state.grid[startR + 1][startC] = '|';
+            state.grid[startR + 2][startC] = 'v';
+            return {
+              text: this.fromGridState(state),
+              cursorR: startR + 3,
+              cursorC: startC
+            };
+          }
+        }
+        return { text: rawText, cursorR, cursorC };
+      }
+
+      /**
+       * Shifts an entire 2D box (r1..r2, c1..c2) by (dr, dc) and automatically
+       * stretches or compresses any horizontal/vertical wires & arrows attached to its walls!
+       */
+      static shiftBoxWithElasticWires(rawText, box, dr, dc) {
+        if (!box) return null;
+        if (box.r1 + dr < 0 || box.c1 + dc < 0) return null;
+
+        const state = this.toGridState(rawText, box.r2 + Math.max(0, dr) + 4, box.c2 + Math.max(0, dc) + 6);
+        const { grid } = state;
+        const chAt = (r, c) =>
+          r >= 0 && r < state.rows && c >= 0 && c < state.cols ? grid[r][c] : ' ';
+
+        const isHorizWire = (ch) => ch === '-' || ch === '=' || ch === '>' || ch === '<' || ch === '*';
+        const isVertWire = (ch) => ch === '|' || ch === ':' || ch === '^' || ch === 'v' || ch === '*';
+
+        // 1. Capture attached wires on all 4 walls BEFORE moving the box
+        const leftAttachments = [];
+        const rightAttachments = [];
+        for (let r = box.r1; r <= box.r2; r++) {
+          const lCh = chAt(r, box.c1 - 1);
+          if (isHorizWire(lCh)) {
+            const wireFiller = lCh === '=' || chAt(r, box.c1 - 2) === '=' ? '=' : '-';
+            leftAttachments.push({ r, arrowOrWire: lCh, filler: wireFiller });
+          }
+          const rCh = chAt(r, box.c2 + 1);
+          if (isHorizWire(rCh)) {
+            const wireFiller = rCh === '=' || chAt(r, box.c2 + 2) === '=' ? '=' : '-';
+            rightAttachments.push({ r, arrowOrWire: rCh, filler: wireFiller });
+          }
+        }
+
+        const topAttachments = [];
+        const botAttachments = [];
+        for (let c = box.c1; c <= box.c2; c++) {
+          const tCh = chAt(box.r1 - 1, c);
+          if (isVertWire(tCh)) {
+            const wireFiller = tCh === ':' || chAt(box.r1 - 2, c) === ':' ? ':' : '|';
+            topAttachments.push({ c, arrowOrWire: tCh, filler: wireFiller });
+          }
+          const bCh = chAt(box.r2 + 1, c);
+          if (isVertWire(bCh)) {
+            const wireFiller = bCh === ':' || chAt(box.r2 + 2, c) === ':' ? ':' : '|';
+            botAttachments.push({ c, arrowOrWire: bCh, filler: wireFiller });
+          }
+        }
+
+        // 2. Copy the box's 2D sub-grid and clear its old footprint
+        const boxH = box.r2 - box.r1 + 1;
+        const boxW = box.c2 - box.c1 + 1;
+        const snapshot = [];
+        for (let r = 0; r < boxH; r++) {
+          const rowSnap = [];
+          for (let c = 0; c < boxW; c++) {
+            rowSnap.push(grid[box.r1 + r][box.c1 + c]);
+            grid[box.r1 + r][box.c1 + c] = ' ';
+          }
+          snapshot.push(rowSnap);
+        }
+
+        // 3. Stamp the box at its new (r1 + dr, c1 + dc) coordinates
+        const nr1 = box.r1 + dr;
+        const nc1 = box.c1 + dc;
+        const nr2 = box.r2 + dr;
+        const nc2 = box.c2 + dc;
+
+        for (let r = 0; r < boxH; r++) {
+          for (let c = 0; c < boxW; c++) {
+            grid[nr1 + r][nc1 + c] = snapshot[r][c];
+          }
+        }
+
+        // 4. Heal / Stretch / Compress Attached Wires!
+        if (dc === 1) {
+          // Shifted RIGHT: Stretch left wires into old c1, preserve '>' arrowhead if present
+          for (const att of leftAttachments) {
+            if (att.arrowOrWire === '>') {
+              grid[att.r][box.c1 - 1] = att.filler;
+              grid[att.r][box.c1] = '>';
+            } else {
+              grid[att.r][box.c1] = att.filler;
+            }
+          }
+          // If right wire had '<' pointing into the box, keep '<' flush against nc2+1
+          for (const att of rightAttachments) {
+            if (att.arrowOrWire === '<' && chAt(att.r, nc2 + 2) !== ' ') {
+              grid[att.r][nc2 + 1] = '<';
+            }
+          }
+        } else if (dc === -1) {
+          // Shifted LEFT: Stretch right wires into old c2
+          for (const att of rightAttachments) {
+            if (att.arrowOrWire === '<') {
+              grid[att.r][box.c2 + 1] = att.filler;
+              grid[att.r][box.c2] = '<';
+            } else {
+              grid[att.r][box.c2] = att.filler;
+            }
+          }
+          // Preserve '>' arrowhead on left wall if wire compressed by 1
+          for (const att of leftAttachments) {
+            if (att.arrowOrWire === '>' && nc1 - 1 >= 0) {
+              grid[att.r][nc1 - 1] = '>';
+            }
+          }
+        } else if (dr === 1) {
+          // Shifted DOWN: Stretch top vertical wires into old r1
+          for (const att of topAttachments) {
+            if (att.arrowOrWire === 'v') {
+              grid[box.r1 - 1][att.c] = att.filler;
+              grid[box.r1][att.c] = 'v';
+            } else {
+              grid[box.r1][att.c] = att.filler;
+            }
+          }
+          for (const att of botAttachments) {
+            if (att.arrowOrWire === '^' && chAt(nr2 + 2, att.c) !== ' ') {
+              grid[nr2 + 1][att.c] = '^';
+            }
+          }
+        } else if (dr === -1) {
+          // Shifted UP: Stretch bottom vertical wires into old r2
+          for (const att of botAttachments) {
+            if (att.arrowOrWire === '^') {
+              grid[box.r2 + 1][att.c] = att.filler;
+              grid[box.r2][att.c] = '^';
+            } else {
+              grid[box.r2][att.c] = att.filler;
+            }
+          }
+          for (const att of topAttachments) {
+            if (att.arrowOrWire === 'v' && nr1 - 1 >= 0) {
+              grid[nr1 - 1][att.c] = 'v';
+            }
+          }
+        }
+
+        return {
+          text: this.fromGridState(state),
+          cursorR: Math.floor((nr1 + nr2) / 2),
+          cursorC: Math.floor((nc1 + nc2) / 2)
+        };
+      }
+
+      /**
+       * Resizes a box horizontally (dw = +2 or -2) or vertically (dh = +1 or -1)
+       * while keeping connected wires attached to the moving right/bottom walls!
+       */
+      static resizeBox(rawText, box, dw, dh) {
+        if (!box) return null;
+        const curW = box.c2 - box.c1;
+        const curH = box.r2 - box.r1;
+        if (curW + dw < 3 || curH + dh < 2) return null;
+
+        const state = this.toGridState(rawText, box.r2 + Math.max(0, dh) + 4, box.c2 + Math.max(0, dw) + 6);
+        const { grid } = state;
+
+        if (dw !== 0) {
+          // Horizontal resize: insert or remove columns just before right wall c2 on rows r1..r2
+          for (let r = box.r1; r <= box.r2; r++) {
+            const isTopOrBot = r === box.r1 || r === box.r2;
+            const fillCh = isTopOrBot
+              ? grid[r][box.c1 + 1] === '='
+                ? '='
+                : '-'
+              : ' ';
+
+            if (dw > 0) {
+              // Insert dw characters at box.c2, pushing right wall and any attached wires right
+              const insertArr = Array(dw).fill(fillCh);
+              grid[r].splice(box.c2, 0, ...insertArr);
+              state.cols = Math.max(state.cols, grid[r].length);
+            } else {
+              const removeCount = Math.abs(dw);
+              // Shrink before right wall c2
+              grid[r].splice(box.c2 - removeCount, removeCount);
+              while (grid[r].length < state.cols) grid[r].push(' ');
+            }
+          }
+        }
+
+        if (dh !== 0) {
+          if (dh > 0) {
+            // Insert a new interior row just above bottom wall r2
+            const newRow = Array(state.cols).fill(' ');
+            newRow[box.c1] = grid[box.r1 + 1][box.c1] === ':' ? ':' : '|';
+            newRow[box.c2] = grid[box.r1 + 1][box.c2] === ':' ? ':' : '|';
+
+            // Copy vertical wires outside the box's horizontal span so parallel columns aren't broken
+            for (let c = 0; c < state.cols; c++) {
+              if (c < box.c1 || c > box.c2) {
+                if (grid[box.r2][c] === '|' || grid[box.r2][c] === ':') {
+                  newRow[c] = grid[box.r2][c];
+                }
+              }
+            }
+            grid.splice(box.r2, 0, newRow);
+            state.rows++;
+          } else if (dh < 0 && curH > 2) {
+            // Remove the bottom-most interior row (r2 - 1) if it is mostly empty or shift bottom wall up
+            const targetR = box.r2 - 1;
+            for (let c = box.c1; c <= box.c2; c++) {
+              grid[targetR][c] = grid[box.r2][c];
+              grid[box.r2][c] = ' ';
+            }
+            // Stretch any vertical wires attached below box.r2 up into box.r2
+            for (let c = box.c1; c <= box.c2; c++) {
+              if (box.r2 + 1 < state.rows) {
+                const below = grid[box.r2 + 1][c];
+                if (below === '|' || below === ':' || below === '^' || below === 'v') {
+                  grid[box.r2][c] = below === '^' ? '^' : below === ':' ? ':' : '|';
+                  if (below === '^') grid[box.r2 + 1][c] = '|';
+                }
+              }
+            }
+          }
+        }
+
+        const finalR2 = box.r2 + dh;
+        const finalC2 = box.c2 + dw;
+        return {
+          text: this.fromGridState(state),
+          cursorR: Math.floor((box.r1 + finalR2) / 2),
+          cursorC: Math.floor((box.c1 + finalC2) / 2)
+        };
+      }
+    }
+
+    /*************************************************************************
+     * 5. UI CONTROLLER, UNDO STACK & INTERACTIVITY
+     *************************************************************************/
+    const editor = document.getElementById('ascii-editor');
+    const svgWrapper = document.getElementById('svg-wrapper');
+    const presetSelect = document.getElementById('preset-select');
+    const cursorPosEl = document.getElementById('cursor-pos');
+    const gridDimsEl = document.getElementById('grid-dims');
+    const detectedStatsEl = document.getElementById('detected-stats');
+    const activeBoxPill = document.getElementById('active-box-pill');
+    const toastEl = document.getElementById('toast-indicator');
+
+    const toggleInlineArrows = document.getElementById('toggle-inline-arrows');
+    const selectLegendMode = document.getElementById('select-legend-mode');
+    const toggleShadows = document.getElementById('toggle-shadows');
+    const toggleGrid = document.getElementById('toggle-grid');
+    const toggleLightCanvas = document.getElementById('toggle-light-canvas');
+
+    let currentZoom = 1;
+    let lastSvgMarkup = '';
+    let lastAst = null;
+    let activeBoxIndex = -1;
+    let macroCounter = 1;
+
+    // Undo / Redo History Stack
+    const undoStack = [];
+    const redoStack = [];
+
+    function pushUndoState() {
+      undoStack.push({
+        text: editor.value,
+        selStart: editor.selectionStart
+      });
+      if (undoStack.length > 60) undoStack.shift();
+      redoStack.length = 0;
+    }
+
+    function applyGridOperationResult(res, msg) {
+      if (!res) return;
+      pushUndoState();
+      editor.value = res.text;
+      const newIdx = Grid2DEditor.getIndexFromRowCol(editor.value, res.cursorR, res.cursorC);
+      editor.focus();
+      editor.selectionStart = editor.selectionEnd = newIdx;
+      renderDiagram();
+      updateCursorStatus();
+      if (msg) showToast(msg);
+    }
+
+    function showToast(msg) {
+      toastEl.textContent = msg;
+      toastEl.classList.remove('opacity-0');
+      setTimeout(() => toastEl.classList.add('opacity-0'), 2200);
+    }
+
+    function detectActiveBoxAtCursor() {
+      if (!lastAst || !lastAst.boxes) return -1;
+      const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+      for (let i = 0; i < lastAst.boxes.length; i++) {
+        const b = lastAst.boxes[i];
+        if (r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    function updateActiveBoxUI() {
+      activeBoxIndex = detectActiveBoxAtCursor();
+      if (activeBoxIndex !== -1 && lastAst && lastAst.boxes[activeBoxIndex]) {
+        const b = lastAst.boxes[activeBoxIndex];
+        const title = b.macroKey ? `[${b.macroKey}]` : (b.lines[0] || 'Box');
+        activeBoxPill.textContent = `Selected: "${title}" (${b.c2 - b.c1 + 1}×${b.r2 - b.r1 + 1})`;
+        activeBoxPill.className =
+          'text-[11px] font-mono px-2.5 py-1 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 truncate max-w-[230px]';
+      } else {
+        activeBoxPill.textContent = 'No Box Selected (Click box)';
+        activeBoxPill.className =
+          'text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800/90 text-slate-400 border border-slate-700 truncate max-w-[230px]';
+      }
+    }
+
+    function renderDiagram() {
+      const parser = new DitaaParser({
+        healInlineArrows: toggleInlineArrows.checked,
+        legendMode: selectLegendMode.value,
+        showShadows: toggleShadows.checked,
+        showGrid: toggleGrid.checked,
+        lightCanvas: toggleLightCanvas.checked
+      });
+
+      lastAst = parser.parse(editor.value);
+      updateActiveBoxUI();
+      lastSvgMarkup = parser.renderSVG(lastAst, activeBoxIndex);
+      svgWrapper.innerHTML = lastSvgMarkup;
+
+      // Attach Click-to-Select Box handler inside SVG preview!
+      svgWrapper.querySelectorAll('.ditaa-box').forEach((gEl) => {
+        gEl.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          const idx = parseInt(gEl.getAttribute('data-box-index'), 10);
+          if (!isNaN(idx) && lastAst.boxes[idx]) {
+            const box = lastAst.boxes[idx];
+            const midR = Math.floor((box.r1 + box.r2) / 2);
+            const midC = Math.floor((box.c1 + box.c2) / 2);
+            const charIdx = Grid2DEditor.getIndexFromRowCol(editor.value, midR, midC);
+            editor.focus();
+            editor.selectionStart = editor.selectionEnd = charIdx;
+            updateCursorStatus();
+            renderDiagram();
+            showToast(`Selected box #${idx + 1} — Use Shift/Size buttons or Alt+Arrows!`);
+          }
+        });
+      });
+
+      gridDimsEl.textContent = `Grid: ${lastAst.numCols}×${lastAst.numRows}`;
+      const legendCount = Object.keys(lastAst.legends).length;
+      const inlineCount = lastAst.arrows.filter((a) => a.inline).length;
+      detectedStatsEl.textContent = `${lastAst.boxes.length} Boxes • ${inlineCount} Inline '^' • ${legendCount} Legends`;
+    }
+
+    function updateCursorStatus() {
+      const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+      cursorPosEl.textContent = `Row ${r + 1}, Col ${c + 1}`;
+      const prevIdx = activeBoxIndex;
+      updateActiveBoxUI();
+      if (prevIdx !== activeBoxIndex && lastAst) {
+        const parser = new DitaaParser({
+          healInlineArrows: toggleInlineArrows.checked,
+          legendMode: selectLegendMode.value,
+          showShadows: toggleShadows.checked,
+          showGrid: toggleGrid.checked,
+          lightCanvas: toggleLightCanvas.checked
+        });
+        lastSvgMarkup = parser.renderSVG(lastAst, activeBoxIndex);
+        svgWrapper.innerHTML = lastSvgMarkup;
+      }
+    }
+
+    // Event Listeners
+    editor.addEventListener('input', () => {
+      renderDiagram();
+      updateCursorStatus();
+    });
+    editor.addEventListener('click', updateCursorStatus);
+    editor.addEventListener('keyup', updateCursorStatus);
+
+    // Keyboard Shortcuts: Alt+Arrows to Shift Box, Alt+Shift+Arrows to Resize Box
+    editor.addEventListener('keydown', (e) => {
+      if (e.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+        const box = activeBoxIndex !== -1 ? lastAst.boxes[activeBoxIndex] : null;
+        if (!box) return;
+        e.preventDefault();
+
+        if (e.shiftKey) {
+          // Resize Active Box
+          if (e.key === 'ArrowRight') applyGridOperationResult(Grid2DEditor.resizeBox(editor.value, box, 2, 0), 'Expanded width +2');
+          if (e.key === 'ArrowLeft') applyGridOperationResult(Grid2DEditor.resizeBox(editor.value, box, -2, 0), 'Shrank width -2');
+          if (e.key === 'ArrowDown') applyGridOperationResult(Grid2DEditor.resizeBox(editor.value, box, 0, 1), 'Expanded height +1');
+          if (e.key === 'ArrowUp') applyGridOperationResult(Grid2DEditor.resizeBox(editor.value, box, 0, -1), 'Shrank height -1');
+        } else {
+          // Shift Active Box & Stretch Attached Wires
+          if (e.key === 'ArrowRight') applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, 0, 1), 'Shifted Box →');
+          if (e.key === 'ArrowLeft') applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, 0, -1), 'Shifted Box ←');
+          if (e.key === 'ArrowDown') applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, 1, 0), 'Shifted Box ↓');
+          if (e.key === 'ArrowUp') applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, -1, 0), 'Shifted Box ↑');
+        }
+      }
+    });
+
+    presetSelect.addEventListener('change', (e) => {
+      const key = e.target.value;
+      if (PRESETS[key]) {
+        pushUndoState();
+        editor.value = PRESETS[key];
+        renderDiagram();
+        updateCursorStatus();
+      }
+    });
+
+    [toggleInlineArrows, selectLegendMode, toggleShadows, toggleGrid, toggleLightCanvas].forEach((el) => {
+      el.addEventListener('change', renderDiagram);
+    });
+
+    // 2D Smart Stampers
+    document.getElementById('stamp-box').addEventListener('click', () => {
+      const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+      const tpl = [
+        '+--------------+',
+        '|  Component   |',
+        '|  cBLU        |',
+        '+--------------+'
+      ];
+      applyGridOperationResult(
+        Grid2DEditor.smartStampBox(editor.value, r, c, tpl),
+        'Stamped 2D Box (Aligned to cursor/arrow!)'
+      );
+    });
+
+    document.getElementById('stamp-rbox').addEventListener('click', () => {
+      const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+      const tpl = [
+        '/--------------\\',
+        '|  Service     |',
+        '|  cGRE        |',
+        '\\--------------/'
+      ];
+      applyGridOperationResult(
+        Grid2DEditor.smartStampBox(editor.value, r, c, tpl),
+        'Stamped Rounded 2D Box!'
+      );
+    });
+
+    document.getElementById('stamp-4x4').addEventListener('click', () => {
+      const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+      const key = `M${macroCounter++}`;
+      const tpl = [
+        '+-----+',
+        `| [${key}] |`,
+        '|cYEL |',
+        '+-----+'
+      ];
+      applyGridOperationResult(
+        Grid2DEditor.smartStampBox(editor.value, r, c, tpl, { key, val: `Module ${key}` }),
+        `Stamped [${key}] 4x4 Box + Legend!`
+      );
+    });
+
+    document.getElementById('stamp-arrow-right').addEventListener('click', () => {
+      const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+      const box = activeBoxIndex !== -1 ? lastAst.boxes[activeBoxIndex] : null;
+      applyGridOperationResult(
+        Grid2DEditor.smartStampArrow(editor.value, r, c, box, 'solid-right'),
+        'Attached solid arrow ──> (Click +Box+ next!)'
+      );
+    });
+
+    document.getElementById('stamp-darrow-right').addEventListener('click', () => {
+      const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+      const box = activeBoxIndex !== -1 ? lastAst.boxes[activeBoxIndex] : null;
+      applyGridOperationResult(
+        Grid2DEditor.smartStampArrow(editor.value, r, c, box, 'dashed-right'),
+        'Attached dotted arrow ==> (Click +Box+ next!)'
+      );
+    });
+
+    document.getElementById('stamp-arrow-down').addEventListener('click', () => {
+      const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+      const box = activeBoxIndex !== -1 ? lastAst.boxes[activeBoxIndex] : null;
+      applyGridOperationResult(
+        Grid2DEditor.smartStampArrow(editor.value, r, c, box, 'solid-down'),
+        'Attached down arrow │v (Click +Box+ next!)'
+      );
+    });
+
+    document.getElementById('stamp-inline-up').addEventListener('click', () => {
+      const box = activeBoxIndex !== -1 ? lastAst.boxes[activeBoxIndex] : null;
+      if (box) {
+        const state = Grid2DEditor.toGridState(editor.value);
+        const midC = Math.floor((box.c1 + box.c2) / 2);
+        state.grid[box.r2][midC] = '^';
+        applyGridOperationResult(
+          { text: Grid2DEditor.fromGridState(state), cursorR: box.r2, cursorC: midC },
+          'Added inline ^ arrow on bottom border!'
+        );
+      } else {
+        const { r, c } = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionStart);
+        applyGridOperationResult(
+          Grid2DEditor.smartStampBox(editor.value, r, c, ['+------^-------+']),
+          'Stamped inline +---^---+ border!'
+        );
+      }
+    });
+
+    // Tag & Color Quick-Toggle on Active Box
+    document.querySelectorAll('.tag-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tag = btn.getAttribute('data-tag');
+        const box = activeBoxIndex !== -1 ? lastAst.boxes[activeBoxIndex] : null;
+        if (!box) {
+          showToast('Click inside a box first to apply shape/color tag!');
+          return;
+        }
+        const state = Grid2DEditor.toGridState(editor.value);
+        const targetRow = box.r2 - 1;
+        let rowStr = state.grid[targetRow].slice(box.c1 + 1, box.c2).join('');
+        if (tag.startsWith('c')) {
+          rowStr = rowStr.replace(/\b(cBLU|cGRE|cYEL|cRED|cPNK|cBLK)\b/g, '').trim();
+        }
+        const updated = (` ${rowStr} ${tag}`).slice(0, box.c2 - box.c1 - 1).padEnd(box.c2 - box.c1 - 1, ' ');
+        for (let i = 0; i < updated.length; i++) {
+          state.grid[targetRow][box.c1 + 1 + i] = updated[i];
+        }
+        applyGridOperationResult(
+          { text: Grid2DEditor.fromGridState(state), cursorR: targetRow, cursorC: box.c1 + 2 },
+          `Applied ${tag} to selected box!`
+        );
+      });
+    });
+
+    // 4-Way Shift Box Buttons
+    const triggerShift = (dr, dc, label) => {
+      const box = activeBoxIndex !== -1 ? lastAst.boxes[activeBoxIndex] : null;
+      if (!box) {
+        showToast('Click inside a box (or click a box in the SVG) first!');
+        return;
+      }
+      applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, dr, dc), label);
+    };
+
+    document.getElementById('shift-left').addEventListener('click', () => triggerShift(0, -1, 'Shifted Box Left ←'));
+    document.getElementById('shift-right').addEventListener('click', () => triggerShift(0, 1, 'Shifted Box Right →'));
+    document.getElementById('shift-up').addEventListener('click', () => triggerShift(-1, 0, 'Shifted Box Up ↑'));
+    document.getElementById('shift-down').addEventListener('click', () => triggerShift(1, 0, 'Shifted Box Down ↓'));
+
+    // 4-Way Resize Box Buttons
+    const triggerResize = (dw, dh, label) => {
+      const box = activeBoxIndex !== -1 ? lastAst.boxes[activeBoxIndex] : null;
+      if (!box) {
+        showToast('Click inside a box (or click a box in the SVG) first!');
+        return;
+      }
+      applyGridOperationResult(Grid2DEditor.resizeBox(editor.value, box, dw, dh), label);
+    };
+
+    document.getElementById('resize-wider').addEventListener('click', () => triggerResize(2, 0, 'Expanded Box Width +2'));
+    document.getElementById('resize-narrower').addEventListener('click', () => triggerResize(-2, 0, 'Shrank Box Width -2'));
+    document.getElementById('resize-taller').addEventListener('click', () => triggerResize(0, 1, 'Expanded Box Height +1'));
+    document.getElementById('resize-shorter').addEventListener('click', () => triggerResize(0, -1, 'Shrank Box Height -1'));
+
+    // Undo / Redo / Clear
+    document.getElementById('btn-undo').addEventListener('click', () => {
+      if (undoStack.length === 0) return;
+      redoStack.push({ text: editor.value, selStart: editor.selectionStart });
+      const prev = undoStack.pop();
+      editor.value = prev.text;
+      editor.selectionStart = editor.selectionEnd = prev.selStart;
+      renderDiagram();
+      updateCursorStatus();
+      showToast('Undo');
+    });
+
+    document.getElementById('btn-redo').addEventListener('click', () => {
+      if (redoStack.length === 0) return;
+      undoStack.push({ text: editor.value, selStart: editor.selectionStart });
+      const next = redoStack.pop();
+      editor.value = next.text;
+      editor.selectionStart = editor.selectionEnd = next.selStart;
+      renderDiagram();
+      updateCursorStatus();
+      showToast('Redo');
+    });
+
+    document.getElementById('btn-clear').addEventListener('click', () => {
+      pushUndoState();
+      editor.value = '';
+      renderDiagram();
+      editor.focus();
+    });
+
+    // Zoom Controls
+    const zoomLabel = document.getElementById('zoom-label');
+    function applyZoom() {
+      svgWrapper.style.transform = `scale(${currentZoom})`;
+      zoomLabel.textContent = `${Math.round(currentZoom * 100)}%`;
+    }
+    document.getElementById('btn-zoom-in').addEventListener('click', () => {
+      currentZoom = Math.min(2.5, +(currentZoom + 0.15).toFixed(2));
+      applyZoom();
+    });
+    document.getElementById('btn-zoom-out').addEventListener('click', () => {
+      currentZoom = Math.max(0.4, +(currentZoom - 0.15).toFixed(2));
+      applyZoom();
+    });
+    document.getElementById('btn-zoom-reset').addEventListener('click', () => {
+      currentZoom = 1;
+      applyZoom();
+    });
+
+    // Download SVG
+    document.getElementById('btn-download-svg').addEventListener('click', () => {
+      const blob = new Blob([lastSvgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ditaa-diagram-${Date.now()}.svg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('Downloaded SVG!');
+    });
+
+    // Download PNG
+    document.getElementById('btn-download-png').addEventListener('click', () => {
+      const svgEl = svgWrapper.querySelector('svg');
+      if (!svgEl) return;
+      const w = parseInt(svgEl.getAttribute('width'), 10) || 800;
+      const h = parseInt(svgEl.getAttribute('height'), 10) || 600;
+
+      const img = new Image();
+      const svgBlob = new Blob([lastSvgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = 2; // Retina 2x export
+        canvas.width = w * scale;
+        canvas.height = h * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+
+        canvas.toBlob((pngBlob) => {
+          const pngUrl = URL.createObjectURL(pngBlob);
+          const a = document.createElement('a');
+          a.href = pngUrl;
+          a.download = `ditaa-diagram-${Date.now()}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(pngUrl);
+          showToast('Downloaded 2x Retina PNG!');
+        }, 'image/png');
+      };
+      img.src = url;
+    });
+
+    // Strict Legacy Backend ditaa Modal
+    const legacyModal = document.getElementById('legacy-modal');
+    const legacyOutput = document.getElementById('legacy-ascii-output');
+    const legacyDiffSummary = document.getElementById('legacy-diff-summary');
+
+    document.getElementById('btn-legacy-modal').addEventListener('click', () => {
+      const res = DitaaParser.exportStrictLegacyDitaa(editor.value);
+      legacyOutput.textContent = res.sanitizedText;
+      legacyDiffSummary.textContent = `Healed ${res.healedArrowsCount} inline border arrow(s) • Inserted ${res.insertedRowsCount} vertical spacer row(s) for Java ditaa compatibility`;
+      legacyModal.classList.remove('hidden');
+      legacyModal.classList.add('flex');
+    });
+
+    document.getElementById('btn-close-modal').addEventListener('click', () => {
+      legacyModal.classList.add('hidden');
+      legacyModal.classList.remove('flex');
+    });
+
+    document.getElementById('btn-copy-legacy').addEventListener('click', () => {
+      const temp = document.createElement('textarea');
+      temp.value = legacyOutput.textContent;
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand('copy');
+      document.body.removeChild(temp);
+      showToast('Copied sanitized backend ditaa!');
+    });
+
+    document.getElementById('btn-apply-legacy').addEventListener('click', () => {
+      editor.value = legacyOutput.textContent;
+      legacyModal.classList.add('hidden');
+      legacyModal.classList.remove('flex');
+      renderDiagram();
+    });
+
+    // Initialize with Preset 1 on load
+    window.onload = () => {
+      editor.value = PRESETS.arch;
+      renderDiagram();
+      updateCursorStatus();
+    };
+  </script>
+</body>
+</html>
