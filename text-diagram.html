@@ -1390,6 +1390,10 @@
      * Shifts a box by (dr, dc) and stretches/compresses wires attached to its walls.
      */
     static shiftBoxWithElasticWires(rawText, box, dr, dc) {
+      return this.guardOtherBoxes(rawText, this.shiftBoxUnchecked(rawText, box, dr, dc), 'move');
+    }
+
+    static shiftBoxUnchecked(rawText, box, dr, dc) {
       if (!box) return null;
       if (box.r1 + dr < 0 || box.c1 + dc < 0) return { error: 'Box is already at the edge' };
 
@@ -1661,7 +1665,37 @@
       };
     }
 
+    /**
+     * Atomic safety net for grid operations on one box: parses the diagram before and after
+     * and refuses the whole operation if any box disappears or any box's label, tags, shape
+     * or legend key changes (the operated box keeps those too; only its size/position may
+     * change). Glyph-level checks can't see that, e.g. removing the last interior column of
+     * a small empty box elsewhere collapses it.
+     */
+    static guardOtherBoxes(rawText, res, verb) {
+      if (!res || res.error) return res;
+      const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
+      const parser = new DitaaParser();
+      const before = parser.parse(rawText).boxes;
+      const remaining = parser.parse(res.text).boxes.map(sig);
+      for (const b of before) {
+        const i = remaining.indexOf(sig(b));
+        if (i === -1) {
+          const name = b.macroKey ? `[${b.macroKey}]` : b.lines[0] ? `"${b.lines[0]}"` : `the box at line ${b.r1 + 1}`;
+          return { error: `Cannot ${verb}: it would break ${name}` };
+        }
+        remaining.splice(i, 1);
+      }
+      if (remaining.length > 0) return { error: `Cannot ${verb}: it would merge lines into a new box` };
+      return res;
+    }
+
     static resizeBox(rawText, box, dw, dh) {
+      const verb = dw > 0 ? 'widen' : dw < 0 ? 'narrow' : dh > 0 ? 'make taller' : 'make shorter';
+      return this.guardOtherBoxes(rawText, this.resizeBoxUnchecked(rawText, box, dw, dh), verb);
+    }
+
+    static resizeBoxUnchecked(rawText, box, dw, dh) {
       if (!box) return null;
       if (box.shape === 'choice') return this.resizeDiamond(rawText, box, Math.sign(dw) * 2, Math.sign(dh) * 2);
       const curW = box.c2 - box.c1;

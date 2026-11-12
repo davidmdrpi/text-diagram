@@ -457,12 +457,41 @@ test('regression (PR #1 review): recolouring a container keeps its children\'s t
   assert.equal(after.find((b) => b.colorKey === 'cRED').shape, 'rect');
 });
 
-test('no resize or tag operation on one box changes any other box (all presets)', () => {
+test('regression (PR #3 follow-up review): narrowing never collapses a small empty box elsewhere', () => {
+  const text = '+------+\n| A    |\n+------+\n\n    +--+\n    |  |\n    +--+';
+  assert.equal(parse(text).boxes.length, 2);
+  const res = Grid2DEditor.resizeBox(text, parse(text).boxes[0], -2, 0);
+  assert.ok(res.error, 'refused');
+  assert.match(res.error, /line 5/);
+});
+
+test('moving a box onto another box is refused', () => {
+  const text = '+---++---+\n| A || B |\n+---++---+';
+  const a = parse(text).boxes.find((b) => b.lines[0] === 'A');
+  assert.ok(Grid2DEditor.shiftBoxWithElasticWires(text, a, 0, 1).error);
+});
+
+test('no resize, move or tag operation on one box changes any other box (presets + edge layouts)', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
   const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
   const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
+  // Small/empty/adjacent boxes that the presets don't exercise
+  Object.assign(PRESETS, {
+    smallEmptyBelow: '+------+\n| A    |\n+------+\n\n    +--+\n    |  |\n    +--+',
+    smallEmptyAbove: '    +--+\n    |  |\n    +--+\n\n+------+\n| A    |\n+------+',
+    tallNeighbour: '+---+  +---+\n| A |  | B |\n|   |  |   |\n+---+  |   |\n       +---+',
+    touching: '+---++---+\n| A || B |\n+---++---+',
+    stacked: '+-----+\n| A   |\n+-----+\n| B   |\n+-----+',
+    grid3: '+--+ +--+ +--+\n|  | |  | |  |\n+--+ +--+ +--+\n+--+ +--+ +--+\n|  | |  | |  |\n+--+ +--+ +--+',
+    diamondPair: [
+      '  +--+',
+      '  |  |',
+      '  +--+',
+      ...Grid2DEditor.diamondTemplate('X?')
+    ].join('\n')
+  });
   const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
 
   const ops = [
@@ -470,6 +499,10 @@ test('no resize or tag operation on one box changes any other box (all presets)'
     ['narrower', (t, b) => Grid2DEditor.resizeBox(t, b, -2, 0)],
     ['taller', (t, b) => Grid2DEditor.resizeBox(t, b, 0, 1)],
     ['shorter', (t, b) => Grid2DEditor.resizeBox(t, b, 0, -1)],
+    ['left', (t, b) => Grid2DEditor.shiftBoxWithElasticWires(t, b, 0, -1)],
+    ['right', (t, b) => Grid2DEditor.shiftBoxWithElasticWires(t, b, 0, 1)],
+    ['up', (t, b) => Grid2DEditor.shiftBoxWithElasticWires(t, b, -1, 0)],
+    ['down', (t, b) => Grid2DEditor.shiftBoxWithElasticWires(t, b, 1, 0)],
     ['cRED', (t, b) => Grid2DEditor.toggleTag(t, b, 'cRED')],
     ['{s}', (t, b) => Grid2DEditor.toggleTag(t, b, '{s}')]
   ];
