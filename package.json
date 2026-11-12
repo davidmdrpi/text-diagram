@@ -5,6 +5,10 @@
   "description": "Inline browser editor for ditaa-style ASCII diagrams with live SVG rendering.",
   "license": "MIT",
   "scripts": {
+    "build": "node build.js",
     "test": "node --test"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.16"
   }
 }
