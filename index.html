@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>text-diagram Studio</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <script>
+    if (window.tailwind) tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom scrollbars and canvas utilities */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
+    ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.5); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.8); }
+    
+    #ascii-editor {
+      tab-size: 4;
+      line-height: 1.35;
+      letter-spacing: 0px;
+      font-variant-ligatures: none;
+    }
+
+    .checkerboard-bg {
+      background-color: #f8fafc;
+      background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+      background-size: 16px 16px;
+    }
+    .dark .checkerboard-bg {
+      background-color: #0b1120;
+      background-image: radial-gradient(#1e293b 1px, transparent 1px);
+      background-size: 16px 16px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans h-screen flex flex-col overflow-hidden select-none">
+
+  <!-- Top Navigation & Global Controls -->
+  <header class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0 z-20">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-mono font-bold text-sm shadow-inner">
+        +^v+
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-bold text-base tracking-tight text-white">ditaa Studio <span class="text-xs font-mono uppercase px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Local Engine</span></h1>
+        </div>
+        <p class="text-xs text-slate-400">Zero-dependency 2D ASCII Grid Parser • Inline <code class="text-indigo-300">+--^--+</code> Border Healing • 4x4 Legend Macros</p>
+      </div>
+    </div>
+
+    <!-- Preset Selector -->
+    <div class="flex items-center gap-2 flex-wrap">
+      <label for="preset-select" class="text-xs font-medium text-slate-400">Preset Diagram:</label>
+      <select id="preset-select" class="bg-slate-800 text-slate-100 text-xs font-medium rounded-lg px-3 py-1.5 border border-slate-700 focus:outline-none focus:border-indigo-500 transition">
+        <option value="arch">1. Pipeline w/ Inline '^' Arrows & 4x4 Legend</option>
+        <option value="showcase">2. Complete ditaa Shapes, Colors & Wires Catalog</option>
+        <option value="microservices">3. Dense 4x4 Box Grid with Macro Legend</option>
+        <option value="legacy_comparison">4. Inline '^' Stress Test (Zero-Line Waste)</option>
+        <option value="nested">5. Nested Boxes (Container + Children)</option>
+      </select>
+
+      <div class="h-5 w-px bg-slate-800 mx-1"></div>
+
+      <!-- Export & Backend Sanitizer Actions -->
+      <button id="btn-legacy-modal" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition shadow-sm" title="Expand inline border arrows into strict multi-row legacy ditaa for your company backend">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+        Export Strict Backend ditaa
+      </button>
+
+      <button id="btn-download-svg" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        SVG
+      </button>
+
+      <button id="btn-download-png" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        PNG
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace Split View -->
+  <main class="flex-1 flex flex-col lg:flex-row overflow-hidden">
+
+    <!-- LEFT PANE: Monospace ASCII Editor & 2D Spatial Manipulation Toolbar -->
+    <section class="w-full lg:w-[48%] h-1/2 lg:h-full flex flex-col border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-900/70">
+      
+      <!-- Row 1: Smart 2D Stamp Bar (Cursor & Arrow Aware!) -->
+      <div class="px-3 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mr-0.5">2D Stamp:</span>
+          <button id="stamp-box" class="text-xs font-mono px-2 py-1 rounded bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/40 transition shadow-sm" title="Smart Stamp Box: Connects to arrows at cursor or stamps in 2D grid">+Box+</button>
+          <button id="stamp-rbox" class="text-xs font-mono px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-200 border border-indigo-500/30 transition" title="Smart Stamp Rounded Box">/Round\</button>
+          <button id="stamp-4x4" class="text-xs font-mono px-2 py-1 rounded bg-purple-600/25 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 transition" title="Smart Stamp 4x3 Legend Macro Box">[D] 4x3</button>
+
+          <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
+
+          <button id="stamp-arrow-right" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach solid right arrow from active box or cursor">──&gt;</button>
+          <button id="stamp-darrow-right" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach dotted/dashed right arrow from active box or cursor">==&gt;</button>
+          <button id="stamp-arrow-down" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach vertical down arrow from active box bottom">│v</button>
+          <button id="stamp-inline-up" class="text-xs font-mono px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/30 transition" title="Stamp inline '^' arrow directly on box border">+--^--+</button>
+
+          <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
+
+          <button data-tag="{s}" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition" title="Inject {s} Cylinder Tag into Active Box">{s}</button>
+          <button data-tag="{d}" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 transition" title="Inject {d} Document Tag into Active Box">{d}</button>
+          <button data-tag="cBLU" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cBLU</button>
+          <button data-tag="cGRE" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cGRE</button>
+          <button data-tag="cYEL" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-yellow-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cYEL</button>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button id="btn-undo" class="text-xs font-mono px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="Undo (Ctrl+Z)">↶</button>
+          <button id="btn-redo" class="text-xs font-mono px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="Redo (Ctrl+Y)">↷</button>
+          <button id="btn-clear" class="text-xs text-slate-400 hover:text-rose-400 px-2 py-1 rounded transition">Clear</button>
+        </div>
+      </div>
+
+      <!-- Row 2: Active Box Shift & Resize Deck (With Elastic Wire Stretching!) -->
+      <div class="px-3 py-1.5 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap">
+          <!-- Shift Box Controls -->
+          <div class="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-emerald-400 mr-1" title="Moves entire 2D box and stretches/shrinks attached arrows! (Shortcut: Alt + Arrow Keys)">Shift Box:</span>
+            <button id="shift-left" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Left 1 Col & Stretch Right Wires (Alt+Left)">←</button>
+            <button id="shift-up" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Up 1 Row & Stretch Bottom Wires (Alt+Up)">↑</button>
+            <button id="shift-down" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Down 1 Row & Stretch Top Wires (Alt+Down)">↓</button>
+            <button id="shift-right" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Right 1 Col & Stretch Left Wires (Alt+Right)">→</button>
+          </div>
+
+          <!-- Resize Box Controls -->
+          <div class="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-amber-400 mr-1" title="Expands or shrinks the selected box walls and pushes connected wires! (Shortcut: Alt+Shift+Arrow)">Size Box:</span>
+            <button id="resize-wider" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Expand Box Width +2 Cols (Alt+Shift+Right)">↔ +W</button>
+            <button id="resize-narrower" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shrink Box Width -2 Cols (Alt+Shift+Left)">&gt;&lt; -W</button>
+            <button id="resize-taller" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Expand Box Height +1 Row (Alt+Shift+Down)">↕ +H</button>
+            <button id="resize-shorter" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shrink Box Height -1 Row (Alt+Shift+Up)">^v -H</button>
+          </div>
+        </div>
+
+        <!-- Active Box Status Pill -->
+        <div id="active-box-pill" class="text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800/90 text-slate-400 border border-slate-700 truncate max-w-[230px]" title="Click inside any ASCII box or click a box in the SVG preview to select it">
+          No Box Selected (Click box)
+        </div>
+      </div>
+
+      <!-- Editor Container -->
+      <div class="relative flex-1 flex overflow-hidden">
+        <textarea
+          id="ascii-editor"
+          spellcheck="false"
+          wrap="off"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          class="w-full h-full bg-slate-950 text-slate-100 font-mono text-[13px] p-4 focus:outline-none resize-none overflow-auto selection:bg-indigo-500/30"
+          placeholder="Paste or type any ditaa ASCII diagram here..."></textarea>
+      </div>
+
+      <!-- Editor Footer Status Bar -->
+      <div class="px-3 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono text-slate-400">
+        <div class="flex items-center gap-4">
+          <span id="cursor-pos" class="text-emerald-400 font-semibold">Row 1, Col 1</span>
+          <span id="grid-dims">Grid: 0x0</span>
+          <span id="detected-stats" class="text-indigo-400">0 Boxes • 0 Legends</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-500 hidden sm:inline">Shortcuts: <code class="text-slate-300">Alt+Arrows</code> Shift • <code class="text-slate-300">Alt+Shift+Arrows</code> Resize • <code class="text-slate-300">Ctrl+Z / Ctrl+Y</code> Undo/Redo</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANE: Interactive SVG Studio & Parser Controls -->
+    <section class="w-full lg:w-[52%] h-1/2 lg:h-full flex flex-col bg-slate-950 relative overflow-hidden">
+      <!-- Parser Feature Toggles & Zoom Controls Bar -->
+      <div class="px-3 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-3 flex-wrap text-xs">
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white" title="Allow ^, v, <, > directly on box borders without breaking polygon fill">
+            <input id="toggle-inline-arrows" type="checkbox" checked class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
+            <span>Inline <code class="text-emerald-400">+--^--+</code> Arrows</span>
+          </label>
+
+          <div class="flex items-center gap-1.5">
+            <span class="text-slate-400">4x4 Legend:</span>
+            <select id="select-legend-mode" class="bg-slate-800 text-slate-200 text-xs rounded px-2 py-0.5 border border-slate-700 focus:outline-none">
+              <option value="both">Inline + Legend Card</option>
+              <option value="inline">Inline Box Expand Only</option>
+              <option value="card">Badge + Bottom Card</option>
+              <option value="off">Raw ASCII Text Only</option>
+            </select>
+          </div>
+
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+            <input id="toggle-shadows" type="checkbox" checked class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
+            <span>Shadows</span>
+          </label>
+
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+            <input id="toggle-grid" type="checkbox" class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
+            <span>Cell Grid</span>
+          </label>
+
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+            <input id="toggle-light-canvas" type="checkbox" checked class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
+            <span>Light BG</span>
+          </label>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button id="btn-zoom-out" class="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-mono" title="Zoom Out">−</button>
+          <span id="zoom-label" class="text-xs font-mono text-slate-400 w-12 text-center">100%</span>
+          <button id="btn-zoom-in" class="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-mono" title="Zoom In">+</button>
+          <button id="btn-zoom-reset" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px]">Fit</button>
+        </div>
+      </div>
+
+      <!-- Interactive SVG Viewport -->
+      <div id="canvas-viewport" class="flex-1 overflow-auto flex p-6 checkerboard-bg relative">
+        <div id="svg-wrapper" class="m-auto shrink-0 shadow-2xl rounded-xl overflow-hidden border border-slate-300/80 dark:border-slate-800">
+          <!-- Rendered SVG Injected Here -->
+        </div>
+      </div>
+
+      <!-- Bottom Quick Reference Legend Drawer -->
+      <div class="px-4 py-2 bg-slate-900 border-t border-slate-800 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono">
+          <span><strong class="text-slate-200">Shapes:</strong> {s}=Cylinder {d}=Doc {io}=I/O {mo}=Trapezoid {o}=Pill {*}=Dashed</span>
+          <span><strong class="text-slate-200">Colors:</strong> cBLU cGRE cYEL cRED cPNK cBLK c#RRGGBB cRGB</span>
+          <span><strong class="text-slate-200">Wires:</strong> -=Solid ==Dashed :=VertDashed *=Node</span>
+        </div>
+        <span id="toast-indicator" class="text-emerald-400 font-medium opacity-0 transition-opacity duration-300" aria-live="polite"></span>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL: Export Strict Legacy Backend ditaa -->
+  <div id="legacy-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-slate-900 border border-slate-700 rounded-xl max-w-3xl w-full shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-bold text-white flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono text-xs">Backend Sanitizer</span>
+            Strict Legacy ditaa Exporter
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">Heals <code class="text-emerald-300">+---^---+</code> inline border arrows into closed <code class="text-amber-300">+-------+</code> walls, moving each arrowhead onto the adjacent wire cell (inserting a spacer row only when needed) so the Java <code class="font-mono">ditaa</code> renderer gets fully closed boxes.</p>
+        </div>
+        <button id="btn-close-modal" class="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
+      </div>
+      <div class="p-4 flex-1 overflow-auto bg-slate-950">
+        <pre id="legacy-ascii-output" class="font-mono text-xs text-emerald-300 leading-snug select-all overflow-x-auto p-3 rounded-lg bg-slate-900 border border-slate-800"></pre>
+      </div>
+      <div class="px-5 py-3 border-t border-slate-800 flex items-center justify-between bg-slate-900">
+        <span id="legacy-diff-summary" class="text-xs font-mono text-slate-400"></span>
+        <div class="flex items-center gap-2">
+          <button id="btn-copy-legacy" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">Copy Sanitized ASCII</button>
+          <button id="btn-apply-legacy" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition">Load Into Editor</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/engine.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>
