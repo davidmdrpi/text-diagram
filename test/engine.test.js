@@ -380,18 +380,17 @@ test('regression (PR #3 review): widening a diamond never splits another box lab
   ].join('\n');
   assert.equal(parse(text).boxes.length, 2);
   const dia = parse(text).boxes.find((b) => b.shape === 'choice');
+  // The inserted columns would land inside the label and the tag: they go after each
+  // word instead, so both stay whole and the box above just gets wider.
   const res = Grid2DEditor.resizeBox(text, dia, 2, 0);
-  assert.ok(res.error, 'refused');
-  assert.match(res.error, /ABCDEFGHIJKLMNOPQRSTUVWX/);
-
-  // Same layout with a short label clear of the inserted columns: widening works and the
-  // other box keeps its label and color.
-  const ok = text.replace('ABCDEFGHIJKLMNOPQRSTUVWX cBLU', '         Top cBLU            ');
-  const res2 = Grid2DEditor.resizeBox(ok, parse(ok).boxes.find((b) => b.shape === 'choice'), 2, 0);
-  assert.ok(!res2.error, res2.error);
-  const top = parse(res2.text).boxes.find((b) => b.shape !== 'choice');
-  assert.deepEqual(top.lines, ['Top']);
+  assert.ok(!res.error, res.error);
+  const after = parse(res.text).boxes;
+  assert.equal(after.length, 2);
+  const top = after.find((b) => b.shape !== 'choice');
+  assert.deepEqual(top.lines, ['ABCDEFGHIJKLMNOPQRSTUVWX']);
   assert.equal(top.colorKey, 'cBLU');
+  const d = after.find((b) => b.shape === 'choice');
+  assert.equal(d.c2 - d.c1, dia.c2 - dia.c1 + 2);
 });
 
 test('regression (PR #3 review): arrows near a diamond corner end on the slanted edge', () => {
@@ -525,4 +524,215 @@ test('no resize, move or tag operation on one box changes any other box (presets
       }
     });
   }
+});
+
+/* ---------------- Typing inside boxes (auto-fit) ---------------- */
+
+const type = (text, r, c, op, sel = null) => Grid2DEditor.typeInBox(text, { r, c }, sel, op);
+
+test('typing inside a box widens it to fit and shifts boxes and wires to its right', () => {
+  const text = '+--------+     +-----+\n| Hello  +---->| B   |\n+--------+     |     |\n               +-----+';
+  const res = type(text, 1, 7, { type: 'insert', text: ' world' });
+  assert.ok(res && !res.error, res && res.error);
+  const ast = parse(res.text);
+  assert.equal(ast.boxes.length, 2);
+  const a = ast.boxes.find((b) => b.lines[0] === 'Hello world');
+  const b = ast.boxes.find((b2) => b2.lines[0] === 'B');
+  assert.ok(a && b);
+  assert.equal(res.text.split('\n')[1].slice(a.c1, a.c2 + 1), '| Hello world +', 'one cell of padding kept');
+  assert.equal(b.r2 - b.r1, 3, 'taller neighbour moved as a whole');
+  assert.ok(ast.arrows.find((x) => x.dir === '>').touchesBox, 'wire still reaches B');
+  assert.deepEqual([res.cursorR, res.cursorC], [1, 13]);
+});
+
+test('typing that still fits does not widen the box', () => {
+  const text = '+----------+\n| Hi       |\n+----------+';
+  const res = type(text, 1, 4, { type: 'insert', text: '!' });
+  assert.equal(res.text, '+----------+\n| Hi!      |\n+----------+');
+});
+
+test('Enter inside a box adds a row below and moves the rest of the line there', () => {
+  const text = '+------------+  +---+\n| Hello world|  | B |\n+------------+  |   |\n                +---+';
+  const res = type(text, 1, 7, { type: 'newline' });
+  const lines = res.text.split('\n');
+  assert.equal(lines[1], '| Hello      |  | B |');
+  assert.equal(lines[2], '| world      |  |   |');
+  assert.deepEqual([res.cursorR, res.cursorC], [2, 2], 'caret keeps the line indentation');
+  const ast = parse(res.text);
+  assert.deepEqual(ast.boxes.find((b) => b.c1 === 0).lines, ['Hello', 'world']);
+  assert.equal(ast.boxes.length, 2, 'neighbour stretched, not torn');
+});
+
+test('Backspace and Delete edit within the box and join lines without touching walls', () => {
+  const text = '+--------+\n| Hello  |\n| world  |\n+--------+';
+  const bs = type(text, 1, 5, { type: 'backspace' });
+  assert.equal(bs.text.split('\n')[1], '| Helo   |');
+
+  const join = type(text, 2, 1, { type: 'backspace' });
+  assert.equal(join.text, '+------------+\n| Helloworld |\n+------------+');
+  assert.deepEqual([join.cursorR, join.cursorC], [1, 7], 'caret at the join point');
+
+  const del = type(text, 1, 7, { type: 'delete' });
+  assert.equal(del.text, join.text, 'Delete at line end joins the next line');
+
+  const first = type(text, 1, 1, { type: 'backspace' });
+  assert.equal(first.text, text, 'Backspace at the very start does nothing');
+});
+
+test('paste with line breaks types each line', () => {
+  const text = '+------+\n| A    |\n+------+';
+  const res = type(text, 1, 3, { type: 'insert', text: 'lpha\nBeta\r\nGamma' });
+  assert.deepEqual(parse(res.text).boxes[0].lines, ['Alpha', 'Beta', 'Gamma']);
+});
+
+test('selections inside a box are replaced; selections leaving the box use normal editing', () => {
+  const text = '+------------+\n| Hello big  |\n| world      |\n+------------+';
+  const rep = type(text, 1, 7, { type: 'insert', text: 'X' }, { r: 1, c: 11 });
+  assert.equal(rep.text.split('\n')[1], '| HelloX     |');
+  const multi = type(text, 1, 4, { type: 'backspace' }, { r: 2, c: 4 });
+  assert.deepEqual(parse(multi.text).boxes[0].lines, ['He', 'rld']);
+  assert.equal(type(text, 1, 4, { type: 'insert', text: 'x' }, { r: 4, c: 0 }), null);
+});
+
+test('typing outside any box is left to the editor', () => {
+  assert.equal(type('+--+\n|  |\n+--+\nabc', 3, 1, { type: 'insert', text: 'x' }), null);
+  assert.equal(type('+--+\n|  |\n+--+', 0, 2, { type: 'insert', text: 'x' }), null, 'on a wall');
+});
+
+test('typing in a diamond keeps it a diamond: ports on vertices, text centred, odd size', () => {
+  const lines = Grid2DEditor.diamondTemplate('Ok?').map((l) => '     ' + l);
+  lines[2] = '---->' + lines[2].slice(5);
+  const text = lines.join('\n');
+  const k = text.split('\n')[2].indexOf('?');
+  let res = type(text, 2, k, { type: 'insert', text: ' really long question' });
+  const check = (t) => {
+    const p = new DitaaParser();
+    const ast = p.parse(t);
+    const b = ast.boxes[0];
+    assert.equal(b.shape, 'choice');
+    assert.equal((b.c2 - b.c1) % 2, 0);
+    assert.equal((b.r2 - b.r1) % 2, 0);
+    const L = t.split('\n');
+    const mr = (b.r1 + b.r2) / 2, mc = (b.c1 + b.c2) / 2;
+    assert.equal(L[b.r1][mc] + L[b.r2][mc] + L[mr][b.c1] + L[mr][b.c2], '++++', 'ports centred');
+    assert.equal(ast.arrows[0].tipX, p.boxGeom(b).x, 'arrow on the left vertex');
+    return b;
+  };
+  const b = check(res.text);
+  assert.deepEqual(b.lines, ['Ok really long question?']);
+  assert.ok(b.c2 - b.c1 <= 'Ok really long question? {c}'.length + 6, 'grows only as much as needed');
+  res = type(res.text, 2, res.text.split('\n')[2].indexOf(' question'), { type: 'newline' });
+  assert.deepEqual(check(res.text).lines, ['Ok really long', 'question?']);
+});
+
+test('typing in a container pushes nested boxes along; typing in a child grows the container', () => {
+  const text = [
+    '+------------------------+',
+    '| Outer                  |',
+    '|  +-----+   +-----+     |',
+    '|  | A   |   | B   |     |',
+    '|  +-----+   +-----+     |',
+    '+------------------------+'
+  ].join('\n');
+  const res = type(text, 3, 3, { type: 'insert', text: 'note' });
+  const ast = parse(res.text);
+  assert.equal(ast.boxes.length, 3);
+  assert.ok(res.text.split('\n')[3].startsWith('|  note | A   |'));
+  assert.ok(ast.freeTexts.some((t) => t.text === 'Outer'));
+
+  const res2 = type(text, 3, 6, { type: 'insert', text: 'lpha-long' });
+  const ast2 = parse(res2.text);
+  assert.deepEqual(ast2.boxes.map((b) => b.lines[0] || null).sort(), ['Alpha-long', 'B', null].sort());
+  assert.equal(ast2.boxes.find((b) => b.isContainer).c2 - ast2.boxes.find((b) => b.lines[0] === 'B').c2, 6, 'container grew with it');
+});
+
+test('typing and Enter in every box of every preset never changes another box', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
+  const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
+  for (const [name, text] of Object.entries(PRESETS)) {
+    const before = parse(text).boxes;
+    before.forEach((box, i) => {
+      for (const op of [{ type: 'insert', text: 'a much longer label here' }, { type: 'newline' }, { type: 'backspace' }]) {
+        const res = type(text, box.r1 + 1, box.c1 + 2, op);
+        if (!res || res.error) continue;
+        const after = parse(res.text).boxes;
+        assert.equal(after.length, before.length, `${name} box#${i} ${op.type}: box count`);
+        const others = before.filter((_, j) => j !== i).map(sig).sort();
+        const afterSigs = after.map(sig);
+        for (const o of others) {
+          const k = afterSigs.indexOf(o);
+          assert.ok(k !== -1, `${name} box#${i} ${op.type}: lost ${o}`);
+          afterSigs.splice(k, 1);
+        }
+      }
+    });
+  }
+});
+
+test('typing in a box stacked with diamonds keeps every diamond symmetric', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { flowchart } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const symmetric = (t) => {
+    const L = t.split('\n');
+    for (const d of parse(t).boxes.filter((b) => b.shape === 'choice')) {
+      assert.equal((d.c2 - d.c1) % 2, 0, 'odd width');
+      assert.equal((d.r2 - d.r1) % 2, 0, 'odd height');
+      const mr = (d.r1 + d.r2) / 2, mc = (d.c1 + d.c2) / 2;
+      assert.equal(L[d.r1][mc] + L[d.r2][mc] + L[mr][d.c1] + L[mr][d.c2], '++++', `ports of ${d.lines[0]}`);
+    }
+  };
+  const L = flowchart.split('\n');
+  const r = L.findIndex((l) => l.includes('Read input'));
+  let res = type(flowchart, r, L[r].indexOf('input') + 5, { type: 'insert', text: ' from the user, then trim it' });
+  assert.ok(res && !res.error, res && res.error);
+  symmetric(res.text);
+  assert.equal(parse(res.text).boxes.length, 7);
+  res = type(res.text, res.cursorR, res.cursorC, { type: 'newline' });
+  symmetric(res.text);
+  // Enter in the "Show error" box, which sits beside the Valid? diamond
+  const L2 = res.text.split('\n');
+  const er = L2.findIndex((l) => l.includes('Show error'));
+  res = type(res.text, er, L2[er].indexOf('error') + 5, { type: 'newline' });
+  assert.ok(res && !res.error, res && res.error);
+  symmetric(res.text);
+  assert.equal(parse(res.text).boxes.length, 7);
+});
+
+test('narrowing that would make a diamond lopsided is refused', () => {
+  const text = [
+    '+-------------------+',
+    '|  Wide box         |',
+    '+-------------------+',
+    ...Grid2DEditor.diamondTemplate('Q?').map((l) => '      ' + l)
+  ].join('\n');
+  const box = parse(text).boxes.find((b) => b.shape !== 'choice');
+  // The columns removed (just inside the box's right wall) run through the diamond below
+  const res = Grid2DEditor.resizeBox(text, box, -2, 0);
+  assert.ok(res.error);
+  assert.match(res.error, /lopsided/);
+});
+
+test('typing word by word, one key at a time, keeps the spaces (boxes and diamonds)', () => {
+  const run = (text, r, c, str) => {
+    let cur = { r, c };
+    for (const ch of str) {
+      const res = type(text, cur.r, cur.c, { type: 'insert', text: ch });
+      text = res.text;
+      cur = { r: res.cursorR, c: res.cursorC };
+    }
+    return text;
+  };
+  const box = run('+------------+\n| Read input |\n+------------+', 1, 12, ' from the user');
+  assert.deepEqual(parse(box).boxes[0].lines, ['Read input from the user']);
+  const dia = Grid2DEditor.diamondTemplate('Ok').join('\n');
+  const k = dia.split('\n')[2].indexOf('Ok') + 2;
+  const out = run(dia, 2, k, ' and more');
+  assert.deepEqual(parse(out).boxes[0].lines, ['Ok and more']);
 });

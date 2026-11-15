@@ -21,6 +21,15 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
 
+**Typing inside a box grows it** (the *Auto-fit boxes* checkbox, on by default). When text
+would reach the right wall, the box widens by one full-height column per character, and Enter
+inside a box adds a full-width row. Everything right of / below the change shifts with it, so
+other boxes, wires and labels stay aligned: boxes beside or above/below it grow or move as a
+unit, a column never cuts through a word (it goes in after the word), and diamonds always grow
+symmetrically so their ports stay on the vertices. Backspace and Delete edit within the box and
+join lines; pasted text with line breaks becomes multiple lines. An edit that would still break
+another box is refused with a message. Typing outside boxes is ordinary text editing.
+
 Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 
 Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax

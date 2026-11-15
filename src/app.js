@@ -157,6 +157,7 @@
   const toggleShadows = $('toggle-shadows');
   const toggleGrid = $('toggle-grid');
   const toggleLightCanvas = $('toggle-light-canvas');
+  const toggleAutofit = $('toggle-autofit');
 
   let currentZoom = 1;
   let lastAst = null;
@@ -334,11 +335,53 @@
   /*************************************************************************
    * EDITOR EVENTS
    *************************************************************************/
-  editor.addEventListener('beforeinput', () => {
+  // Typing inside a box: grow the box (and shift the rest of the diagram) instead of
+  // pushing its right wall out of line. Returns the engine op for an input event, or null.
+  function boxOpFor(e) {
+    switch (e.inputType) {
+      case 'insertText':
+        return e.data ? { type: 'insert', text: e.data } : null;
+      case 'insertFromPaste':
+      case 'insertFromDrop':
+      case 'insertReplacementText': {
+        const t = (e.dataTransfer && e.dataTransfer.getData('text/plain')) || e.data;
+        return t ? { type: 'insert', text: t } : null;
+      }
+      case 'insertLineBreak':
+      case 'insertParagraph':
+        return { type: 'newline' };
+      case 'deleteContentBackward':
+        return { type: 'backspace' };
+      case 'deleteContentForward':
+        return { type: 'delete' };
+      default:
+        return null;
+    }
+  }
+
+  editor.addEventListener('beforeinput', (e) => {
     // Snapshot once at the start of each typing burst
     if (!typingBurstTimer) pushUndoState();
     clearTimeout(typingBurstTimer);
     typingBurstTimer = setTimeout(() => { typingBurstTimer = null; }, 700);
+
+    if (!toggleAutofit.checked || e.isComposing) return;
+    const op = boxOpFor(e);
+    if (!op) return;
+    const caret = getCursorRC();
+    const sel = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionEnd);
+    const res = Grid2DEditor.typeInBox(editor.value, caret, editor.selectionEnd !== editor.selectionStart ? sel : null, op);
+    if (!res) return; // not inside a box: normal text editing
+    e.preventDefault();
+    if (res.error) {
+      showToast(res.error);
+      return;
+    }
+    if (res.text !== editor.value) editor.value = res.text; // a typed space can leave the text unchanged; the caret still moves
+    const idx = Grid2DEditor.getIndexFromRowCol(editor.value, res.cursorR, res.cursorC);
+    editor.selectionStart = editor.selectionEnd = idx;
+    virtualCursor = { text: editor.value, idx, r: res.cursorR, c: res.cursorC };
+    refresh();
   });
   editor.addEventListener('input', refresh);
   editor.addEventListener('click', onCaretMove);

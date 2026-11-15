@@ -31,9 +31,10 @@
   const isAlnum = (ch) => /[A-Za-z0-9]/.test(ch);
   // Characters that form horizontal lines / box corners; a column between two of them is continued.
   const lineCh = (ch) => '-=+*<>/\\.\''.includes(ch);
-  // Two adjacent non-blank characters that are not a line and not next to a vertical line: text.
+  // Two adjacent non-blank characters that are not a line and not next to a wall/corner: text.
+  const isWallCh = (ch) => ch === '|' || ch === ':' || ch === '+';
   const isWordPair = (L, R) =>
-    L !== ' ' && R !== ' ' && !(lineCh(L) && lineCh(R)) && L !== '|' && L !== ':' && R !== '|' && R !== ':';
+    L !== ' ' && R !== ' ' && !(lineCh(L) && lineCh(R)) && !isWallCh(L) && !isWallCh(R);
   const isVertish = (ch) => ch === '|' || ch === ':' || ch === '+' || ch === '^' || ch === 'v' || ch === '*';
   // Vertical lines plus rounded corners: a row inserted between two of these continues the line.
   const vLineCh = (ch) => isVertish(ch) || ch === '/' || ch === '\\' || ch === '.' || ch === "'";
@@ -1256,30 +1257,30 @@
      * Inserts a column before index `at` in EVERY row (like growing a box taller inserts a
      * full-width row), so boxes beside the resized one move as a whole instead of tearing.
      * Horizontal lines and box walls crossing the column are continued, and an arrowhead
-     * touching something keeps touching it. Returns an error, changing nothing, if the
-     * column would split a word or tag in any row. Rows r1..r2 of `box` are its own.
+     * touching something keeps touching it. A row where the column would land inside a word
+     * or tag gets its blank cell after that word instead: the word stays whole and in place,
+     * everything right of it still moves over by one. Always returns null (kept for
+     * `a || b` error chaining by callers).
      */
-    static insertColumnEverywhere(state, at, box) {
-      const splitAt = this.findTextBoundary(state, at, box);
-      if (splitAt) return { error: `Cannot widen: it would split "${splitAt.word}" on line ${splitAt.r + 1}` };
+    static insertColumnEverywhere(state, at) {
       for (let r = 0; r < state.rows; r++) {
         const row = state.grid[r];
         while (row.length < at) row.push(' ');
-        const L = row[at - 1] || ' ', R = row[at] || ' ';
+        let pos = at;
+        while (pos < row.length && isWordPair(row[pos - 1] || ' ', row[pos])) pos++;
+        const L = row[pos - 1] || ' ', R = row[pos] || ' ';
         const fill = L === '=' || R === '=' ? '=' : '-';
         let ch = ' ';
-        if (r >= box.r1 && r <= box.r2) {
-          if (r === box.r1 || r === box.r2) ch = fill;
-        } else if (L === '>' && R !== ' ' && R !== '-' && R !== '=') {
+        if (pos === at && L === '>' && R !== ' ' && R !== '-' && R !== '=') {
           ch = '>'; // keep "-->|" / "-->+" touching: move the arrowhead, extend the wire behind it
-          row[at - 1] = row[at - 2] === '=' ? '=' : '-';
-        } else if (R === '<' && L !== ' ' && L !== '-' && L !== '=') {
+          row[pos - 1] = row[pos - 2] === '=' ? '=' : '-';
+        } else if (pos === at && R === '<' && L !== ' ' && L !== '-' && L !== '=') {
           ch = '<';
-          row[at] = (row[at + 1] || ' ') === '=' ? '=' : '-';
+          row[pos] = (row[pos + 1] || ' ') === '=' ? '=' : '-';
         } else if (lineCh(L) && lineCh(R)) {
           ch = fill;
         }
-        row.splice(at, 0, ch);
+        row.splice(pos, 0, ch);
       }
       state.cols++;
       for (const row of state.grid) while (row.length < state.cols) row.push(' ');
@@ -1312,31 +1313,23 @@
       return null;
     }
 
-    /** First row where a column inserted before `at` would land inside a word or tag. */
-    static findTextBoundary(state, at, box) {
-      for (let r = 0; r < state.rows; r++) {
-        if (r >= box.r1 && r <= box.r2) continue;
-        const row = state.grid[r];
-        if (isWordPair(row[at - 1] || ' ', row[at] || ' ')) {
-          let a = at - 1, b = at;
-          while (a > 0 && row[a - 1] !== ' ') a--;
-          while (b < row.length && row[b] !== ' ') b++;
-          return { r, word: row.slice(a, b).join('') };
-        }
-      }
-      return null;
-    }
-
-    /** Inserts a full-width row before index `at`, continuing vertical lines that cross it. */
-    static insertRowEverywhere(state, at, box) {
+    /**
+     * Inserts a full-width row before index `at`, continuing vertical lines (box walls,
+     * wires, rounded corners) that cross it, including the walls of boxes nested in a
+     * container. Letters that merely look like lines (v . ') inside words are not continued.
+     */
+    static insertRowEverywhere(state, at) {
       const row = Array(state.cols).fill(' ');
+      const above = state.grid[at - 1] || [];
+      const below = state.grid[at] || [];
+      const cont = (line, c) => {
+        const ch = line[c] || ' ';
+        if ('|:+*/\\'.includes(ch)) return true;
+        return (ch === '^' || ch === 'v' || ch === '.' || ch === "'") &&
+          !isAlnum(line[c - 1] || ' ') && !isAlnum(line[c + 1] || ' ');
+      };
       for (let c = 0; c < state.cols; c++) {
-        const A = state.grid[at - 1][c], B = state.grid[at][c];
-        if (c >= box.c1 && c <= box.c2) {
-          if (c === box.c1 || c === box.c2) row[c] = A === ':' || B === ':' ? ':' : '|';
-        } else if (vLineCh(A) && vLineCh(B)) {
-          row[c] = A === ':' || B === ':' ? ':' : '|';
-        }
+        if (cont(above, c) && cont(below, c)) row[c] = above[c] === ':' || below[c] === ':' ? ':' : '|';
       }
       state.grid.splice(at, 0, row);
       state.rows++;
@@ -1357,6 +1350,61 @@
     }
 
     /**
+     * Inserts full-height columns before each original index in `xs`. Any diamond ({c}) that
+     * a column runs through gets a mirror column on the other side of its centre, so it grows
+     * symmetrically and its centre ports stay on the vertices (in a centred flowchart the
+     * whole stack grows evenly around its centre line). Returns all original indices inserted.
+     */
+    static insertColumns(state, xs) {
+      const cols = this.balanceForDiamonds(state, xs, 'c');
+      cols.slice().sort((a, b) => b - a).forEach((x) => this.insertColumnEverywhere(state, x));
+      return cols;
+    }
+
+    /** Row counterpart of insertColumns. */
+    static insertRows(state, ys) {
+      const rows = this.balanceForDiamonds(state, ys, 'r');
+      rows.slice().sort((a, b) => b - a).forEach((y) => this.insertRowEverywhere(state, y));
+      return rows;
+    }
+
+    static balanceForDiamonds(state, positions, axis) {
+      const diamonds = new DitaaParser().parse(this.fromGridState(state)).boxes.filter((b) => b.shape === 'choice');
+      const out = [...positions];
+      for (let iter = 0; iter < 20; iter++) {
+        let added = false;
+        for (const d of diamonds) {
+          const lo = axis === 'c' ? d.c1 : d.r1, hi = axis === 'c' ? d.c2 : d.r2;
+          const mid = (lo + hi) / 2;
+          const inside = out.filter((x) => x > lo && x <= hi);
+          const first = inside.filter((x) => x <= mid), second = inside.filter((x) => x > mid);
+          while (first.length !== second.length) {
+            const [few, many] = first.length < second.length ? [first, second] : [second, first];
+            const m = lo + hi + 1 - many[few.length];
+            few.push(m);
+            out.push(m);
+            added = true;
+          }
+        }
+        if (!added) break;
+      }
+      return out;
+    }
+
+    /** Error if removing columns/rows `positions` would make a diamond other than `self` lopsided. */
+    static diamondRemovalError(state, positions, axis, self, verb) {
+      const diamonds = new DitaaParser().parse(this.fromGridState(state)).boxes.filter((b) => b.shape === 'choice');
+      for (const d of diamonds) {
+        if (self && d.r1 === self.r1 && d.c1 === self.c1 && d.r2 === self.r2 && d.c2 === self.c2) continue;
+        const lo = axis === 'c' ? d.c1 : d.r1, hi = axis === 'c' ? d.c2 : d.r2;
+        if (positions.some((x) => x > lo && x < hi)) {
+          return { error: `Cannot ${verb}: it would make the diamond "${d.lines[0] || '{c}'}" lopsided` };
+        }
+      }
+      return null;
+    }
+
+    /**
      * Resizes a diamond ({c}) box by 2 columns / 2 rows at a time, adding or removing one on
      * each side of the centre, across the whole diagram. The centre ports stay on the
      * diamond's vertices and every wire attached to them keeps its connection.
@@ -1368,22 +1416,22 @@
       const state = this.toGridState(rawText, box.r2 + 2, box.c2 + 2);
 
       if (dw > 0) {
-        const err = this.insertColumnEverywhere(state, box.c1 + 1, box) ||
-          this.insertColumnEverywhere(state, box.c2 + 1, box);
-        if (err) return err;
+        this.insertColumns(state, [box.c1 + 1, box.c2]);
       } else if (dw < 0) {
-        const err = this.removeColumnEverywhere(state, box.c2 - 1, box) ||
+        const err = this.diamondRemovalError(state, [box.c1 + 1, box.c2 - 1], 'c', box, 'narrow') ||
+          this.removeColumnEverywhere(state, box.c2 - 1, box) ||
           this.removeColumnEverywhere(state, box.c1 + 1, box);
         if (err) return err;
       }
 
       if (dh > 0) {
-        this.insertRowEverywhere(state, box.r1 + 1, box);
-        this.insertRowEverywhere(state, box.r2 + 1, box);
+        this.insertRows(state, [box.r1 + 1, box.r2]);
       } else if (dh < 0) {
         if (!this.canRemoveRow(state, box.r1 + 1, box) || !this.canRemoveRow(state, box.r2 - 1, box)) {
           return { error: 'Cannot shorten: text or wires are in the way' };
         }
+        const lop = this.diamondRemovalError(state, [box.r1 + 1, box.r2 - 1], 'r', box, 'shorten');
+        if (lop) return lop;
         state.grid.splice(box.r2 - 1, 1);
         state.grid.splice(box.r1 + 1, 1);
         state.rows -= 2;
@@ -1403,12 +1451,18 @@
      * change). Glyph-level checks can't see that, e.g. removing the last interior column of
      * a small empty box elsewhere collapses it.
      */
-    static guardOtherBoxes(rawText, res, verb) {
+    static guardOtherBoxes(rawText, res, verb, exceptBox = null) {
       if (!res || res.error) return res;
       const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
+      const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
       const parser = new DitaaParser();
-      const before = parser.parse(rawText).boxes;
-      const remaining = parser.parse(res.text).boxes.map(sig);
+      // exceptBox: the box being edited may change its own label/tags, but must still exist.
+      const before = parser.parse(rawText).boxes.filter((b) => !exceptBox || !same(b, exceptBox));
+      const after = parser.parse(res.text).boxes;
+      if (exceptBox && after.length !== before.length + 1) {
+        return { error: `Cannot ${verb}: it would ${after.length > before.length + 1 ? 'create' : 'break'} a box` };
+      }
+      const remaining = after.map(sig);
       for (const b of before) {
         const i = remaining.indexOf(sig(b));
         if (i === -1) {
@@ -1417,7 +1471,7 @@
         }
         remaining.splice(i, 1);
       }
-      if (remaining.length > 0) return { error: `Cannot ${verb}: it would merge lines into a new box` };
+      if (remaining.length > (exceptBox ? 1 : 0)) return { error: `Cannot ${verb}: it would merge lines into a new box` };
       return res;
     }
 
@@ -1438,11 +1492,16 @@
 
       // Widen/narrow by inserting/removing whole columns just inside the right wall, so
       // neighbouring boxes of any height move as a unit and nothing is torn.
-      for (let i = 0; i < Math.abs(dw); i++) {
-        const err = dw > 0
-          ? this.insertColumnEverywhere(state, box.c2, box)
-          : this.removeColumnEverywhere(state, box.c2 - 1 - i, box);
-        if (err) return err;
+      if (dw > 0) {
+        this.insertColumns(state, Array(dw).fill(box.c2));
+      } else if (dw < 0) {
+        const xs = Array.from({ length: -dw }, (_, i) => box.c2 - 1 - i);
+        const lop = this.diamondRemovalError(state, xs, 'c', null, 'narrow');
+        if (lop) return lop;
+        for (let i = 0; i < -dw; i++) {
+          const err = this.removeColumnEverywhere(state, box.c2 - 1 - i, box);
+          if (err) return err;
+        }
       }
       if (dh < 0) {
         const targetR = box.r2 - 1;
@@ -1452,19 +1511,9 @@
       }
 
       if (dh > 0) {
-        // Insert a new interior row just above the bottom wall. Outside the box, continue any
-        // vertical line that crosses the boundary between rows r2-1 and r2, so neighbouring
-        // boxes and wires are stretched instead of torn.
-        const newRow = Array(state.cols).fill(' ');
-        newRow[box.c1] = grid[box.r1 + 1][box.c1] === ':' ? ':' : '|';
-        newRow[box.c2] = grid[box.r1 + 1][box.c2] === ':' ? ':' : '|';
-        for (let c = 0; c < state.cols; c++) {
-          if (c >= box.c1 && c <= box.c2) continue;
-          const a = grid[box.r2 - 1][c], b = grid[box.r2][c];
-          if (vLineCh(a) && vLineCh(b)) newRow[c] = a === ':' || b === ':' ? ':' : '|';
-        }
-        grid.splice(box.r2, 0, newRow);
-        state.rows++;
+        // A full-width row just above the bottom wall; vertical lines crossing it continue,
+        // so neighbouring boxes and wires stretch instead of tearing.
+        this.insertRows(state, [box.r2]);
       } else if (dh < 0) {
         const targetR = box.r2 - 1;
         for (let c = box.c1; c <= box.c2; c++) {
@@ -1490,6 +1539,302 @@
         cursorR: Math.floor((box.r1 + finalR2) / 2),
         cursorC: Math.floor((box.c1 + finalC2) / 2)
       };
+    }
+
+    /*************************************************************************
+     * IN-BOX TYPING: text edits inside a box grow the box instead of tearing it
+     *************************************************************************/
+
+    /** Innermost box whose interior contains caret (r, c); c may sit just before the right wall. */
+    static boxAtCaret(boxes, r, c) {
+      let best = null;
+      for (const b of boxes) {
+        if (r > b.r1 && r < b.r2 && c > b.c1 && c <= b.c2) {
+          if (!best || (b.r2 - b.r1) * (b.c2 - b.c1) < (best.r2 - best.r1) * (best.c2 - best.c1)) best = b;
+        }
+      }
+      return best;
+    }
+
+    /**
+     * The run of interior cells on row r, around caret column c, that belong to `box` itself
+     * (stops at nested boxes). Returns [c0, end) or null if the caret is not on such a run.
+     */
+    static ownedRun(boxes, box, r, c) {
+      const kids = boxes.filter((b) => b !== box && b.r1 >= box.r1 && b.r2 <= box.r2 && b.c1 >= box.c1 && b.c2 <= box.c2);
+      const owned = (col) => col > box.c1 && col < box.c2 && !kids.some((k) => r >= k.r1 && r <= k.r2 && col >= k.c1 && col <= k.c2);
+      if (!owned(c) && !owned(c - 1)) return null;
+      let c0 = c;
+      while (owned(c0 - 1)) c0--;
+      let end = c;
+      while (owned(end)) end++;
+      return { c0, end };
+    }
+
+    /**
+     * Applies a text edit typed at caret (r, c) inside a box:
+     *   op = { type: 'insert', text } | { type: 'newline' } | { type: 'backspace' } | { type: 'delete' }
+     * `sel` (optional) is the other end of a selection; selected cells inside the same box are
+     * cleared first. Typing never pushes a wall: when text would reach the right wall, a full
+     * column is added just inside it (diamonds grow by 2 to keep their ports on the vertices),
+     * and Enter adds a full-width row, so the rest of the diagram shifts to stay aligned.
+     * Returns null when the caret is not inside a box (let the editor handle the key normally),
+     * { error } when the edit would break another box, else { text, cursorR, cursorC }.
+     */
+    static typeInBox(rawText, caret, sel, op) {
+      const parser = new DitaaParser();
+      const boxes = parser.parse(rawText).boxes;
+      const box = this.boxAtCaret(boxes, caret.r, caret.c);
+      if (!box) return null;
+      let text = rawText;
+      let cur = { r: caret.r, c: caret.c };
+
+      if (sel && (sel.r !== caret.r || sel.c !== caret.c)) {
+        const [a, b] = sel.r < caret.r || (sel.r === caret.r && sel.c < caret.c) ? [sel, caret] : [caret, sel];
+        if (this.boxAtCaret(boxes, b.r, b.c) !== box) return null; // selection leaves the box: default editing
+        const cleared = this.clearRange(text, boxes, box, a, b);
+        if (!cleared) return null;
+        text = cleared.text;
+        cur = { r: a.r, c: a.c };
+        if (op.type === 'backspace' || op.type === 'delete') return this.finishTyping(rawText, text, cur, box);
+      }
+
+      const insertText = (str) => {
+        for (const piece of str.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split(/(\n)/)) {
+          if (piece === '') continue;
+          const res = piece === '\n' ? this.boxNewline(text, cur) : this.boxInsert(text, cur, piece);
+          if (!res) return false;
+          text = res.text;
+          cur = { r: res.cursorR, c: res.cursorC };
+        }
+        return true;
+      };
+
+      let res;
+      if (op.type === 'insert') {
+        if (!insertText(op.text)) return null;
+        return this.finishTyping(rawText, text, cur, box);
+      }
+      if (op.type === 'newline') res = this.boxNewline(text, cur);
+      else if (op.type === 'backspace') res = this.boxBackspace(text, cur);
+      else if (op.type === 'delete') res = this.boxDelete(text, cur);
+      if (!res) return null;
+      return this.finishTyping(rawText, res.text, { r: res.cursorR, c: res.cursorC }, box);
+    }
+
+    static finishTyping(rawText, text, cur, box) {
+      return this.guardOtherBoxes(rawText, { text, cursorR: cur.r, cursorC: cur.c }, 'type here', box);
+    }
+
+    /** Parses `text` and returns { state, boxes, box, run } for the caret, or null. */
+    static caretContext(text, cur) {
+      const boxes = new DitaaParser().parse(text).boxes;
+      const box = this.boxAtCaret(boxes, cur.r, cur.c);
+      if (!box) return null;
+      const run = this.ownedRun(boxes, box, cur.r, cur.c);
+      if (!run) return null;
+      return { state: this.toGridState(text), boxes, box, run };
+    }
+
+    /**
+     * Grows the caret's box until its run on row cur.r can hold `needed(ctx, cur)` characters
+     * plus one cell of padding before its end. `needed` is re-measured after every step
+     * because growing a diamond also shifts its text right. Returns { text, cur } with the
+     * caret moved along if columns were inserted to its left.
+     */
+    static ensureRoom(text, cur, needed) {
+      for (let guard = 0; guard < 400; guard++) {
+        const ctx = this.caretContext(text, cur);
+        if (!ctx) return null;
+        const { state, box, run } = ctx;
+        const missing = needed(ctx, cur) + 1 - (run.end - run.c0);
+        if (missing <= 0) return { text, cur };
+        // A diamond grows by one column on each side of its centre; anything else at the run's
+        // end. Mirror columns for diamonds crossed on the way may land left of the caret.
+        let xs = box.shape === 'choice' ? [box.c1 + 1, box.c2] : Array(missing).fill(run.end);
+        if (box.shape !== 'choice' && this.balanceForDiamonds(state, xs, 'c').length > xs.length) {
+          // The run's end crosses a diamond (e.g. a centred flowchart stack): grow half on each
+          // side instead, which keeps it balanced without doubling the width with mirrors.
+          xs = [...Array(Math.ceil(missing / 2)).fill(run.end), ...Array(Math.floor(missing / 2)).fill(run.c0)];
+        }
+        const cols = this.insertColumns(state, xs);
+        text = this.fromGridState(state);
+        cur = { r: cur.r, c: cur.c + cols.filter((x) => x < cur.c).length };
+      }
+      return null;
+    }
+
+    static readRun(state, r, run) {
+      return state.grid[r].slice(run.c0, run.end).join('');
+    }
+
+    static writeRun(state, r, run, str) {
+      for (let i = 0; i < run.end - run.c0; i++) state.grid[r][run.c0 + i] = str[i] || ' ';
+    }
+
+    static boxInsert(text, cur, str) {
+      const ctx0 = this.caretContext(text, cur);
+      if (!ctx0) return null;
+      // Work out the edited line once, from the text as it is now. Growing the box may push
+      // blank columns into it (left of the caret, too), so it is re-laid out afterwards
+      // from these values instead of being re-read.
+      const line0 = this.readRun(ctx0.state, cur.r, ctx0.run);
+      const k0 = cur.c - ctx0.run.c0;
+      const full = line0.slice(0, k0) + str + line0.slice(k0);
+      const lead = full.search(/\S/);
+      const indent = lead === -1 ? 0 : lead;
+      const body = full.trim();
+      // May exceed body.length: spaces typed at the end of the text are kept as caret movement
+      const caretInBody = Math.max(0, k0 + str.length - indent);
+      const diamond = ctx0.box.shape === 'choice';
+      // Diamonds draw their label centred, so their ASCII text is kept centred too and
+      // measured without its padding; other boxes keep the text where it was typed.
+      const needed = diamond ? Math.max(body.length, caretInBody) + 2 : indent + Math.max(body.length, caretInBody);
+
+      const room = this.ensureRoom(text, cur, () => needed);
+      if (!room) return null;
+      ({ text, cur } = room);
+      const ctx = this.caretContext(text, cur);
+      if (diamond) {
+        const c = this.placeCentred(ctx.state, cur.r, ctx.run, full, k0 + str.length);
+        return { text: this.fromGridState(ctx.state), cursorR: cur.r, cursorC: c };
+      }
+      if (lead === -1) {
+        // Only blanks typed: keep them, the caret simply moves on
+        this.writeRun(ctx.state, cur.r, ctx.run, '');
+        return { text: this.fromGridState(ctx.state), cursorR: cur.r, cursorC: ctx.run.c0 + k0 + str.length };
+      }
+      this.writeRun(ctx.state, cur.r, ctx.run, ' '.repeat(indent) + body);
+      return { text: this.fromGridState(ctx.state), cursorR: cur.r, cursorC: ctx.run.c0 + indent + caretInBody };
+    }
+
+    /**
+     * Writes `content` (trimmed) centred in the run; returns the grid column that offset
+     * `caretAt` of the untrimmed content ends up at.
+     */
+    static placeCentred(state, r, run, content, caretAt) {
+      const lead = content.search(/\S/);
+      const body = content.trim();
+      const len = run.end - run.c0;
+      const left = Math.max(0, Math.floor((len - body.length) / 2));
+      this.writeRun(state, r, run, ' '.repeat(left) + body);
+      const off = lead === -1 ? 0 : Math.max(0, caretAt - lead);
+      return Math.min(run.end - 1, run.c0 + left + off);
+    }
+
+    static boxNewline(text, cur) {
+      const ctx = this.caretContext(text, cur);
+      if (!ctx) return null;
+      const { state, box, run } = ctx;
+      const line = this.readRun(state, cur.r, run);
+      const k = cur.c - run.c0;
+      const lead = line.slice(0, k).search(/\S/);
+      const indent = lead === -1 ? k : lead; // keep the line's indentation
+      const tail = line.slice(k).trim(); // the new line gets the indentation, not the gap after the caret
+
+      // A diamond (this box or one beside it) gets a mirror row so it stays symmetric.
+      const ys = this.insertRows(state, [cur.r + 1]);
+      const oldR = cur.r + ys.filter((y) => y <= cur.r).length;
+      const newR = oldR + 1;
+      if (box.shape === 'choice') {
+        this.placeCentred(state, oldR, run, line.slice(0, k), 0);
+        const c = this.placeCentred(state, newR, run, tail, tail.search(/\S/));
+        return { text: this.fromGridState(state), cursorR: newR, cursorC: c };
+      }
+      this.writeRun(state, oldR, run, line.slice(0, k));
+      this.writeRun(state, newR, run, ' '.repeat(indent) + tail);
+      return { text: this.fromGridState(state), cursorR: newR, cursorC: run.c0 + indent };
+    }
+
+    static boxBackspace(text, cur) {
+      const ctx = this.caretContext(text, cur);
+      if (!ctx) return null;
+      const { state, run } = ctx;
+      if (cur.c > run.c0) {
+        const line = this.readRun(state, cur.r, run);
+        const k = cur.c - run.c0;
+        this.writeRun(state, cur.r, run, line.slice(0, k - 1) + line.slice(k));
+        return { text: this.fromGridState(state), cursorR: cur.r, cursorC: cur.c - 1 };
+      }
+      return this.joinWithPrevious(text, cur.r, run);
+    }
+
+    static boxDelete(text, cur) {
+      const ctx = this.caretContext(text, cur);
+      if (!ctx) return null;
+      const { state, box, run } = ctx;
+      const line = this.readRun(state, cur.r, run);
+      const k = cur.c - run.c0;
+      if (line.slice(k).trim() !== '') {
+        this.writeRun(state, cur.r, run, line.slice(0, k) + line.slice(k + 1));
+        return { text: this.fromGridState(state), cursorR: cur.r, cursorC: cur.c };
+      }
+      if (cur.r + 1 >= box.r2) return { text, cursorR: cur.r, cursorC: cur.c };
+      const next = this.ownedRun(ctx.boxes, box, cur.r + 1, run.c0);
+      if (!next || next.c0 !== run.c0 || next.end !== run.end) return { text, cursorR: cur.r, cursorC: cur.c };
+      return this.joinWithPrevious(text, cur.r + 1, run);
+    }
+
+    /**
+     * Joins interior row r onto row r-1 of the same box (Backspace at the start of a line /
+     * Delete at the end of the previous one), widening if needed, then removes the emptied
+     * row when nothing else crosses it.
+     */
+    static joinWithPrevious(text, r, run) {
+      let ctx = this.caretContext(text, { r, c: run.c0 });
+      if (!ctx) return null;
+      const { box } = ctx;
+      const prevRun = r - 1 > box.r1 ? this.ownedRun(ctx.boxes, box, r - 1, run.c0) : null;
+      if (!prevRun || prevRun.c0 !== run.c0 || prevRun.end !== run.end) {
+        return { text, cursorR: r, cursorC: run.c0 }; // first line, or a nested box in the way: nothing to join
+      }
+      const prev = this.readRun(ctx.state, r - 1, run).replace(/\s+$/, '');
+      const curLine = this.readRun(ctx.state, r, run).replace(/\s+$/, '');
+      const joined = prev.length ? prev + curLine.replace(/^\s+/, '') : curLine;
+      const caretK = prev.length ? prev.length : Math.max(0, curLine.search(/\S/));
+      const room = this.ensureRoom(text, { r: r - 1, c: run.c0 }, () => joined.length);
+      if (!room) return null;
+      text = room.text;
+      ctx = this.caretContext(text, room.cur);
+      const { state } = ctx;
+      const newBox = ctx.box;
+      if (newBox.shape === 'choice') {
+        const c = this.placeCentred(state, r - 1, ctx.run, joined, caretK);
+        this.writeRun(state, r, ctx.run, '');
+        return { text: this.fromGridState(state), cursorR: r - 1, cursorC: c };
+      }
+      this.writeRun(state, r - 1, ctx.run, joined);
+      const rowRun = { c0: ctx.run.c0, end: ctx.run.end };
+      this.writeRun(state, r, rowRun, '');
+      if (newBox.shape !== 'choice' && newBox.r2 - newBox.r1 > 2 && this.canRemoveRow(state, r, newBox) &&
+          !this.diamondRemovalError(state, [r], 'r', null, 'join')) {
+        state.grid.splice(r, 1);
+        state.rows--;
+      }
+      return { text: this.fromGridState(state), cursorR: r - 1, cursorC: ctx.run.c0 + caretK };
+    }
+
+    /** Clears the selected cells between a and b (a before b) that belong to `box`. */
+    static clearRange(text, boxes, box, a, b) {
+      const state = this.toGridState(text);
+      for (let r = a.r; r <= b.r; r++) {
+        if (r <= box.r1 || r >= box.r2) continue;
+        const from = r === a.r ? a.c : box.c1 + 1;
+        const to = r === b.r ? b.c : box.c2;
+        if (a.r === b.r) {
+          // Same row: delete and close the gap within the run
+          const run = this.ownedRun(boxes, box, r, from);
+          if (!run || to > run.end) return null;
+          const line = this.readRun(state, r, run);
+          this.writeRun(state, r, run, line.slice(0, from - run.c0) + line.slice(to - run.c0));
+        } else {
+          for (let c = from; c < to; c++) {
+            const run = this.ownedRun(boxes, box, r, c + 1);
+            if (run && c >= run.c0 && c < run.end) state.grid[r][c] = ' ';
+          }
+        }
+      }
+      return { text: this.fromGridState(state) };
     }
   }
 
