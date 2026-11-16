@@ -259,7 +259,23 @@
       editor.selectionEnd = Grid2DEditor.getIndexFromRowCol(editor.value, res.cursorR, res.selC2);
     }
     refresh();
+    revealActiveBox();
     showToast(res.msg || msg);
+  }
+
+  /** Scrolls the preview so the selected box (e.g. one just inserted) is in view. */
+  function revealActiveBox() {
+    const g = activeBoxIndex === -1 ? null : svgWrapper.querySelector(`.ditaa-box[data-box-index="${activeBoxIndex}"]`);
+    if (!g) return;
+    const box = g.getBoundingClientRect();
+    const view = viewport.getBoundingClientRect();
+    const pad = 24;
+    let dx = 0, dy = 0;
+    if (box.right > view.right - pad) dx = box.right - view.right + pad;
+    if (box.left - dx < view.left + pad) dx = box.left - view.left - pad;
+    if (box.bottom > view.bottom - pad) dy = box.bottom - view.bottom + pad;
+    if (box.top - dy < view.top + pad) dy = box.top - view.top - pad;
+    if (dx || dy) viewport.scrollBy({ left: dx, top: dy });
   }
 
   let toastTimer = null;
@@ -709,16 +725,33 @@
     ['arrow', 'Arrow only']
   ];
 
+  /**
+   * Character width and line height of the editor, measured on a hidden copy of the
+   * textarea itself (same class, so the same font, whatever the browser picked). The
+   * difference between 100 and 200 characters / lines cancels out padding and borders.
+   * (The computed `font` shorthand can't be used: browsers return '' for it when a
+   * property such as font-variant-ligatures has no shorthand form.)
+   */
+  function editorMetrics() {
+    const cs = getComputedStyle(editor);
+    const probe = editor.cloneNode(false);
+    probe.removeAttribute('id'); // so copy what the #ascii-editor rule sets, from the live element
+    probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;width:50px;height:50px;overflow:scroll';
+    for (const prop of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'fontVariantLigatures', 'tabSize']) {
+      probe.style[prop] = cs[prop];
+    }
+    document.body.appendChild(probe);
+    const measure = (value) => { probe.value = value; return { w: probe.scrollWidth, h: probe.scrollHeight }; };
+    const a = measure('M'.repeat(100)), b = measure('M'.repeat(200));
+    const c = measure('M\n'.repeat(99) + 'M'), d = measure('M\n'.repeat(199) + 'M');
+    probe.remove();
+    return { cw: (b.w - a.w) / 100, lh: (d.h - c.h) / 100 };
+  }
+
   /** Grid cell under a mouse event in the textarea (columns past a line's end included). */
   function cellAt(ev) {
     const cs = getComputedStyle(editor);
-    const probe = document.createElement('span');
-    probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${cs.font};letter-spacing:${cs.letterSpacing}`;
-    probe.textContent = 'M'.repeat(100);
-    document.body.appendChild(probe);
-    const cw = probe.getBoundingClientRect().width / 100;
-    probe.remove();
-    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.35;
+    const { cw, lh } = editorMetrics();
     const rect = editor.getBoundingClientRect();
     const x = ev.clientX - rect.left - editor.clientLeft - parseFloat(cs.paddingLeft) + editor.scrollLeft;
     const y = ev.clientY - rect.top - editor.clientTop - parseFloat(cs.paddingTop) + editor.scrollTop;
