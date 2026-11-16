@@ -915,3 +915,100 @@ test('insertShapeAt only uses empty space', () => {
   assert.equal(parse(ok.text).boxes.length, 2);
   assert.match(Grid2DEditor.insertShapeAt(t, 1, 3, 'box').error, /Not enough empty space/);
 });
+
+/* ---------------- PR #4 review follow-ups ---------------- */
+
+// Which boxes each wire connects, by label: endpoint identity, not just counts
+const connectionsByLabel = (text, rename = {}) => {
+  const p = new DitaaParser();
+  const ast = p.parse(text);
+  const name = (b) => { const n = b.lines[0] || b.macroKey || '?'; return rename[n] || n; };
+  return p.connections(ast).map((ids) => ids.map((i) => name(ast.boxes[i])).sort().join(' – ')).sort();
+};
+
+test('regression (PR #4 review): a blocked wire jog refuses the edit instead of re-attaching the wire', () => {
+  const text = [
+    '+--------+     +-----+',
+    '| Hello  +---->| B   |',
+    '+--------+     +--+--+',
+    '                  |X',
+    '                  v',
+    '               +-----+',
+    '               | C   |',
+    '               +-----+'
+  ].join('\n');
+  assert.deepEqual(connectionsByLabel(text), ['B – C', 'B – Hello']);
+  const res = Grid2DEditor.typeInBox(text, { r: 1, c: 7 }, null, { type: 'insert', text: ' much longer' });
+  assert.ok(res.error, 'refused');
+  assert.match(res.error, /no room to follow/);
+  // Same via the Size Box button
+  const hello = parse(text).boxes.find((b) => b.lines[0] === 'Hello');
+  assert.match(Grid2DEditor.resizeBox(text, hello, 2, 0).error, /no room to follow/);
+  // Without the X the jog is drawn and every wire still connects the same boxes
+  const clear = text.replace('|X', '| ');
+  const ok = Grid2DEditor.typeInBox(clear, { r: 1, c: 7 }, null, { type: 'insert', text: ' much' });
+  assert.ok(!ok.error, ok.error);
+  assert.equal(ok.text.split('\n')[3], '                  +---+', 'B moved 4 columns; the jog follows');
+  assert.deepEqual(connectionsByLabel(ok.text, { 'Hello much': 'Hello' }), ['B – C', 'B – Hello']);
+  // Growing so far that Hello's own wall would sit on the jog's corner is refused too:
+  // the wire would look like it leaves Hello
+  const far = Grid2DEditor.typeInBox(clear, { r: 1, c: 7 }, null, { type: 'insert', text: ' much longer' });
+  assert.match(far.error, /no room to follow/);
+});
+
+test('the safety check refuses any edit that changes what a wire connects', () => {
+  const text = '+---+   +---+\n| A +-->| B |\n+---+   +---+\n\n+---+\n| C |\n+---+';
+  // B moved away from the arrow (the arrow is left dangling): same boxes, different wiring
+  const moved = '+---+    +---+\n| A +--> | B |\n+---+    +---+\n\n+---+\n| C |\n+---+';
+  const res = Grid2DEditor.guardOtherBoxes(text, { text: moved, cursorR: 0, cursorC: 0 }, 'test');
+  assert.match(res.error, /change what a wire connects/);
+});
+
+test('regression (PR #4 review): a selection is replaced the same way from the keyboard and the menu', () => {
+  // Both the beforeinput handler and the context menu's Paste call editAtSelection with
+  // the textarea's selectionStart/selectionEnd.
+  const text = '+---------------+\n|  Component    |\n+---------------+';
+  const s = text.indexOf('Component');
+  const pasted = Grid2DEditor.editAtSelection(text, s, s + 'Component'.length, { type: 'insert', text: 'API' });
+  assert.deepEqual(parse(pasted.text).boxes[0].lines, ['API']);
+  const typed = Grid2DEditor.editAtSelection(text, s, s + 'Component'.length, { type: 'insert', text: 'A' });
+  assert.deepEqual(parse(typed.text).boxes[0].lines, ['A']);
+  // A freshly inserted shape's placeholder (selected by the menu) is replaced too
+  const ins = Grid2DEditor.insertConnected('+-----+\n| X   |\n+-----+', parse('+-----+\n| X   |\n+-----+').boxes[0], 'right', 'box');
+  const a = Grid2DEditor.getIndexFromRowCol(ins.text, ins.cursorR, ins.selC1);
+  const b = Grid2DEditor.getIndexFromRowCol(ins.text, ins.cursorR, ins.selC2);
+  const named = Grid2DEditor.editAtSelection(ins.text, a, b, { type: 'insert', text: 'Gateway' });
+  assert.deepEqual(parse(named.text).boxes.map((x) => x.lines[0]).sort(), ['Gateway', 'X']);
+});
+
+test('regression (PR #4 review): hitting the size limit is an error, never a fallback to plain editing', () => {
+  const dia = Grid2DEditor.diamondTemplate('Q?').join('\n');
+  const r1 = Grid2DEditor.typeInBox(dia, { r: 2, c: 5 }, null, { type: 'insert', text: 'a'.repeat(850) });
+  assert.ok(r1 && r1.error, 'diamond: error, not null');
+  const box = '+-----+\n| A   |\n+-----+';
+  const r2 = Grid2DEditor.typeInBox(box, { r: 1, c: 3 }, null, { type: 'insert', text: 'b'.repeat(2500) });
+  assert.ok(r2 && r2.error, 'box: error, not null');
+  assert.match(r2.error, /too large/);
+  // null still means exactly "not inside a box"
+  assert.equal(Grid2DEditor.typeInBox(box + '\nfree', { r: 3, c: 1 }, null, { type: 'insert', text: 'x' }), null);
+  assert.equal(Grid2DEditor.editAtSelection(box, 0, 0, { type: 'insert', text: 'x' }), null, 'on a corner');
+});
+
+test('typing in the flowchart diamond keeps every wire connecting the same boxes', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { flowchart } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const L = flowchart.split('\n');
+  const r = L.findIndex((l) => l.includes('Valid?'));
+  let t = flowchart;
+  let cur = { r, c: L[r].indexOf('?') };
+  for (const ch of ' and complete') {
+    const res = type(t, cur.r, cur.c, { type: 'insert', text: ch });
+    assert.ok(res && !res.error, res && res.error);
+    t = res.text;
+    cur = { r: res.cursorR, c: res.cursorC };
+  }
+  assert.deepEqual(connectionsByLabel(t, { 'Valid and complete?': 'Valid?' }), connectionsByLabel(flowchart));
+});

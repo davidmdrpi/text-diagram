@@ -364,6 +364,12 @@
     }
   }
 
+  /** Auto-fit edit at the editor's current selection (keyboard and menu share this). */
+  function boxEdit(op) {
+    const caret = editor.selectionStart === editor.selectionEnd ? getCursorRC() : null;
+    return Grid2DEditor.editAtSelection(editor.value, editor.selectionStart, editor.selectionEnd, op, caret);
+  }
+
   editor.addEventListener('beforeinput', (e) => {
     // Snapshot once at the start of each typing burst
     if (!typingBurstTimer) pushUndoState();
@@ -373,9 +379,7 @@
     if (!toggleAutofit.checked || e.isComposing) return;
     const op = boxOpFor(e);
     if (!op) return;
-    const caret = getCursorRC();
-    const sel = Grid2DEditor.getRowColFromIndex(editor.value, editor.selectionEnd);
-    const res = Grid2DEditor.typeInBox(editor.value, caret, editor.selectionEnd !== editor.selectionStart ? sel : null, op);
+    const res = boxEdit(op);
     if (!res) return; // not inside a box: normal text editing
     e.preventDefault();
     if (res.error) {
@@ -784,9 +788,8 @@
       editor.focus();
       try {
         const clip = await navigator.clipboard.readText();
-        // Goes through the same path as typing, so pasting into a box grows it
-        const caret = getCursorRC();
-        const res = toggleAutofit.checked ? Grid2DEditor.typeInBox(editor.value, caret, null, { type: 'insert', text: clip }) : null;
+        // Same path as typing: pasting into a box grows it and replaces a selection there
+        const res = toggleAutofit.checked ? boxEdit({ type: 'insert', text: clip }) : null;
         if (res && !res.error) applyGridOperationResult(res);
         else if (res && res.error) showToast(res.error);
         else {
@@ -810,10 +813,29 @@
     ctxMenu.style.top = `${Math.max(8, Math.min(ev.clientY, H - mh - 8))}px`;
   }
 
+  // The browser may move the caret on the right-button press; remember the selection first
+  let selBeforeRightClick = null;
+  editor.addEventListener('mousedown', (ev) => {
+    if (ev.button === 2) {
+      selBeforeRightClick = { s: editor.selectionStart, e: editor.selectionEnd, value: editor.value };
+    }
+  });
+
   editor.addEventListener('contextmenu', (ev) => {
     if (ev.shiftKey) return; // browser menu
     ev.preventDefault();
     const cell = cellAt(ev);
+    // Right-clicking inside a selection keeps it (so Cut/Copy/Paste act on it)
+    const saved = selBeforeRightClick;
+    selBeforeRightClick = null;
+    if (saved && saved.s !== saved.e && saved.value === editor.value) {
+      const idx = Grid2DEditor.getIndexFromRowCol(editor.value, cell.r, cell.c);
+      if (idx >= saved.s && idx <= saved.e) {
+        editor.focus();
+        editor.selectionStart = saved.s;
+        editor.selectionEnd = saved.e;
+      }
+    }
     // Without a selection, move the caret to the click (as a left click would)
     if (editor.selectionStart === editor.selectionEnd) {
       const idx = Grid2DEditor.getIndexFromRowCol(editor.value, cell.r, cell.c);

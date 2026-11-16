@@ -135,7 +135,67 @@
         grid, numRows, numCols, cellRole, inlineBorderArrows, diamondAt
       );
 
-      return { grid, numRows, numCols, boxes, wires, arrows, junctions, freeTexts, legends };
+      return { grid, numRows, numCols, boxes, wires, arrows, junctions, freeTexts, legends, cellRole };
+    }
+
+    /**
+     * What each wire connects: one entry per connected run of wire cells that touches at
+     * least one box, listing the indices of the boxes it touches. Horizontal wire cells
+     * join left/right, vertical ones up/down, corners and junctions both ways.
+     */
+    connections(ast) {
+      const { grid, numRows, numCols, boxes, cellRole } = ast;
+      const H = (r, c) => {
+        const role = cellRole[r][c];
+        return role === 'wire-h' || role === 'wire-corner' || role === 'wire-junction' ||
+          (role === 'wire-arrow' && (grid[r][c] === '<' || grid[r][c] === '>'));
+      };
+      const V = (r, c) => {
+        const role = cellRole[r][c];
+        return role === 'wire-v' || role === 'wire-corner' || role === 'wire-junction' ||
+          (role === 'wire-arrow' && (grid[r][c] === '^' || grid[r][c] === 'v'));
+      };
+      const owners = new Map(); // border cell -> box indices
+      boxes.forEach((b, i) => {
+        for (let r = b.r1; r <= b.r2; r++) {
+          for (let c = b.c1; c <= b.c2; c++) {
+            if (r !== b.r1 && r !== b.r2 && c !== b.c1 && c !== b.c2) continue;
+            const k = r * numCols + c;
+            if (!owners.has(k)) owners.set(k, []);
+            owners.get(k).push(i);
+          }
+        }
+      });
+      const inGrid = (r, c) => r >= 0 && r < numRows && c >= 0 && c < numCols;
+      const seen = new Set();
+      const out = [];
+      for (let r0 = 0; r0 < numRows; r0++) {
+        for (let c0 = 0; c0 < numCols; c0++) {
+          if (seen.has(r0 * numCols + c0) || !(H(r0, c0) || V(r0, c0))) continue;
+          const touched = new Set();
+          const stack = [[r0, c0]];
+          seen.add(r0 * numCols + c0);
+          while (stack.length) {
+            const [r, c] = stack.pop();
+            const steps = [];
+            if (H(r, c)) steps.push([0, -1], [0, 1]);
+            if (V(r, c)) steps.push([-1, 0], [1, 0]);
+            for (const [dr, dc] of steps) {
+              const nr = r + dr, nc = c + dc;
+              if (!inGrid(nr, nc)) continue;
+              const k = nr * numCols + nc;
+              if (cellRole[nr][nc] === 'box-border') {
+                (owners.get(k) || []).forEach((i) => touched.add(i));
+              } else if (!seen.has(k) && (dr === 0 ? H(nr, nc) : V(nr, nc))) {
+                seen.add(k);
+                stack.push([nr, nc]);
+              }
+            }
+          }
+          if (touched.size) out.push([...touched]);
+        }
+      }
+      return out;
     }
 
     isHorizWallChar(ch, allowInlineArrow) {
@@ -1334,7 +1394,8 @@
         const O = state.grid[outR];
         const Y = state.grid[beyondR] || [];
         const to = c + d;
-        if (to < 0) continue;
+        const fail = () => { state.routeBlocked = state.routeBlocked || { r: outR, c }; };
+        if (to < 0) { fail(); continue; }
         while (O.length <= Math.max(c, to) + 1) O.push(' ');
         // Find w, where the wire leaves the outside row away from the band
         let w = -1;
@@ -1346,7 +1407,7 @@
             if (k >= 0 && k < O.length && O[k] === '+' && wireV(Y, k)) { w = k; break; }
           }
         }
-        if (w === -1) continue;
+        if (w === -1) { fail(); continue; }
         const dashed = O.slice(Math.min(w, c), Math.max(w, c) + 1).includes('=') || Y[w] === ':';
         // An arrowhead next to the band (pointing at the moved box) stays an arrowhead
         const head = O[c] === 'v' || O[c] === '^' ? O[c] : null;
@@ -1355,7 +1416,15 @@
         for (let k = Math.min(w, c); k <= Math.max(w, c); k++) O[k] = ' ';
         let free = true;
         for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (O[k] !== ' ') free = false;
-        if (!free) { state.grid[outR] = saved; continue; }
+        if (!free) { state.grid[outR] = saved; fail(); continue; }
+        // The jog's far corner must not touch anything in the band row next to it, or the
+        // wire would look attached to that (e.g. a box that grew over it)
+        const I = state.grid[inR];
+        const sameWall = () => {
+          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (!'-=+'.includes(I[k] || ' ') || (I[k] || ' ') === ' ') return false;
+          return true; // one unbroken wall from the port to the corner: the same box
+        };
+        if (to !== w && (I[w] || ' ') !== ' ' && !sameWall()) { state.grid[outR] = saved; fail(); continue; }
         if (to === w) {
           O[w] = head || (Y[w] === ':' || (state.grid[inR][to] || ' ') === ':' ? ':' : '|');
         } else {
@@ -1365,6 +1434,12 @@
         }
       }
       this.normalizeWidth(state);
+    }
+
+    /** Error if a wire next to a moved box could not be re-joined (see rejoinLinks). */
+    static routeError(state, verb) {
+      if (!state.routeBlocked) return null;
+      return { error: `Cannot ${verb}: the wire at line ${state.routeBlocked.r + 1} has no room to follow the box that moves (clear the space next to it first)` };
     }
 
     static normalizeWidth(state) {
@@ -1567,6 +1642,8 @@
 
       if (dw > 0) {
         this.growDiamondH(state, box);
+        const routed = this.routeError(state, 'widen');
+        if (routed) return routed;
       } else if (dw < 0) {
         // Take a column out on each side of the centre, then put one back left of the left
         // wall so the centre (and the wires on the top/bottom ports) stays put.
@@ -1576,6 +1653,8 @@
           this.removeColumnEverywhere(state, box.c1 + 1, box, band);
         if (err) return err;
         this.insertColumnEverywhere(state, box.c1, band);
+        const routed = this.routeError(state, 'narrow');
+        if (routed) return routed;
       }
 
       if (dh > 0) {
@@ -1626,6 +1705,25 @@
         remaining.splice(i, 1);
       }
       if (remaining.length > (exceptBox ? 1 : 0) + allowNew) return { error: `Cannot ${verb}: it would merge lines into a new box` };
+      // Same boxes is not enough: every wire must still connect the same boxes. (Inserting
+      // a new shape may legitimately split a connection in two, so allowNew skips this.)
+      if (!allowNew) {
+        const beforeAst = parser.parse(rawText), afterAst = parser.parse(res.text);
+        const keyOf = (ast, isSelf) => ast.boxes.map((b) => (isSelf(b) ? 'SELF' : sig(b)));
+        const selfAfter = new Set(remaining); // the edited box's new signature, if any
+        const kb = keyOf(beforeAst, (b) => exceptBox && same(b, exceptBox));
+        const ka = keyOf(afterAst, (b) => exceptBox && selfAfter.has(sig(b)));
+        const comps = (ast, keys) => parser.connections(ast).map((ids) => JSON.stringify(ids.map((i) => keys[i]).sort()));
+        const after = comps(afterAst, ka);
+        for (const comp of comps(beforeAst, kb)) {
+          const i = after.indexOf(comp);
+          if (i === -1) {
+            const names = JSON.parse(comp).map((k) => (k === 'SELF' ? 'this box' : JSON.parse(k)[0][0] || 'a box'));
+            return { error: `Cannot ${verb}: it would change what a wire connects (${names.join(' – ')})` };
+          }
+          after.splice(i, 1);
+        }
+      }
       return res;
     }
 
@@ -1659,6 +1757,8 @@
           if (err) return err;
         }
       }
+      const routed = this.routeError(state, dw > 0 ? 'widen' : 'narrow');
+      if (routed) return routed;
       if (dh < 0) {
         const targetR = box.r2 - 1;
         for (let c = box.c1 + 1; c < box.c2; c++) {
@@ -1741,41 +1841,59 @@
       const parser = new DitaaParser();
       const boxes = parser.parse(rawText).boxes;
       const box = this.boxAtCaret(boxes, caret.r, caret.c);
-      if (!box) return null;
+      if (!box) return null; // the only "use normal editing" answer
+      if (sel && (sel.r !== caret.r || sel.c !== caret.c)) {
+        const [, b] = sel.r < caret.r || (sel.r === caret.r && sel.c < caret.c) ? [sel, caret] : [caret, sel];
+        if (this.boxAtCaret(boxes, b.r, b.c) !== box) return null; // selection leaves the box
+      }
+      // From here on we are editing inside a box: any failure is an error, never a silent
+      // fallback to plain text editing (which would push the box's wall out of line).
+      const res = this.typeInBoxInner(rawText, boxes, box, caret, sel, op);
+      if (!res) return { error: 'Cannot make that edit inside this box' };
+      return res;
+    }
+
+    static typeInBoxInner(rawText, boxes, box, caret, sel, op) {
       let text = rawText;
       let cur = { r: caret.r, c: caret.c };
 
       if (sel && (sel.r !== caret.r || sel.c !== caret.c)) {
         const [a, b] = sel.r < caret.r || (sel.r === caret.r && sel.c < caret.c) ? [sel, caret] : [caret, sel];
-        if (this.boxAtCaret(boxes, b.r, b.c) !== box) return null; // selection leaves the box: default editing
         const cleared = this.clearRange(text, boxes, box, a, b);
-        if (!cleared) return null;
+        if (!cleared) return { error: 'The selection crosses into another box' };
         text = cleared.text;
         cur = { r: a.r, c: a.c };
         if (op.type === 'backspace' || op.type === 'delete') return this.finishTyping(rawText, text, cur, box);
       }
 
-      const insertText = (str) => {
-        for (const piece of str.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split(/(\n)/)) {
+      if (op.type === 'insert') {
+        for (const piece of op.text.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split(/(\n)/)) {
           if (piece === '') continue;
           const res = piece === '\n' ? this.boxNewline(text, cur) : this.boxInsert(text, cur, piece);
-          if (!res) return false;
+          if (!res || res.error) return res;
           text = res.text;
           cur = { r: res.cursorR, c: res.cursorC };
         }
-        return true;
-      };
-
-      let res;
-      if (op.type === 'insert') {
-        if (!insertText(op.text)) return null;
         return this.finishTyping(rawText, text, cur, box);
       }
+      let res;
       if (op.type === 'newline') res = this.boxNewline(text, cur);
       else if (op.type === 'backspace') res = this.boxBackspace(text, cur);
       else if (op.type === 'delete') res = this.boxDelete(text, cur);
-      if (!res) return null;
+      if (!res || res.error) return res;
       return this.finishTyping(rawText, res.text, { r: res.cursorR, c: res.cursorC }, box);
+    }
+
+    /**
+     * typeInBox for a textarea selection given as character offsets (the editor's
+     * selectionStart / selectionEnd). Both the keyboard and the context menu use this, so
+     * a selection inside a box is always replaced the same way. `caret` overrides the
+     * position of selectionStart (for a caret placed past the end of a line).
+     */
+    static editAtSelection(text, selStart, selEnd, op, caret = null) {
+      const start = caret || this.getRowColFromIndex(text, selStart);
+      const end = selEnd !== selStart ? this.getRowColFromIndex(text, selEnd) : null;
+      return this.typeInBox(text, start, end, op);
     }
 
     static finishTyping(rawText, text, cur, box) {
@@ -1804,6 +1922,7 @@
         if (!ctx) return null;
         const { state, box, run } = ctx;
         const missing = needed(ctx, cur) + 1 - (run.end - run.c0);
+        if (missing > 2000) return { error: 'Cannot fit that much text: the box would grow too large' };
         if (missing <= 0) return { text, cur };
         // Grow only on the box's own lines, like typing on them: what is beside it moves
         // over, lines above and below stay put. A diamond grows around its centre.
@@ -1814,9 +1933,11 @@
           const cols = this.insertColumns(state, Array(missing).fill(run.end), box.r1, box.r2);
           cur = { r: cur.r, c: cur.c + cols.filter((x) => x < cur.c).length };
         }
+        const routed = this.routeError(state, 'grow the box');
+        if (routed) return routed;
         text = this.fromGridState(state);
       }
-      return null;
+      return { error: 'Cannot fit that much text: the box would grow too large' };
     }
 
     static readRun(state, r, run) {
@@ -1847,7 +1968,7 @@
       const needed = diamond ? Math.max(body.length, caretInBody) + 2 : indent + Math.max(body.length, caretInBody);
 
       const room = this.ensureRoom(text, cur, () => needed);
-      if (!room) return null;
+      if (!room || room.error) return room || null;
       ({ text, cur } = room);
       const ctx = this.caretContext(text, cur);
       if (diamond) {
@@ -1948,7 +2069,7 @@
       const joined = prev.length ? prev + curLine.replace(/^\s+/, '') : curLine;
       const caretK = prev.length ? prev.length : Math.max(0, curLine.search(/\S/));
       const room = this.ensureRoom(text, { r: r - 1, c: run.c0 }, () => joined.length);
-      if (!room) return null;
+      if (!room || room.error) return room || null;
       text = room.text;
       ctx = this.caretContext(text, room.cur);
       const { state } = ctx;
@@ -2122,6 +2243,8 @@
         if (side === 'right') {
           const lo = Math.min(b.r1, L.shape ? L.shape.r0 : b.r1), hi = Math.max(b.r2, L.shape ? L.shape.r0 + h - 1 : b.r2);
           this.insertColumns(state, Array(GAP + w + (tpl ? 1 : 0)).fill(b.c2 + 1), Math.max(0, lo), hi);
+          const routed = this.routeError(state, 'insert here');
+          if (routed) return routed;
         } else {
           this.insertRows(state, Array(GAP + h).fill(b.r2 + 1));
         }
