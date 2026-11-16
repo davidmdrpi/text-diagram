@@ -38,6 +38,21 @@ inserting text naturally pushes the rest of a line along:
 
 The Size Box ±W buttons follow the same rule (only the box's own lines shift).
 
+**Right-click** in the editor for connected shapes:
+
+- On a box's wall (or just outside it): add a **Box**, **Rounded box**, **Diamond `{c}`** or
+  **Arrow only** on that side, joined by an arrow from a `+` port in the middle of the wall. On a
+  corner you get both sides; inside the box, all four. The new shape's placeholder label is
+  selected, so just type its name.
+- Right and below draw into empty space; if something is there, room is made the same way typing
+  does (things beside move over / the lines below move down), and if an arrow already continues
+  that way the new shape is spliced into it.
+- Left and above only use empty space (at the top/left edge of the diagram, blank rows/columns are
+  added). If something is in the way you'll be told how to make room: press Enter above the box,
+  or type spaces before it.
+- On empty space: insert a shape right there.
+- Cut / Copy / Paste are in the menu too; Shift+right-click opens the browser's own menu.
+
 Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 
 Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax

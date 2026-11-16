@@ -836,3 +836,82 @@ test('typing in the flowchart diamond keeps the boxes below in place and re-join
   const touching = (ast) => ast.arrows.filter((a) => a.touchesBox).length;
   assert.equal(touching(after), touching(before));
 });
+
+/* ---------------- Right-click inserts ---------------- */
+
+const START = '\n\n\n\n\n     +---------+\n     | Start   |\n     +---------+';
+
+test('hitBoxSides: wall or just outside picks that side, corners two, inside all four', () => {
+  const t = '+---------+\n| Start   |\n+---------+';
+  assert.deepEqual(Grid2DEditor.hitBoxSides(t, 1, 10).sides, ['right']);
+  assert.deepEqual(Grid2DEditor.hitBoxSides(t, 1, 12).sides, ['right'], 'up to two cells outside');
+  assert.deepEqual(Grid2DEditor.hitBoxSides(t, 2, 5).sides, ['below']);
+  assert.deepEqual(Grid2DEditor.hitBoxSides(t, 0, 0).sides, ['left', 'above']);
+  assert.deepEqual(Grid2DEditor.hitBoxSides(t, 1, 4).sides, ['right', 'below', 'left', 'above']);
+  assert.equal(Grid2DEditor.hitBoxSides(t, 1, 14), null);
+});
+
+test('insertConnected draws a connected shape on each side, with a + port and the label selected', () => {
+  for (const side of ['right', 'below', 'left', 'above']) {
+    for (const kind of ['box', 'rbox', 'diamond']) {
+      const res = Grid2DEditor.insertConnected(START, parse(START).boxes[0], side, kind);
+      assert.ok(!res.error, `${side} ${kind}: ${res.error}`);
+      const ast = parse(res.text);
+      assert.equal(ast.boxes.length, 2, `${side} ${kind}`);
+      const arrow = ast.arrows.find((a) => a.touchesBox);
+      assert.ok(arrow, `${side} ${kind}: arrow reaches the new shape`);
+      assert.equal(arrow.dir, { right: '>', below: 'v', left: '<', above: '^' }[side]);
+      const label = res.text.split('\n')[res.cursorR].slice(res.selC1, res.selC2);
+      assert.ok(['Component', 'Service', 'Decision?'].includes(label), `${side} ${kind}: label ${label}`);
+      const start = ast.boxes.find((b) => b.lines[0] === 'Start');
+      const L = res.text.split('\n');
+      const port = {
+        right: L[(start.r1 + start.r2) / 2 | 0][start.c2], left: L[(start.r1 + start.r2) / 2 | 0][start.c1],
+        below: L[start.r2][(start.c1 + start.c2) / 2 | 0], above: L[start.r1][(start.c1 + start.c2) / 2 | 0]
+      }[side];
+      assert.equal(port, '+', `${side} ${kind}: port`);
+      if (kind === 'diamond') assert.equal(ast.boxes.find((b) => b.shape === 'choice').lines[0], 'Decision?');
+    }
+  }
+});
+
+test('insertConnected "arrow only" draws just the port and arrow', () => {
+  const res = Grid2DEditor.insertConnected(START, parse(START).boxes[0], 'right', 'arrow');
+  assert.equal(res.text.split('\n')[6], '     | Start   +--->');
+  assert.deepEqual([res.cursorR, res.cursorC], [6, 20], 'caret just after the arrowhead');
+});
+
+test('right/below into an existing connection: the new shape is spliced into the chain', () => {
+  const below = '+---------+\n| Start   |\n+----+----+\n     |\n     v\n+----+----+\n| End     |\n+---------+';
+  const r1 = Grid2DEditor.insertConnected(below, parse(below).boxes[0], 'below', 'box');
+  assert.ok(!r1.error, r1.error);
+  const a1 = parse(r1.text);
+  assert.equal(a1.boxes.length, 3);
+  assert.equal(a1.arrows.filter((a) => a.touchesBox).length, 2, 'Start -> new -> End');
+  const right = '+-----+     +-----+\n| A   +---->| B   |\n+-----+     +-----+';
+  const r2 = Grid2DEditor.insertConnected(right, parse(right).boxes[0], 'right', 'rbox');
+  assert.equal(r2.text.split('\n')[1], '| A   +--->|   Service   +----->| B   |');
+});
+
+test('left/above draw only into empty space; at the diagram edge rows/columns are added', () => {
+  const blocked = '+-----+     +-----+\n| A   +---->| B   |\n+-----+     +-----+';
+  const res = Grid2DEditor.insertConnected(blocked, parse(blocked).boxes.find((b) => b.lines[0] === 'B'), 'left', 'box');
+  assert.match(res.error, /No room on the left/);
+  const above = 'text\n+-----+\n| A   |\n+-----+';
+  assert.match(Grid2DEditor.insertConnected(above, parse(above).boxes[0], 'above', 'box').error, /press Enter/);
+  const edge = '+-----+\n| A   |\n+-----+';
+  const up = Grid2DEditor.insertConnected(edge, parse(edge).boxes[0], 'above', 'box');
+  assert.ok(!up.error, up.error);
+  assert.equal(parse(up.text).boxes.length, 2);
+  const left = Grid2DEditor.insertConnected(edge, parse(edge).boxes[0], 'left', 'diamond');
+  assert.ok(!left.error, left.error);
+  assert.equal(parse(left.text).boxes.length, 2);
+});
+
+test('insertShapeAt only uses empty space', () => {
+  const t = '+-----+\n| A   |\n+-----+';
+  const ok = Grid2DEditor.insertShapeAt(t, 4, 2, 'box');
+  assert.ok(!ok.error, ok.error);
+  assert.equal(parse(ok.text).boxes.length, 2);
+  assert.match(Grid2DEditor.insertShapeAt(t, 1, 3, 'box').error, /Not enough empty space/);
+});

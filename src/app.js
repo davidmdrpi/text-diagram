@@ -253,6 +253,11 @@
     editor.focus();
     editor.selectionStart = editor.selectionEnd = newIdx;
     virtualCursor = { text: editor.value, idx: newIdx, r: res.cursorR, c: res.cursorC };
+    if (res.selC1 !== undefined) {
+      // Select the new shape's placeholder label so typing replaces it
+      editor.selectionStart = Grid2DEditor.getIndexFromRowCol(editor.value, res.cursorR, res.selC1);
+      editor.selectionEnd = Grid2DEditor.getIndexFromRowCol(editor.value, res.cursorR, res.selC2);
+    }
     refresh();
     showToast(res.msg || msg);
   }
@@ -679,6 +684,150 @@
     setEditorText(legacyOutput.textContent);
     closeModal();
   });
+
+
+  /*************************************************************************
+   * RIGHT-CLICK MENU: connected shapes around a box, shapes in empty space,
+   * plus Cut / Copy / Paste. Shift+right-click opens the browser's own menu.
+   *************************************************************************/
+  const ctxMenu = document.createElement('div');
+  ctxMenu.id = 'ctx-menu';
+  ctxMenu.className = 'fixed z-50 hidden min-w-[220px] py-1 rounded-lg bg-slate-900 border border-slate-700 shadow-2xl text-xs text-slate-200 select-none';
+  ctxMenu.setAttribute('role', 'menu');
+  document.body.appendChild(ctxMenu);
+
+  const SIDE_LABEL = { right: 'Right of', below: 'Below', left: 'Left of', above: 'Above' };
+  const SIDE_ARROW = { right: '→', below: '↓', left: '←', above: '↑' };
+  const KINDS = [
+    ['box', 'Box'],
+    ['rbox', 'Rounded box'],
+    ['diamond', 'Diamond {c}'],
+    ['arrow', 'Arrow only']
+  ];
+
+  /** Grid cell under a mouse event in the textarea (columns past a line's end included). */
+  function cellAt(ev) {
+    const cs = getComputedStyle(editor);
+    const probe = document.createElement('span');
+    probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${cs.font};letter-spacing:${cs.letterSpacing}`;
+    probe.textContent = 'M'.repeat(100);
+    document.body.appendChild(probe);
+    const cw = probe.getBoundingClientRect().width / 100;
+    probe.remove();
+    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.35;
+    const rect = editor.getBoundingClientRect();
+    const x = ev.clientX - rect.left - editor.clientLeft - parseFloat(cs.paddingLeft) + editor.scrollLeft;
+    const y = ev.clientY - rect.top - editor.clientTop - parseFloat(cs.paddingTop) + editor.scrollTop;
+    return { r: Math.max(0, Math.floor(y / lh)), c: Math.max(0, Math.floor(x / cw)) };
+  }
+
+  function closeMenu() {
+    ctxMenu.classList.add('hidden');
+    ctxMenu.innerHTML = '';
+  }
+
+  function menuItem(label, action, { disabled = false, hint = '' } = {}) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.setAttribute('role', 'menuitem');
+    el.className = 'w-full flex items-center justify-between gap-4 px-3 py-1.5 text-left ' +
+      (disabled ? 'text-slate-500 cursor-default' : 'hover:bg-indigo-600 hover:text-white');
+    el.innerHTML = `<span></span><span class="text-slate-500 font-mono text-[10px]"></span>`;
+    el.firstChild.textContent = label;
+    el.lastChild.textContent = hint;
+    el.disabled = disabled;
+    if (!disabled) el.addEventListener('click', () => { closeMenu(); action(); });
+    return el;
+  }
+
+  function menuHeader(text) {
+    const el = document.createElement('div');
+    el.className = 'px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-indigo-300';
+    el.textContent = text;
+    return el;
+  }
+
+  function menuSeparator() {
+    const el = document.createElement('div');
+    el.className = 'my-1 border-t border-slate-800';
+    return el;
+  }
+
+  function openMenu(ev, cell) {
+    ctxMenu.innerHTML = '';
+    const text = editor.value;
+    const hit = Grid2DEditor.hitBoxSides(text, cell.r, cell.c);
+    if (hit) {
+      const name = hit.box.macroKey ? `[${hit.box.macroKey}]` : hit.box.lines[0] || 'box';
+      for (const side of hit.sides) {
+        ctxMenu.appendChild(menuHeader(`${SIDE_LABEL[side]} “${name}”`));
+        for (const [kind, label] of KINDS) {
+          ctxMenu.appendChild(menuItem(`${SIDE_ARROW[side]} ${label}`, () => {
+            applyGridOperationResult(Grid2DEditor.insertConnected(editor.value, hit.box, side, kind),
+              kind === 'arrow' ? 'Added arrow' : `Added ${label.toLowerCase()} — type its label`);
+          }));
+        }
+      }
+    } else {
+      ctxMenu.appendChild(menuHeader('Insert here'));
+      for (const [kind, label] of KINDS.slice(0, 3)) {
+        ctxMenu.appendChild(menuItem(label, () => {
+          applyGridOperationResult(Grid2DEditor.insertShapeAt(editor.value, cell.r, cell.c, kind), `Added ${label.toLowerCase()} — type its label`);
+        }));
+      }
+    }
+    ctxMenu.appendChild(menuSeparator());
+    const hasSel = editor.selectionStart !== editor.selectionEnd;
+    ctxMenu.appendChild(menuItem('Cut', () => { editor.focus(); document.execCommand('cut'); }, { disabled: !hasSel, hint: 'Ctrl+X' }));
+    ctxMenu.appendChild(menuItem('Copy', () => { editor.focus(); document.execCommand('copy'); }, { disabled: !hasSel, hint: 'Ctrl+C' }));
+    ctxMenu.appendChild(menuItem('Paste', async () => {
+      editor.focus();
+      try {
+        const clip = await navigator.clipboard.readText();
+        // Goes through the same path as typing, so pasting into a box grows it
+        const caret = getCursorRC();
+        const res = toggleAutofit.checked ? Grid2DEditor.typeInBox(editor.value, caret, null, { type: 'insert', text: clip }) : null;
+        if (res && !res.error) applyGridOperationResult(res);
+        else if (res && res.error) showToast(res.error);
+        else {
+          pushUndoState();
+          editor.setRangeText(clip, editor.selectionStart, editor.selectionEnd, 'end');
+          refresh();
+        }
+      } catch (_) {
+        showToast('Press Ctrl+V to paste (the browser blocked clipboard access)');
+      }
+    }, { hint: 'Ctrl+V' }));
+    const tip = document.createElement('div');
+    tip.className = 'px-3 pt-1 pb-1 text-[10px] text-slate-500';
+    tip.textContent = 'Shift+right-click: browser menu';
+    ctxMenu.appendChild(tip);
+
+    ctxMenu.classList.remove('hidden');
+    const { innerWidth: W, innerHeight: H } = window;
+    const mw = ctxMenu.offsetWidth, mh = ctxMenu.offsetHeight;
+    ctxMenu.style.left = `${Math.min(ev.clientX, W - mw - 8)}px`;
+    ctxMenu.style.top = `${Math.max(8, Math.min(ev.clientY, H - mh - 8))}px`;
+  }
+
+  editor.addEventListener('contextmenu', (ev) => {
+    if (ev.shiftKey) return; // browser menu
+    ev.preventDefault();
+    const cell = cellAt(ev);
+    // Without a selection, move the caret to the click (as a left click would)
+    if (editor.selectionStart === editor.selectionEnd) {
+      const idx = Grid2DEditor.getIndexFromRowCol(editor.value, cell.r, cell.c);
+      editor.focus();
+      editor.selectionStart = editor.selectionEnd = idx;
+      virtualCursor = { text: editor.value, idx, r: cell.r, c: cell.c };
+      onCaretMove();
+    }
+    openMenu(ev, cell);
+  });
+  document.addEventListener('mousedown', (e) => { if (!ctxMenu.contains(e.target)) closeMenu(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+  editor.addEventListener('scroll', closeMenu);
+  window.addEventListener('resize', closeMenu);
 
   /*************************************************************************
    * INIT

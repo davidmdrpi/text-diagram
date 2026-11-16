@@ -1605,7 +1605,7 @@
      * change). Glyph-level checks can't see that, e.g. removing the last interior column of
      * a small empty box elsewhere collapses it.
      */
-    static guardOtherBoxes(rawText, res, verb, exceptBox = null) {
+    static guardOtherBoxes(rawText, res, verb, exceptBox = null, allowNew = 0) {
       if (!res || res.error) return res;
       const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
       const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
@@ -1625,7 +1625,7 @@
         }
         remaining.splice(i, 1);
       }
-      if (remaining.length > (exceptBox ? 1 : 0)) return { error: `Cannot ${verb}: it would merge lines into a new box` };
+      if (remaining.length > (exceptBox ? 1 : 0) + allowNew) return { error: `Cannot ${verb}: it would merge lines into a new box` };
       return res;
     }
 
@@ -1990,6 +1990,201 @@
         }
       }
       return { text: this.fromGridState(state) };
+    }
+
+    /*************************************************************************
+     * CONTEXT-MENU INSERTS: a connected shape or arrow on any side of a box
+     *************************************************************************/
+
+    /** Templates for shapes inserted from the context menu (odd widths: ports can be centred). */
+    static shapeTemplate(kind) {
+      if (kind === 'box') return { lines: ['+-------------+', '|  Component  |', '+-------------+'], label: 'Component' };
+      if (kind === 'rbox') return { lines: ['/-------------\\', '|   Service   |', '\\-------------/'], label: 'Service' };
+      if (kind === 'diamond') return { lines: this.diamondTemplate('Decision?'), label: 'Decision?' };
+      return null;
+    }
+
+    /**
+     * Which box sides a right-click at (r, c) is about: on a wall or up to two cells outside
+     * it gives that side (a corner gives two); inside the box gives all four. Innermost box
+     * wins. Returns { box, sides } or null.
+     */
+    static hitBoxSides(rawText, r, c) {
+      const boxes = new DitaaParser().parse(rawText).boxes
+        .slice().sort((a, b) => (a.r2 - a.r1) * (a.c2 - a.c1) - (b.r2 - b.r1) * (b.c2 - b.c1));
+      for (const b of boxes) {
+        const inRows = r >= b.r1 && r <= b.r2, inCols = c >= b.c1 && c <= b.c2;
+        if (r > b.r1 && r < b.r2 && c > b.c1 && c < b.c2) {
+          // Inside: all four, unless a nested box is under the cursor (handled by sort order)
+          return { box: b, sides: ['right', 'below', 'left', 'above'] };
+        }
+        const sides = [];
+        if (inRows && c >= b.c2 && c <= b.c2 + 2) sides.push('right');
+        if (inCols && r >= b.r2 && r <= b.r2 + 1) sides.push('below');
+        if (inRows && c <= b.c1 && c >= b.c1 - 2) sides.push('left');
+        if (inCols && r <= b.r1 && r >= b.r1 - 1) sides.push('above');
+        if (sides.length) return { box: b, sides };
+      }
+      return null;
+    }
+
+    /**
+     * Inserts a shape (kind 'box' | 'rbox' | 'diamond') or just an arrow (kind 'arrow') on
+     * `side` of `box`, joined by an arrow from a '+' port at the middle of that wall.
+     * Right/below: drawn straight into empty space; otherwise room is made like typing does
+     * (columns on those lines / full rows), and an existing wire there is continued through
+     * the new shape. Left/above: drawn only into empty space (blank rows/columns are added at
+     * the very top/left edge of the diagram); if something is in the way the user is told how
+     * to make room. Returns { text, cursorR, cursorC, selC1, selC2 } or { error }.
+     */
+    static insertConnected(rawText, box, side, kind) {
+      const tpl = this.shapeTemplate(kind);
+      const h = tpl ? tpl.lines.length : 0;
+      const w = tpl ? tpl.lines[0].length : 0;
+      const horiz = side === 'left' || side === 'right';
+      const GAP = horiz ? 4 : 2; // cells of arrow between the two walls
+      const state = this.toGridState(rawText);
+      let b = { ...box };
+
+      const layout = () => {
+        const midR = Math.floor((b.r1 + b.r2) / 2), midC = Math.floor((b.c1 + b.c2) / 2);
+        const arrow = [];
+        let port, shape = null, tip;
+        if (side === 'right') {
+          port = [midR, b.c2];
+          for (let i = 1; i < GAP; i++) arrow.push([midR, b.c2 + i, '-']);
+          tip = [midR, b.c2 + GAP, '>'];
+          if (tpl) shape = { r0: midR - Math.floor(h / 2), c0: b.c2 + GAP + 1 };
+        } else if (side === 'left') {
+          port = [midR, b.c1];
+          for (let i = 1; i < GAP; i++) arrow.push([midR, b.c1 - i, '-']);
+          tip = [midR, b.c1 - GAP, '<'];
+          if (tpl) shape = { r0: midR - Math.floor(h / 2), c0: b.c1 - GAP - w };
+        } else if (side === 'below') {
+          port = [b.r2, midC];
+          for (let i = 1; i < GAP; i++) arrow.push([b.r2 + i, midC, '|']);
+          tip = [b.r2 + GAP, midC, 'v'];
+          if (tpl) shape = { r0: b.r2 + GAP + 1, c0: midC - Math.floor(w / 2) };
+        } else {
+          port = [b.r1, midC];
+          for (let i = 1; i < GAP; i++) arrow.push([b.r1 - i, midC, '|']);
+          tip = [b.r1 - GAP, midC, '^'];
+          if (tpl) shape = { r0: b.r1 - GAP - h, c0: midC - Math.floor(w / 2) };
+        }
+        arrow.push(tip);
+        return { port, arrow, shape, midR, midC };
+      };
+      const cellsOf = (L) => {
+        const cells = L.arrow.map(([r, c]) => [r, c, true]);
+        if (L.shape) {
+          for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) cells.push([L.shape.r0 + r, L.shape.c0 + c, false]);
+        }
+        return cells;
+      };
+      const at = (r, c) => (r >= 0 && r < state.grid.length && c >= 0 && c < (state.grid[r] || []).length ? state.grid[r][c] : ' ');
+      // Free: blank everywhere, except that a wire may already run where the arrow goes /
+      // straight through the shape along the arrow's line (it then continues through it).
+      const blocked = (L, lenient) => cellsOf(L).find(([r, c, onArrow]) => {
+        const ch = at(r, c);
+        if (ch === ' ') return false;
+        if (!lenient) return true;
+        const onLine = horiz ? r === L.midR : c === L.midC;
+        const wireCh = horiz ? ch === '-' || ch === '=' : ch === '|' || ch === ':';
+        return !(onLine && wireCh) && !(onArrow && wireCh);
+      });
+
+      let L = layout();
+      // Past the very top/left edge of the diagram: add blank rows/columns there (the whole
+      // diagram moves, as the stamp buttons do)
+      const minR = Math.min(...cellsOf(L).map(([r]) => r));
+      const minC = Math.min(...cellsOf(L).map(([, c]) => c));
+      if (minR < 0) {
+        for (let i = 0; i < -minR; i++) state.grid.unshift(Array(state.cols).fill(' '));
+        state.rows += -minR;
+        b = { ...b, r1: b.r1 - minR, r2: b.r2 - minR };
+      }
+      if (minC < 0) {
+        for (const row of state.grid) for (let i = 0; i < -minC; i++) row.unshift(' ');
+        b = { ...b, c1: b.c1 - minC, c2: b.c2 - minC };
+        this.normalizeWidth(state);
+      }
+      L = layout();
+      if (side === 'above' || side === 'left') {
+        if (blocked(L, false)) {
+          return {
+            error: side === 'above'
+              ? 'No room above: put the cursor on the line above the box and press Enter to make space'
+              : 'No room on the left: type spaces before the box to make space'
+          };
+        }
+      } else if (blocked(L, false)) {
+        // Make room the way typing does, then allow a wire to continue through
+        if (side === 'right') {
+          const lo = Math.min(b.r1, L.shape ? L.shape.r0 : b.r1), hi = Math.max(b.r2, L.shape ? L.shape.r0 + h - 1 : b.r2);
+          this.insertColumns(state, Array(GAP + w + (tpl ? 1 : 0)).fill(b.c2 + 1), Math.max(0, lo), hi);
+        } else {
+          this.insertRows(state, Array(GAP + h).fill(b.r2 + 1));
+        }
+        L = layout();
+        const hit = blocked(L, true);
+        if (hit) return { error: `Not enough room ${side === 'right' ? 'to the right' : 'below'}: something crosses that space (line ${hit[0] + 1})` };
+      }
+
+      // Draw: port, arrow, shape, and '+' where an arrow enters / a wire continues
+      const put = (r, c, ch) => {
+        while (state.grid.length <= r) state.grid.push([]);
+        const row = state.grid[r];
+        while (row.length <= c) row.push(' ');
+        row[c] = ch;
+      };
+      const [pr, pc] = L.port;
+      if ('-=|:'.includes(state.grid[pr][pc])) put(pr, pc, '+');
+      for (const [r, c, ch] of L.arrow) put(r, c, ch);
+      let sel = null;
+      if (L.shape) {
+        const { r0, c0 } = L.shape;
+        tpl.lines.forEach((line, i) => [...line].forEach((ch, j) => put(r0 + i, c0 + j, ch)));
+        if (!horiz) {
+          const entryR = side === 'below' ? r0 : r0 + h - 1;
+          if (state.grid[entryR][L.midC] === '-') put(entryR, L.midC, '+');
+          const farR = side === 'below' ? r0 + h - 1 : r0, beyond = side === 'below' ? r0 + h : r0 - 1;
+          if (state.grid[farR][L.midC] === '-' && wireV(state.grid[beyond] || [], L.midC)) put(farR, L.midC, '+');
+        } else {
+          const farC = side === 'right' ? c0 + w - 1 : c0, beyond = side === 'right' ? c0 + w : c0 - 1;
+          const nb = (state.grid[L.midR] || [])[beyond] || ' ';
+          if ('|:'.includes(state.grid[L.midR][farC]) && '-=+'.includes(nb) && nb !== ' ') put(L.midR, farC, '+');
+        }
+        const li = tpl.lines.findIndex((l) => l.includes(tpl.label));
+        const lc = c0 + tpl.lines[li].indexOf(tpl.label);
+        sel = { r: r0 + li, c1: lc, c2: lc + tpl.label.length };
+      }
+      this.normalizeWidth(state);
+      const tip = L.arrow[L.arrow.length - 1];
+      const res = sel
+        ? { text: this.fromGridState(state), cursorR: sel.r, cursorC: sel.c2, selC1: sel.c1, selC2: sel.c2 }
+        : { text: this.fromGridState(state), cursorR: tip[0], cursorC: tip[1] + (side === 'right' ? 1 : 0) };
+      const checked = this.guardOtherBoxes(rawText, res, 'insert here', null, tpl ? 1 : 0);
+      if (!checked.error && tpl &&
+          new DitaaParser().parse(checked.text).boxes.length !== new DitaaParser().parse(rawText).boxes.length + 1) {
+        return { error: 'Cannot insert here: the new shape would overlap something' };
+      }
+      return checked;
+    }
+
+    /** A shape with its top-left corner at (r, c), only if that space is empty. */
+    static insertShapeAt(rawText, r, c, kind) {
+      const tpl = this.shapeTemplate(kind);
+      const state = this.toGridState(rawText, r + tpl.lines.length, c + tpl.lines[0].length);
+      for (let i = 0; i < tpl.lines.length; i++) {
+        for (let j = 0; j < tpl.lines[0].length; j++) {
+          if ((state.grid[r + i][c + j] || ' ') !== ' ') return { error: 'Not enough empty space here for that shape' };
+        }
+      }
+      tpl.lines.forEach((line, i) => [...line].forEach((ch, j) => { state.grid[r + i][c + j] = ch; }));
+      const li = tpl.lines.findIndex((l) => l.includes(tpl.label));
+      const lc = c + tpl.lines[li].indexOf(tpl.label);
+      const res = { text: this.fromGridState(state), cursorR: r + li, cursorC: lc + tpl.label.length, selC1: lc, selC2: lc + tpl.label.length };
+      return this.guardOtherBoxes(rawText, res, 'insert here', null, 1);
     }
   }
 
