@@ -416,22 +416,45 @@ test('regression (PR #1 review): widening a box keeps a taller neighbour intact,
   assert.equal(back.text, text);
 });
 
-test('narrowing never joins two words or deletes text in other rows', () => {
-  const text = '+------+\n| A    |\n+------+\n    x y';
-  const res = Grid2DEditor.resizeBox(text, parse(text).boxes[0], -2, 0);
-  assert.ok(res.error);
-  assert.match(res.error, /join text|in the way/);
+test('narrowing only touches the box\'s own lines; it never joins words on them', () => {
+  const below = '+------+\n| A    |\n+------+\n    x y';
+  const res = Grid2DEditor.resizeBox(below, parse(below).boxes[0], -2, 0);
+  assert.ok(!res.error, res.error);
+  assert.equal(res.text, '+----+\n| A  |\n+----+\n    x y', 'text below is untouched');
+
+  const beside = '+------+\n| A    | x y\n+------+';
+  const res2 = Grid2DEditor.resizeBox(beside, parse(beside).boxes[0], -2, 0);
+  assert.ok(!res2.error, res2.error);
+  assert.equal(res2.text.split('\n')[1], '| A  | x y', 'text beside moves left with the wall');
 });
 
-test('widening keeps an arrowhead touching the box it points at', () => {
-  // The inserted column falls exactly between the '>' and the box it points at
-  const text = '+----+\n| A  |\n+----+\n\n---->+---+\n     |   |\n     +---+';
-  const res = Grid2DEditor.resizeBox(text, parse(text).boxes[0], 2, 0);
+test('widening moves wires and boxes beside it; lines above and below stay put', () => {
+  const text = [
+    '+----+    +---+',
+    '| A  +--->| B |',
+    '+----+    +---+',
+    '  |',
+    '  v',
+    '+----+  +--+',
+    '| C  |  |  |',
+    '+----+  +--+'
+  ].join('\n');
+  const res = Grid2DEditor.resizeBox(text, parse(text).boxes.find((b) => b.lines[0] === 'A'), 2, 0);
   assert.ok(!res.error, res.error);
-  assert.equal(res.text.split('\n')[4], '------>+---+');
+  const lines = res.text.split('\n');
+  assert.equal(lines[1], '| A    +--->| B |');
+  assert.deepEqual(lines.slice(3), text.split('\n').slice(3), 'everything below unchanged');
   const ast = parse(res.text);
-  assert.equal(ast.boxes.length, 2);
+  assert.equal(ast.boxes.length, 4);
   assert.ok(ast.arrows.find((a) => a.dir === '>').touchesBox);
+});
+
+test('narrowing a diamond keeps a lead-in arrow touching it', () => {
+  const text = '       +-------+-------+\n       |               |\n------>+  Valid? {c}   +\n       |               |\n       +-------+-------+';
+  const res = Grid2DEditor.resizeBox(text, parse(text).boxes[0], -2, 0);
+  assert.ok(!res.error, res.error);
+  assert.equal(res.text.split('\n')[2], '------->+ Valid? {c}  +');
+  assert.ok(parse(res.text).arrows[0].touchesBox);
 });
 
 test('regression (PR #1 review): recolouring a container keeps its children\'s tags', () => {
@@ -457,11 +480,18 @@ test('regression (PR #1 review): recolouring a container keeps its children\'s t
 });
 
 test('regression (PR #3 follow-up review): narrowing never collapses a small empty box elsewhere', () => {
+  // Narrowing now only changes the box's own lines, so the small box below is not touched
   const text = '+------+\n| A    |\n+------+\n\n    +--+\n    |  |\n    +--+';
   assert.equal(parse(text).boxes.length, 2);
   const res = Grid2DEditor.resizeBox(text, parse(text).boxes[0], -2, 0);
-  assert.ok(res.error, 'refused');
-  assert.match(res.error, /line 5/);
+  assert.ok(!res.error, res.error);
+  assert.equal(parse(res.text).boxes.length, 2);
+  assert.deepEqual(res.text.split('\n').slice(3), text.split('\n').slice(3));
+  // ...and a small empty box BESIDE it moves as a whole instead of collapsing
+  const side = '+------++--+\n| A    ||  |\n+------++--+';
+  const res2 = Grid2DEditor.resizeBox(side, parse(side).boxes.find((b) => b.lines[0] === 'A'), -2, 0);
+  assert.ok(!res2.error, res2.error);
+  assert.equal(res2.text, '+----++--+\n| A  ||  |\n+----++--+');
 });
 
 test('moving a box onto another box is refused', () => {
@@ -705,18 +735,28 @@ test('typing in a box stacked with diamonds keeps every diamond symmetric', () =
   assert.equal(parse(res.text).boxes.length, 7);
 });
 
-test('narrowing that would make a diamond lopsided is refused', () => {
+test('narrowing that would make a diamond beside it lopsided is refused', () => {
+  // A container whose narrowing columns run through a diamond inside it
   const text = [
-    '+-------------------+',
-    '|  Wide box         |',
-    '+-------------------+',
-    ...Grid2DEditor.diamondTemplate('Q?').map((l) => '      ' + l)
+    '+-----------------------+',
+    '|  +-------+-------+    |',
+    '|  |               |    |',
+    '|  +    Q? {c}     +    |',
+    '|  |               |    |',
+    '|  +-------+-------+    |',
+    '+-----------------------+'
   ].join('\n');
-  const box = parse(text).boxes.find((b) => b.shape !== 'choice');
-  // The columns removed (just inside the box's right wall) run through the diamond below
-  const res = Grid2DEditor.resizeBox(text, box, -2, 0);
+  const outer = parse(text).boxes.find((b) => b.isContainer);
+  // remove 5 columns from the right of the container: the 5th runs through the diamond
+  let t = text, res;
+  for (let i = 0; i < 3; i++) {
+    res = Grid2DEditor.resizeBox(t, parse(t).boxes.find((b) => b.isContainer), -2, 0);
+    if (res.error) break;
+    t = res.text;
+  }
   assert.ok(res.error);
-  assert.match(res.error, /lopsided/);
+  assert.match(res.error, /lopsided|in the way/);
+  assert.equal(parse(t).boxes.find((b) => b.shape === 'choice').c2 - parse(t).boxes.find((b) => b.shape === 'choice').c1, 16);
 });
 
 test('typing word by word, one key at a time, keeps the spaces (boxes and diamonds)', () => {
@@ -735,4 +775,64 @@ test('typing word by word, one key at a time, keeps the spaces (boxes and diamon
   const k = dia.split('\n')[2].indexOf('Ok') + 2;
   const out = run(dia, 2, k, ' and more');
   assert.deepEqual(parse(out).boxes[0].lines, ['Ok and more']);
+});
+
+/* ---------------- Side-only growth: wires to moved boxes are re-joined ---------------- */
+
+test('growing a box shifts only its own lines; a wire hanging off a moved box gets a jog', () => {
+  const text = [
+    '+--------+     +-----+',
+    '| Hello  +---->| B   |',
+    '+--------+     +--+--+',
+    '                  |',
+    '                  v',
+    '               +-----+',
+    '               | C   |',
+    '               +-----+'
+  ].join('\n');
+  const hello = (t) => parse(t).boxes.find((b) => b.lines[0] === 'Hello');
+  let t = text;
+  const steps = [];
+  for (const dw of [2, 2, -2, -2]) {
+    const res = Grid2DEditor.resizeBox(t, hello(t), dw, 0);
+    assert.ok(!res.error, res.error);
+    t = res.text;
+    steps.push(t.split('\n')[3]);
+    const ast = parse(t);
+    assert.equal(ast.boxes.length, 3);
+    assert.deepEqual(t.split('\n').slice(4), text.split('\n').slice(4), 'C and the arrow did not move');
+  }
+  assert.deepEqual(steps, ['                  +-+', '                  +---+', '                  +-+', '                  |']);
+  assert.equal(t, text, 'round trip restores the straight wire');
+});
+
+test('typing in the flowchart diamond keeps the boxes below in place and re-joins the side wire', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { flowchart } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const L = flowchart.split('\n');
+  const r = L.findIndex((l) => l.includes('Valid?'));
+  let cur = { r, c: L[r].indexOf('?') };
+  let t = flowchart;
+  for (const ch of ' and complete') {
+    const res = type(t, cur.r, cur.c, { type: 'insert', text: ch });
+    assert.ok(res && !res.error, res && res.error);
+    t = res.text;
+    cur = { r: res.cursorR, c: res.cursorC };
+  }
+  const before = parse(flowchart), after = parse(t);
+  assert.equal(after.boxes.length, 7);
+  const find = (ast, label) => ast.boxes.find((b) => b.lines[0] === label);
+  for (const label of ['Start', 'Read input', 'Cached?', 'Process', 'End']) {
+    const a = find(before, label), b = find(after, label);
+    assert.deepEqual([b.r1, b.c1, b.r2, b.c2], [a.r1, a.c1, a.r2, a.c2], `${label} did not move`);
+  }
+  const d = find(after, 'Valid and complete?');
+  assert.equal((d.c1 + d.c2) / 2, (find(before, 'Valid?').c1 + find(before, 'Valid?').c2) / 2, 'diamond kept its centre');
+  assert.ok(find(after, 'Show error').c1 > find(before, 'Show error').c1, 'box beside it moved over');
+  // Every wire is still connected end to end: same number of arrowheads touching boxes
+  const touching = (ast) => ast.arrows.filter((a) => a.touchesBox).length;
+  assert.equal(touching(after), touching(before));
 });

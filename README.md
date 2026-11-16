@@ -21,14 +21,22 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
 
-**Typing inside a box grows it** (the *Auto-fit boxes* checkbox, on by default). When text
-would reach the right wall, the box widens by one full-height column per character, and Enter
-inside a box adds a full-width row. Everything right of / below the change shifts with it, so
-other boxes, wires and labels stay aligned: boxes beside or above/below it grow or move as a
-unit, a column never cuts through a word (it goes in after the word), and diamonds always grow
-symmetrically so their ports stay on the vertices. Backspace and Delete edit within the box and
-join lines; pasted text with line breaks becomes multiple lines. An edit that would still break
-another box is refused with a message. Typing outside boxes is ordinary text editing.
+**Typing inside a box grows it** (the *Auto-fit boxes* checkbox, on by default), the way
+inserting text naturally pushes the rest of a line along:
+
+- When text would reach the right wall, the box widens on its own lines only. Arrows and boxes
+  beside it move over to make room (a box beside it moves as a whole); lines above and below
+  are untouched. A vertical wire hanging off something that moved is re-joined with a small
+  jog (`+--+`), which straightens again if the box shrinks back.
+- Enter inside a box adds a line to it, pushing the lines below down, like a new line in a text
+  editor.
+- Diamonds grow around their centre so the wires on their top and bottom points stay attached
+  (a lead-in wire on the left gets one character shorter).
+- Backspace and Delete edit within the box and join lines; pasted text with line breaks becomes
+  multiple lines. An edit that would break another box is refused with a message. Typing
+  outside boxes is ordinary text editing, so you can always adjust anything by hand.
+
+The Size Box ±W buttons follow the same rule (only the box's own lines shift).
 
 Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 

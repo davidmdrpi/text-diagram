@@ -35,6 +35,12 @@
   const isWallCh = (ch) => ch === '|' || ch === ':' || ch === '+';
   const isWordPair = (L, R) =>
     L !== ' ' && R !== ' ' && !(lineCh(L) && lineCh(R)) && !isWallCh(L) && !isWallCh(R);
+  // A vertical wire/wall cell at grid[c] (not a letter v or ^ inside a word)
+  const wireV = (row, c) => {
+    const ch = row[c] || ' ';
+    if ('|:+*'.includes(ch) && ch !== ' ') return true;
+    return (ch === '^' || ch === 'v') && !isAlnum(row[c - 1] || ' ') && !isAlnum(row[c + 1] || ' ');
+  };
   const isVertish = (ch) => ch === '|' || ch === ':' || ch === '+' || ch === '^' || ch === 'v' || ch === '*';
   // Vertical lines plus rounded corners: a row inserted between two of these continues the line.
   const vLineCh = (ch) => isVertish(ch) || ch === '/' || ch === '\\' || ch === '.' || ch === "'";
@@ -1254,16 +1260,17 @@
     }
 
     /**
-     * Inserts a column before index `at` in EVERY row (like growing a box taller inserts a
-     * full-width row), so boxes beside the resized one move as a whole instead of tearing.
-     * Horizontal lines and box walls crossing the column are continued, and an arrowhead
-     * touching something keeps touching it. A row where the column would land inside a word
-     * or tag gets its blank cell after that word instead: the word stays whole and in place,
-     * everything right of it still moves over by one. Always returns null (kept for
-     * `a || b` error chaining by callers).
+     * Inserts a column before index `at` in rows band.lo..band.hi (every row when no band),
+     * like inserting a character on each of those lines: what is to the right moves over,
+     * other lines are untouched. Horizontal lines and box walls crossing the column are
+     * continued, and an arrowhead touching something keeps touching it. A row where the
+     * column would land inside a word or tag gets its blank cell after that word instead.
+     * Always returns null (kept for `a || b` error chaining by callers).
      */
-    static insertColumnEverywhere(state, at) {
-      for (let r = 0; r < state.rows; r++) {
+    static insertColumnEverywhere(state, at, band = null) {
+      const lo = band ? band.lo : 0, hi = band ? band.hi : state.rows - 1;
+      const links = band ? this.boundaryLinks(state, lo, hi, (c) => c >= at) : [];
+      for (let r = lo; r <= hi; r++) {
         const row = state.grid[r];
         while (row.length < at) row.push(' ');
         let pos = at;
@@ -1282,22 +1289,102 @@
         }
         row.splice(pos, 0, ch);
       }
-      state.cols++;
-      for (const row of state.grid) while (row.length < state.cols) row.push(' ');
+      this.normalizeWidth(state);
+      this.rejoinLinks(state, links, +1);
       return null;
     }
 
     /**
-     * Removes column `at` from EVERY row. Returns an error, changing nothing, if that would
-     * delete text, a corner or a vertical line, or join two words together.
+     * Vertical lines that cross the edge of a band of shifted rows: for each boundary
+     * (inside row, outside row) the columns where both cells are vertical-ish and `moves(c)`
+     * says the inside cell is about to shift.
      */
-    static removeColumnEverywhere(state, at, box) {
-      for (let r = 0; r < state.rows; r++) {
+    static boundaryLinks(state, lo, hi, moves) {
+      const links = [];
+      // Box corners are not wire ports: a jog drawn right under one must not look attached
+      const corners = new Set();
+      for (const bx of new DitaaParser().parse(this.fromGridState(state)).boxes) {
+        for (const [r, c] of [[bx.r1, bx.c1], [bx.r1, bx.c2], [bx.r2, bx.c1], [bx.r2, bx.c2]]) corners.add(`${r},${c}`);
+      }
+      const pairs = [[lo, lo - 1, lo - 2], [hi, hi + 1, hi + 2]];
+      for (const [inR, outR, beyondR] of pairs) {
+        if (outR < 0 || outR >= state.rows) continue;
+        const I = state.grid[inR], O = state.grid[outR];
+        for (let c = 0; c < Math.min(I.length, O.length); c++) {
+          if (moves(c) && wireV(I, c) && wireV(O, c) && !corners.has(`${inR},${c}`) && !corners.has(`${outR},${c}`)) {
+            links.push({ inR, outR, beyondR, c });
+          }
+        }
+      }
+      return links;
+    }
+
+    /**
+     * After the band shifted by `d` (+1/-1), reconnects each link through the outside row.
+     * The wire continues away from the band at column w (the link's own column, or the far
+     * corner of a jog drawn by an earlier step), so the outside row is redrawn as a single
+     * jog from w to the link's new column: "+--+", or a straight "|" once they line up
+     * again. Stateless: works the same whether the jog was drawn this keystroke or earlier.
+     * A link whose path is blocked by something else is left as it is.
+     */
+    static rejoinLinks(state, links, d) {
+      if (!links.length) return;
+      const order = d > 0 ? links.slice().sort((a, b) => b.c - a.c) : links.slice().sort((a, b) => a.c - b.c);
+      for (const { inR, outR, beyondR, c } of order) {
+        const O = state.grid[outR];
+        const Y = state.grid[beyondR] || [];
+        const to = c + d;
+        if (to < 0) continue;
+        while (O.length <= Math.max(c, to) + 1) O.push(' ');
+        // Find w, where the wire leaves the outside row away from the band
+        let w = -1;
+        if (wireV(Y, c)) w = c;
+        else {
+          for (const step of [-1, 1]) {
+            let k = c + step;
+            while (k >= 0 && k < O.length && (O[k] === '-' || O[k] === '=')) k += step;
+            if (k >= 0 && k < O.length && O[k] === '+' && wireV(Y, k)) { w = k; break; }
+          }
+        }
+        if (w === -1) continue;
+        const dashed = O.slice(Math.min(w, c), Math.max(w, c) + 1).includes('=') || Y[w] === ':';
+        // An arrowhead next to the band (pointing at the moved box) stays an arrowhead
+        const head = O[c] === 'v' || O[c] === '^' ? O[c] : null;
+        // Erase the old jog (w..c), check the new path (w..to) is free, then draw it
+        const saved = O.slice();
+        for (let k = Math.min(w, c); k <= Math.max(w, c); k++) O[k] = ' ';
+        let free = true;
+        for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (O[k] !== ' ') free = false;
+        if (!free) { state.grid[outR] = saved; continue; }
+        if (to === w) {
+          O[w] = head || (Y[w] === ':' || (state.grid[inR][to] || ' ') === ':' ? ':' : '|');
+        } else {
+          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) O[k] = dashed ? '=' : '-';
+          O[w] = '+';
+          O[to] = head || '+';
+        }
+      }
+      this.normalizeWidth(state);
+    }
+
+    static normalizeWidth(state) {
+      state.cols = Math.max(1, ...state.grid.map((row) => row.length));
+      for (const row of state.grid) while (row.length < state.cols) row.push(' ');
+    }
+
+    /**
+     * Removes column `at` from rows band.lo..band.hi (every row when no band). Returns an
+     * error, changing nothing, if that would delete text, a corner or a vertical line, or
+     * join two words together.
+     */
+    static removeColumnEverywhere(state, at, box, band = null) {
+      const lo = band ? band.lo : 0, hi = band ? band.hi : state.rows - 1;
+      for (let r = lo; r <= hi; r++) {
         const row = state.grid[r];
         const ch = row[at] || ' ';
         const L = row[at - 1] || ' ', R = row[at + 1] || ' ';
         let ok;
-        if (r >= box.r1 && r <= box.r2) {
+        if (box && r >= box.r1 && r <= box.r2 && at > box.c1 && at < box.c2) {
           ok = r === box.r1 || r === box.r2 ? ch === '-' || ch === '=' : ch === ' ';
         } else if (ch === '-' || ch === '=') {
           ok = !isAlnum(L) && !isAlnum(R);
@@ -1308,8 +1395,10 @@
           return { error: `Cannot narrow: ${ch === ' ' ? 'it would join text' : `"${ch}" is in the way`} on line ${r + 1}` };
         }
       }
-      for (const row of state.grid) row.splice(at, 1);
-      state.cols--;
+      const links = band ? this.boundaryLinks(state, lo, hi, (c) => c > at) : [];
+      for (let r = lo; r <= hi; r++) state.grid[r].splice(at, 1);
+      this.normalizeWidth(state);
+      this.rejoinLinks(state, links, -1);
       return null;
     }
 
@@ -1355,10 +1444,69 @@
      * symmetrically and its centre ports stay on the vertices (in a centred flowchart the
      * whole stack grows evenly around its centre line). Returns all original indices inserted.
      */
-    static insertColumns(state, xs) {
-      const cols = this.balanceForDiamonds(state, xs, 'c');
-      cols.slice().sort((a, b) => b - a).forEach((x) => this.insertColumnEverywhere(state, x));
+    static insertColumns(state, xs, lo = null, hi = null) {
+      if (lo === null) {
+        const cols = this.balanceForDiamonds(state, xs, 'c');
+        cols.slice().sort((a, b) => b - a).forEach((x) => this.insertColumnEverywhere(state, x));
+        return cols;
+      }
+      let cols = [...xs];
+      let band = { lo, hi };
+      for (let i = 0; i < 20; i++) {
+        band = this.columnBand(state, Math.min(...cols), lo, hi);
+        const next = this.balanceForDiamonds(state, xs, 'c', band);
+        if (next.length === cols.length) { cols = next; break; }
+        cols = next;
+      }
+      cols.slice().sort((a, b) => b - a).forEach((x) => this.insertColumnEverywhere(state, x, band));
       return cols;
+    }
+
+    /**
+     * Rows that must shift together when columns at/after `x` move on rows lo..hi: starts
+     * with lo..hi and grows to cover every box touching those rows that has any cell at or
+     * right of x (it moves or stretches as a whole, so it is never torn).
+     */
+    static columnBand(state, x, lo, hi) {
+      const boxes = new DitaaParser().parse(this.fromGridState(state)).boxes;
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const b of boxes) {
+          if (b.r2 < lo || b.r1 > hi || b.c2 < x) continue;
+          if (b.r1 < lo) { lo = b.r1; changed = true; }
+          if (b.r2 > hi) { hi = b.r2; changed = true; }
+        }
+      }
+      return { lo, hi };
+    }
+
+    /**
+     * Grows a diamond by one column on each side of its centre within its band of rows,
+     * keeping the centre (and so the top/bottom ports and the wires on them) where it is:
+     * a blank or plain-wire column left of it is taken out (a lead-in wire gets one
+     * character shorter) to let the left wall move out. Without such a column it grows to
+     * the right instead (its centre moves by one). Returns how far the caret inside it moves.
+     */
+    static growDiamondH(state, box) {
+      let band = this.columnBand(state, box.c1, box.r1, box.r2);
+      for (let p = box.c1 - 1; p >= 0; p--) {
+        band = this.columnBand(state, p, box.r1, box.r2);
+        let ok = true;
+        for (let r = band.lo; r <= band.hi && ok; r++) {
+          const row = state.grid[r];
+          const ch = row[p] || ' ', L = row[p - 1] || ' ', R = row[p + 1] || ' ';
+          if (ch === '-' || ch === '=') ok = !isAlnum(L) && !isAlnum(R); // shortens a wire
+          else ok = ch === ' ' && !isWordPair(L, R);
+        }
+        if (!ok) continue;
+        if (this.removeColumnEverywhere(state, p, box, band)) continue;
+        this.insertColumnEverywhere(state, box.c1, band); // just inside the (moved) left wall
+        this.insertColumnEverywhere(state, box.c2, band); // just inside the right wall
+        return 0;
+      }
+      this.insertColumns(state, [box.c1 + 1, box.c2], box.r1, box.r2);
+      return 1;
     }
 
     /** Row counterpart of insertColumns. */
@@ -1368,8 +1516,9 @@
       return rows;
     }
 
-    static balanceForDiamonds(state, positions, axis) {
-      const diamonds = new DitaaParser().parse(this.fromGridState(state)).boxes.filter((b) => b.shape === 'choice');
+    static balanceForDiamonds(state, positions, axis, band = null) {
+      const diamonds = new DitaaParser().parse(this.fromGridState(state)).boxes
+        .filter((b) => b.shape === 'choice' && (!band || (b.r1 >= band.lo && b.r2 <= band.hi)));
       const out = [...positions];
       for (let iter = 0; iter < 20; iter++) {
         let added = false;
@@ -1392,8 +1541,9 @@
     }
 
     /** Error if removing columns/rows `positions` would make a diamond other than `self` lopsided. */
-    static diamondRemovalError(state, positions, axis, self, verb) {
-      const diamonds = new DitaaParser().parse(this.fromGridState(state)).boxes.filter((b) => b.shape === 'choice');
+    static diamondRemovalError(state, positions, axis, self, verb, band = null) {
+      const diamonds = new DitaaParser().parse(this.fromGridState(state)).boxes
+        .filter((b) => b.shape === 'choice' && (!band || (b.r2 >= band.lo && b.r1 <= band.hi)));
       for (const d of diamonds) {
         if (self && d.r1 === self.r1 && d.c1 === self.c1 && d.r2 === self.r2 && d.c2 === self.c2) continue;
         const lo = axis === 'c' ? d.c1 : d.r1, hi = axis === 'c' ? d.c2 : d.r2;
@@ -1416,12 +1566,16 @@
       const state = this.toGridState(rawText, box.r2 + 2, box.c2 + 2);
 
       if (dw > 0) {
-        this.insertColumns(state, [box.c1 + 1, box.c2]);
+        this.growDiamondH(state, box);
       } else if (dw < 0) {
-        const err = this.diamondRemovalError(state, [box.c1 + 1, box.c2 - 1], 'c', box, 'narrow') ||
-          this.removeColumnEverywhere(state, box.c2 - 1, box) ||
-          this.removeColumnEverywhere(state, box.c1 + 1, box);
+        // Take a column out on each side of the centre, then put one back left of the left
+        // wall so the centre (and the wires on the top/bottom ports) stays put.
+        const band = this.columnBand(state, box.c1, box.r1, box.r2);
+        const err = this.diamondRemovalError(state, [box.c1 + 1, box.c2 - 1], 'c', box, 'narrow', band) ||
+          this.removeColumnEverywhere(state, box.c2 - 1, box, band) ||
+          this.removeColumnEverywhere(state, box.c1 + 1, box, band);
         if (err) return err;
+        this.insertColumnEverywhere(state, box.c1, band);
       }
 
       if (dh > 0) {
@@ -1490,16 +1644,18 @@
       const state = this.toGridState(rawText, box.r2 + Math.max(0, dh) + 2, box.c2 + Math.max(0, dw) + 2);
       const { grid } = state;
 
-      // Widen/narrow by inserting/removing whole columns just inside the right wall, so
-      // neighbouring boxes of any height move as a unit and nothing is torn.
+      // Widen/narrow by inserting/removing columns just inside the right wall on the box's
+      // own lines, like typing on them: what is beside it moves over (a box beside it moves
+      // as a whole), lines above and below are untouched.
       if (dw > 0) {
-        this.insertColumns(state, Array(dw).fill(box.c2));
+        this.insertColumns(state, Array(dw).fill(box.c2), box.r1, box.r2);
       } else if (dw < 0) {
         const xs = Array.from({ length: -dw }, (_, i) => box.c2 - 1 - i);
-        const lop = this.diamondRemovalError(state, xs, 'c', null, 'narrow');
+        const band = this.columnBand(state, Math.min(...xs), box.r1, box.r2);
+        const lop = this.diamondRemovalError(state, xs, 'c', null, 'narrow', band);
         if (lop) return lop;
         for (let i = 0; i < -dw; i++) {
-          const err = this.removeColumnEverywhere(state, box.c2 - 1 - i, box);
+          const err = this.removeColumnEverywhere(state, box.c2 - 1 - i, box, band);
           if (err) return err;
         }
       }
@@ -1649,17 +1805,16 @@
         const { state, box, run } = ctx;
         const missing = needed(ctx, cur) + 1 - (run.end - run.c0);
         if (missing <= 0) return { text, cur };
-        // A diamond grows by one column on each side of its centre; anything else at the run's
-        // end. Mirror columns for diamonds crossed on the way may land left of the caret.
-        let xs = box.shape === 'choice' ? [box.c1 + 1, box.c2] : Array(missing).fill(run.end);
-        if (box.shape !== 'choice' && this.balanceForDiamonds(state, xs, 'c').length > xs.length) {
-          // The run's end crosses a diamond (e.g. a centred flowchart stack): grow half on each
-          // side instead, which keeps it balanced without doubling the width with mirrors.
-          xs = [...Array(Math.ceil(missing / 2)).fill(run.end), ...Array(Math.floor(missing / 2)).fill(run.c0)];
+        // Grow only on the box's own lines, like typing on them: what is beside it moves
+        // over, lines above and below stay put. A diamond grows around its centre.
+        if (box.shape === 'choice') {
+          const shift = this.growDiamondH(state, box);
+          cur = { r: cur.r, c: cur.c + shift };
+        } else {
+          const cols = this.insertColumns(state, Array(missing).fill(run.end), box.r1, box.r2);
+          cur = { r: cur.r, c: cur.c + cols.filter((x) => x < cur.c).length };
         }
-        const cols = this.insertColumns(state, xs);
         text = this.fromGridState(state);
-        cur = { r: cur.r, c: cur.c + cols.filter((x) => x < cur.c).length };
       }
       return null;
     }
