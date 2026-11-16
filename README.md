@@ -21,6 +21,38 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
 
+**Typing inside a box grows it** (the *Auto-fit boxes* checkbox, on by default), the way
+inserting text naturally pushes the rest of a line along:
+
+- When text would reach the right wall, the box widens on its own lines only. Arrows and boxes
+  beside it move over to make room (a box beside it moves as a whole); lines above and below
+  are untouched. A vertical wire hanging off something that moved is re-joined with a small
+  jog (`+--+`), which straightens again if the box shrinks back.
+- Enter inside a box adds a line to it, pushing the lines below down, like a new line in a text
+  editor.
+- Diamonds grow around their centre so the wires on their top and bottom points stay attached
+  (a lead-in wire on the left gets one character shorter).
+- Backspace and Delete edit within the box and join lines; pasted text with line breaks becomes
+  multiple lines. An edit that would break another box is refused with a message. Typing
+  outside boxes is ordinary text editing, so you can always adjust anything by hand.
+
+The Size Box ±W buttons follow the same rule (only the box's own lines shift).
+
+**Right-click** in the editor for connected shapes:
+
+- On a box's wall (or just outside it): add a **Box**, **Rounded box**, **Diamond `{c}`** or
+  **Arrow only** on that side, joined by an arrow from a `+` port in the middle of the wall. On a
+  corner you get both sides; inside the box, all four. The new shape's placeholder label is
+  selected, so just type its name.
+- Right and below draw into empty space; if something is there, room is made the same way typing
+  does (things beside move over / the lines below move down), and if an arrow already continues
+  that way the new shape is spliced into it.
+- Left and above only use empty space (at the top/left edge of the diagram, blank rows/columns are
+  added). If something is in the way you'll be told how to make room: press Enter above the box,
+  or type spaces before it.
+- On empty space: insert a shape right there.
+- Cut / Copy / Paste are in the menu too; Shift+right-click opens the browser's own menu.
+
 Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 
 Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax
