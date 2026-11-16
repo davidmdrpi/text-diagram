@@ -1030,3 +1030,47 @@ test('regression (PR #4 follow-up review): relabelling a box to match another bo
   const g = Grid2DEditor.guardOtherBoxes(three, { text: moved, cursorR: 1, cursorC: 2 }, 'test', parse(three).boxes[0]);
   assert.match(g.error, /change what a wire connects/);
 });
+
+test('inserting below a box moves boxes that straddle the line down whole instead of stretching them', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { arch } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const before = parse(arch).boxes;
+  const D = before.find((b) => b.macroKey === 'D');
+  const res = Grid2DEditor.insertConnected(arch, D, 'below', 'box');
+  assert.ok(!res.error, res.error);
+  const after = parse(res.text).boxes;
+  assert.equal(after.length, before.length + 1);
+  for (const key of ['A', 'Q', 'S']) {
+    const a = before.find((b) => b.macroKey === key), b = after.find((x) => x.macroKey === key);
+    assert.deepEqual([b.r2 - b.r1, b.c1, b.c2], [a.r2 - a.r1, a.c1, a.c2], `[${key}] same size and columns`);
+    assert.equal(b.r1 - a.r1, 5, `[${key}] moved down by the inserted rows`);
+  }
+  for (const label of ['API Gateway', 'Auth Verifier', 'Session Cache']) {
+    const a = before.find((b) => b.lines[0] === label), b = after.find((x) => x.lines[0] === label);
+    assert.deepEqual([b.r1, b.c1, b.r2, b.c2], [a.r1, a.c1, a.r2, a.c2], `${label} untouched`);
+  }
+  // [D] -> new box -> [A]: the existing connection is spliced, not broken
+  const conn = (t) => {
+    const p = new DitaaParser();
+    const ast = p.parse(t);
+    return p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].macroKey || ast.boxes[i].lines[0]).sort().join('-')).sort();
+  };
+  assert.ok(conn(res.text).includes('Component-D'));
+  assert.ok(conn(res.text).includes('A-Component'));
+  // A container around the source still stretches to hold the new shape
+  const nested = [
+    '+-------------------------+',
+    '|         +-----+         |',
+    '|         | In  |         |',
+    '|         +-----+         |',
+    '+-------------------------+'
+  ].join('\n');
+  const inner = parse(nested).boxes.find((b) => b.lines[0] === 'In');
+  const r2 = Grid2DEditor.insertConnected(nested, inner, 'below', 'box');
+  assert.ok(!r2.error, r2.error);
+  const outer = parse(r2.text).boxes.find((b) => b.isContainer);
+  assert.ok(outer && outer.r2 - outer.r1 > 4, 'container grew around the new shape');
+});

@@ -1584,6 +1584,45 @@
       return 1;
     }
 
+    /**
+     * Makes k blank rows below row y-1, like pressing Enter there, except that a box that
+     * straddles that line (one beside the source box, spanning across it) is moved down
+     * whole instead of being stretched: in its columns the rows go in just above it.
+     * Vertical lines crossing an insertion point are continued, so wires into the top of a
+     * moved box stretch to follow it. Boxes enclosing `src` (containers) still stretch.
+     */
+    static insertRowsMovingBoxes(state, y, k, src) {
+      const boxes = new DitaaParser().parse(this.fromGridState(state)).boxes;
+      this.normalizeWidth(state);
+      const encloses = (b) => b.r1 <= src.r1 && b.r2 >= src.r2 && b.c1 <= src.c1 && b.c2 >= src.c2;
+      const at = Array(state.cols).fill(y);
+      for (const b of boxes) {
+        if (b.r1 < y && b.r2 >= y && !encloses(b)) {
+          for (let c = b.c1; c <= b.c2; c++) at[c] = Math.min(at[c], b.r1);
+        }
+      }
+      const old = state.grid.map((row) => row.slice());
+      const cont = (r, c) => {
+        const line = old[r] || [];
+        const ch = line[c] || ' ';
+        if ('|:+*/\\'.includes(ch)) return true;
+        return (ch === '^' || ch === 'v' || ch === '.' || ch === "'") && !isAlnum(line[c - 1] || ' ') && !isAlnum(line[c + 1] || ' ');
+      };
+      const rows = state.rows + k;
+      const grid = Array.from({ length: rows }, () => Array(state.cols).fill(' '));
+      for (let c = 0; c < state.cols; c++) {
+        const yc = at[c];
+        const fill = cont(yc - 1, c) && cont(yc, c) ? ((old[yc - 1] || [])[c] === ':' || (old[yc] || [])[c] === ':' ? ':' : '|') : ' ';
+        for (let r = 0; r < rows; r++) {
+          if (r < yc) grid[r][c] = (old[r] || [])[c] || ' ';
+          else if (r < yc + k) grid[r][c] = fill;
+          else grid[r][c] = (old[r - k] || [])[c] || ' ';
+        }
+      }
+      state.grid = grid;
+      state.rows = rows;
+    }
+
     /** Row counterpart of insertColumns. */
     static insertRows(state, ys) {
       const rows = this.balanceForDiamonds(state, ys, 'r');
@@ -2256,7 +2295,7 @@
           const routed = this.routeError(state, 'insert here');
           if (routed) return routed;
         } else {
-          this.insertRows(state, Array(GAP + h).fill(b.r2 + 1));
+          this.insertRowsMovingBoxes(state, b.r2 + 1, GAP + h, b);
         }
         L = layout();
         const hit = blocked(L, true);
