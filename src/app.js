@@ -401,8 +401,6 @@
     if (!toggleAutofit.checked || e.isComposing) return;
     const op = boxOpFor(e);
     if (!op) return;
-    // Typing a border character is editing the drawing itself: type it exactly as pressed
-    if (op.type === 'insert' && /^[|+]$/.test(op.text)) return;
     const res = boxEdit(op);
     if (!res) return; // not inside a box: normal text editing
     if (res.error) {
@@ -814,7 +812,7 @@
     const text = editor.value;
     const hit = Grid2DEditor.hitBoxSides(text, cell.r, cell.c);
     if (hit) {
-      const name = hit.box.macroKey ? `[${hit.box.macroKey}]` : hit.box.lines[0] || 'box';
+      const { name } = hit;
       for (const side of hit.sides) {
         ctxMenu.appendChild(menuHeader(`${SIDE_LABEL[side]} “${name}”`));
         for (const [kind, label] of KINDS) {

@@ -201,3 +201,30 @@ test('typing a border character back into a box is never blocked', { skip }, asy
     await browser.close();
   }
 });
+
+test('nested example: right-click just left of Ingress inserts inside the container', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.selectOption('#preset-select', 'nested');
+    const ing = (await boxes(page)).find((b) => b.name === 'Ingress');
+    const pt = await cellXY(page, ing.r1 + 1, ing.c1 - 2); // container space, two cells left of Ingress
+    await page.mouse.click(pt.x, pt.y, { button: 'right' });
+    assert.equal(await menuHeader(page), 'LEFT OF “INGRESS”');
+    await page.locator('#ctx-menu button', { hasText: '← Box' }).first().click();
+    const ast = await page.evaluate(() => new window.DitaaEngine.DitaaParser()
+      .parse(document.getElementById('ascii-editor').value).boxes
+      .map((b) => ({ r1: b.r1, c1: b.c1, r2: b.r2, c2: b.c2, label: b.lines[0] || '', container: b.isContainer })));
+    const cluster = ast.find((b) => b.container);
+    const added = ast.find((b) => b.label === 'Component');
+    assert.ok(added, 'box added');
+    assert.ok(added.c1 > cluster.c1 && added.c2 < cluster.c2 && added.r1 > cluster.r1 && added.r2 < cluster.r2, 'inside Cluster');
+    // Right-clicking the container's own wall names it by its label
+    const wall = await cellXY(page, cluster.r1, cluster.c1 + 5);
+    await page.mouse.click(wall.x, wall.y, { button: 'right' });
+    assert.equal(await menuHeader(page), 'ABOVE “CLUSTER”');
+    await page.keyboard.press('Escape');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

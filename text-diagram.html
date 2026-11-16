@@ -2157,9 +2157,20 @@
       const boxes = parser.parse(rawText).boxes;
       const box = this.boxAtCaret(boxes, caret.r, caret.c);
       if (!box) return null; // the only "use normal editing" answer
-      if (sel && (sel.r !== caret.r || sel.c !== caret.c)) {
+      const hasSel = sel && (sel.r !== caret.r || sel.c !== caret.c);
+      if (hasSel) {
         const [, b] = sel.r < caret.r || (sel.r === caret.r && sel.c < caret.c) ? [sel, caret] : [caret, sel];
         if (this.boxAtCaret(boxes, b.r, b.c) !== box) return null; // selection leaves the box
+      } else {
+        // Editing a wall is editing the drawing, not the text: an edit that lands in a wall's
+        // column (typing or Delete right before a wall, Backspace right after one) is left to
+        // the editor as plain text. Text is typed between the walls, and auto-fit keeps a
+        // space before the right wall, so the two never get confused.
+        const run = this.ownedRun(boxes, box, caret.r, caret.c);
+        if (run) {
+          if ((op.type === 'insert' || op.type === 'delete') && caret.c === run.end) return null;
+          if (op.type === 'backspace' && caret.c === run.c0) return null;
+        }
       }
       // From here on we are editing inside a box: any failure is an error, never a silent
       // fallback to plain text editing (which would push the box's wall out of line).
@@ -2341,13 +2352,17 @@
       const ctx = this.caretContext(text, cur);
       if (!ctx) return null;
       const { state, run } = ctx;
-      if (cur.c > run.c0) {
-        const line = this.readRun(state, cur.r, run);
-        const k = cur.c - run.c0;
-        this.writeRun(state, cur.r, run, line.slice(0, k - 1) + line.slice(k));
-        return { text: this.fromGridState(state), cursorR: cur.r, cursorC: cur.c - 1 };
+      const line = this.readRun(state, cur.r, run);
+      const k = cur.c - run.c0;
+      // At the start of the line's text (only padding before the caret): join with the line
+      // above, as in a text editor. (Right after the wall it is a wall edit: see typeInBox.)
+      if (line.slice(0, k).trim() === '' && cur.r - 1 > ctx.box.r1) {
+        const prevRun = this.ownedRun(ctx.boxes, ctx.box, cur.r - 1, run.c0);
+        if (prevRun && prevRun.c0 === run.c0 && prevRun.end === run.end) return this.joinWithPrevious(text, cur.r, run);
       }
-      return this.joinWithPrevious(text, cur.r, run);
+      if (k === 0) return { text, cursorR: cur.r, cursorC: cur.c };
+      this.writeRun(state, cur.r, run, line.slice(0, k - 1) + line.slice(k));
+      return { text: this.fromGridState(state), cursorR: cur.r, cursorC: cur.c - 1 };
     }
 
     static boxDelete(text, cur) {
@@ -2440,28 +2455,54 @@
       return null;
     }
 
+    /** A readable name for a box: legend key, label, or a container's own free-text label. */
+    static boxName(ast, b) {
+      if (b.macroKey) return `[${b.macroKey}]`;
+      if (b.lines[0]) return b.lines[0];
+      const inner = ast.freeTexts
+        .filter((t) => t.r > b.r1 && t.r < b.r2 && t.c > b.c1 && t.c < b.c2 && t.text)
+        .sort((a, b2) => a.r - b2.r || a.c - b2.c)[0];
+      return inner ? inner.text : 'box';
+    }
+
     /**
-     * Which box sides a right-click at (r, c) is about: on a wall or up to two cells outside
-     * it gives that side (a corner gives two); inside the box gives all four. Innermost box
-     * wins. Returns { box, sides } or null.
+     * Which box sides a right-click at (r, c) is about:
+     *  - on a box's wall: that side (a corner gives two); the innermost box wins;
+     *  - inside a box that holds no other boxes: all four sides;
+     *  - up to three cells outside a wall: the nearest box's side (so a click in a
+     *    container's empty space next to a nested box means that nested box);
+     *  - anywhere else, including a container's empty space: null ("insert here").
+     * Returns { box, sides, name } or null.
      */
     static hitBoxSides(rawText, r, c) {
-      const boxes = new DitaaParser().parse(rawText).boxes
-        .slice().sort((a, b) => (a.r2 - a.r1) * (a.c2 - a.c1) - (b.r2 - b.r1) * (b.c2 - b.c1));
+      const ast = new DitaaParser().parse(rawText);
+      const area = (b) => (b.r2 - b.r1) * (b.c2 - b.c1);
+      const boxes = ast.boxes.slice().sort((a, b) => area(a) - area(b));
+      const out = (b, sides) => ({ box: b, sides, name: this.boxName(ast, b) });
       for (const b of boxes) {
         const inRows = r >= b.r1 && r <= b.r2, inCols = c >= b.c1 && c <= b.c2;
-        if (r > b.r1 && r < b.r2 && c > b.c1 && c < b.c2) {
-          // Inside: all four, unless a nested box is under the cursor (handled by sort order)
-          return { box: b, sides: ['right', 'below', 'left', 'above'] };
-        }
         const sides = [];
-        if (inRows && c >= b.c2 && c <= b.c2 + 2) sides.push('right');
-        if (inCols && r >= b.r2 && r <= b.r2 + 1) sides.push('below');
-        if (inRows && c <= b.c1 && c >= b.c1 - 2) sides.push('left');
-        if (inCols && r <= b.r1 && r >= b.r1 - 1) sides.push('above');
-        if (sides.length) return { box: b, sides };
+        if (inRows && c === b.c2) sides.push('right');
+        if (inCols && r === b.r2) sides.push('below');
+        if (inRows && c === b.c1) sides.push('left');
+        if (inCols && r === b.r1) sides.push('above');
+        if (sides.length) return out(b, sides);
       }
-      return null;
+      const leaf = boxes.find((b) => !b.isContainer && r > b.r1 && r < b.r2 && c > b.c1 && c < b.c2);
+      if (leaf) return out(leaf, ['right', 'below', 'left', 'above']);
+      let best = null;
+      for (const b of boxes) {
+        const inRows = r >= b.r1 && r <= b.r2, inCols = c >= b.c1 && c <= b.c2;
+        const cands = [];
+        if (inRows && c > b.c2 && c <= b.c2 + 3) cands.push(['right', c - b.c2]);
+        if (inRows && c < b.c1 && c >= b.c1 - 3) cands.push(['left', b.c1 - c]);
+        if (inCols && r > b.r2 && r <= b.r2 + 2) cands.push(['below', r - b.r2]);
+        if (inCols && r < b.r1 && r >= b.r1 - 2) cands.push(['above', b.r1 - r]);
+        for (const [side, d] of cands) {
+          if (!best || d < best.d || (d === best.d && area(b) < area(best.b))) best = { b, side, d };
+        }
+      }
+      return best ? out(best.b, [best.side]) : null;
     }
 
     /**
@@ -2546,6 +2587,31 @@
       });
 
       let L = layout();
+      // Left/above of a box inside a container whose own wall is in the way: the container
+      // grows to make room, the way typing spaces (or Enter) before the box would.
+      if (side === 'left' || side === 'above') {
+        const encl = new DitaaParser().parse(this.fromGridState(state)).boxes
+          .filter((p) => p.r1 < b.r1 && p.r2 > b.r2 && p.c1 < b.c1 && p.c2 > b.c2)
+          .sort((p, q) => (p.r2 - p.r1) * (p.c2 - p.c1) - (q.r2 - q.r1) * (q.c2 - q.c1))[0];
+        if (encl) {
+          if (side === 'left') {
+            const need = encl.c1 + 2 - Math.min(...cellsOf(L).map(([, c]) => c));
+            if (need > 0) {
+              this.insertColumns(state, Array(need).fill(b.c1), encl.r1, encl.r2);
+              const routed = this.routeError(state, 'insert here');
+              if (routed) return routed;
+              b = { ...b, c1: b.c1 + need, c2: b.c2 + need };
+            }
+          } else {
+            const need = encl.r1 + 2 - Math.min(...cellsOf(L).map(([r]) => r));
+            if (need > 0) {
+              this.insertRowsMovingBoxes(state, b.r1, need, b);
+              b = { ...b, r1: b.r1 + need, r2: b.r2 + need };
+            }
+          }
+          L = layout();
+        }
+      }
       // Past the very top/left edge of the diagram: add blank rows/columns there (the whole
       // diagram moves, as the stamp buttons do)
       const minR = Math.min(...cellsOf(L).map(([r]) => r));
@@ -3052,8 +3118,6 @@
     if (!toggleAutofit.checked || e.isComposing) return;
     const op = boxOpFor(e);
     if (!op) return;
-    // Typing a border character is editing the drawing itself: type it exactly as pressed
-    if (op.type === 'insert' && /^[|+]$/.test(op.text)) return;
     const res = boxEdit(op);
     if (!res) return; // not inside a box: normal text editing
     if (res.error) {
@@ -3465,7 +3529,7 @@
     const text = editor.value;
     const hit = Grid2DEditor.hitBoxSides(text, cell.r, cell.c);
     if (hit) {
-      const name = hit.box.macroKey ? `[${hit.box.macroKey}]` : hit.box.lines[0] || 'box';
+      const { name } = hit;
       for (const side of hit.sides) {
         ctxMenu.appendChild(menuHeader(`${SIDE_LABEL[side]} “${name}”`));
         for (const [kind, label] of KINDS) {
