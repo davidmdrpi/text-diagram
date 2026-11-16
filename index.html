@@ -155,17 +155,10 @@
           placeholder="Paste or type any ditaa ASCII diagram here..."></textarea>
       </div>
 
-      <!-- Editor Footer Status Bar -->
-      <div class="px-3 py-1.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono text-slate-400">
-        <div class="flex items-center gap-4">
-          <span id="cursor-pos" class="text-emerald-400 font-semibold">Row 1, Col 1</span>
-          <span id="grid-dims">Grid: 0x0</span>
-          <span id="detected-stats" class="text-indigo-400">0 Boxes • 0 Legends</span>
-          <span id="active-box-pill" class="text-slate-500 truncate max-w-[220px]" title="The selected box: click inside a box in the text, or click it in the preview">No box selected</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-slate-500 hidden 2xl:inline">Shortcuts: <code class="text-slate-300">Alt+Arrows</code> Move • <code class="text-slate-300">Alt+Shift+Arrows</code> Resize • <code class="text-slate-300">Ctrl+Z / Ctrl+Y</code> Undo/Redo</span>
-        </div>
+      <!-- Editor status line: position, selection and selected box, on one line -->
+      <div class="px-3 py-1 bg-slate-900 border-t border-slate-800 flex items-center gap-3 text-[11px] font-mono text-slate-400 whitespace-nowrap overflow-hidden">
+        <span id="cursor-pos" class="text-emerald-400">Ln 1, Col 1</span>
+        <span id="active-box-pill" class="text-slate-500 truncate" title="The selected box: click inside a box in the text, or click it in the preview"></span>
       </div>
     </section>
 
@@ -220,14 +213,10 @@
         </div>
       </div>
 
-      <!-- Bottom Quick Reference Legend Drawer -->
-      <div class="px-4 py-2 bg-slate-900 border-t border-slate-800 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
-        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono">
-          <span><strong class="text-slate-200">Shapes:</strong> {c}=Diamond {s}=Cylinder {d}=Doc {io}=I/O {mo}=Trapezoid {o}=Pill {*}=Dashed</span>
-          <span><strong class="text-slate-200">Colors:</strong> cBLU cGRE cYEL cRED cPNK cBLK c#RRGGBB cRGB</span>
-          <span><strong class="text-slate-200">Wires:</strong> -=Solid ==Dashed :=VertDashed *=Node</span>
-        </div>
-        <span id="toast-indicator" class="text-emerald-400 font-medium opacity-0 transition-opacity duration-300" aria-live="polite"></span>
+      <!-- One-line footer: syntax reference on hover, and status messages -->
+      <div class="px-3 py-1 bg-slate-900 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between gap-2 whitespace-nowrap overflow-hidden">
+        <span class="font-mono text-slate-500 hover:text-slate-200 cursor-help" title="Shapes: {c} diamond, {s} cylinder, {d} document, {io} I/O, {mo} trapezoid, {o} pill, {*} dashed&#10;Colors: cBLU cGRE cYEL cRED cPNK cBLK, c#RRGGBB, cRGB&#10;Wires: - solid, = dashed, : dashed vertical, * junction, &lt; &gt; ^ v arrowheads&#10;Legend macros: a box labelled [D] expands to the line # [D] = Its Name">Syntax ⓘ</span>
+        <span id="toast-indicator" class="text-emerald-400 font-medium opacity-0 transition-opacity duration-300 truncate" aria-live="polite"></span>
       </div>
     </section>
   </main>

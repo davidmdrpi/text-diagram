@@ -33,8 +33,10 @@ inserting text naturally pushes the rest of a line along:
 - Diamonds grow around their centre so the wires on their top and bottom points stay attached
   (a lead-in wire on the left gets one character shorter).
 - Backspace and Delete edit within the box and join lines; pasted text with line breaks becomes
-  multiple lines. An edit that would break another box is refused with a message. Typing
-  outside boxes is ordinary text editing, so you can always adjust anything by hand.
+  multiple lines. Typing is never blocked: if a box can't grow safely (or you type a border
+  character `|` / `+`), the keystroke simply goes in as plain text. Typing outside boxes is
+  ordinary text editing, so you can always adjust anything by hand. (Toolbar and right-click
+  actions that would break another box are refused with a red message instead.)
 
 The +W / −W buttons follow the same rule (only the box's own lines shift).
 

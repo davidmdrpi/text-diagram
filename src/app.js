@@ -146,8 +146,6 @@
   const svgWrapper = $('svg-wrapper');
   const presetSelect = $('preset-select');
   const cursorPosEl = $('cursor-pos');
-  const gridDimsEl = $('grid-dims');
-  const detectedStatsEl = $('detected-stats');
   const activeBoxPill = $('active-box-pill');
   const toastEl = $('toast-indicator');
   const zoomLabel = $('zoom-label');
@@ -323,15 +321,10 @@
   function updateActiveBoxUI() {
     activeBoxIndex = detectActiveBoxAtCursor();
     const b = activeBox();
-    if (b) {
-      const title = b.macroKey ? `[${b.macroKey}]` : (b.lines[0] || 'box');
-      activeBoxPill.textContent = `Selected: ${title} (${b.c2 - b.c1 + 1}×${b.r2 - b.r1 + 1})`;
-      activeBoxPill.className = 'text-indigo-300 truncate max-w-[220px]';
-    } else {
-      activeBoxPill.textContent = 'No box selected';
-      activeBoxPill.className = 'text-slate-500 truncate max-w-[220px]';
-    }
+    activeBoxPill.textContent = b ? `· ${b.macroKey ? `[${b.macroKey}]` : (b.lines[0] || 'box')} ${b.c2 - b.c1 + 1}×${b.r2 - b.r1 + 1}` : '';
+    activeBoxPill.className = b ? 'text-indigo-300 truncate' : 'text-slate-500 truncate';
   }
+
 
 
   function paintSvg() {
@@ -345,15 +338,12 @@
     updateActiveBoxUI();
     paintSvg();
     updateCursorPos();
-    gridDimsEl.textContent = `Grid: ${lastAst.numCols}×${lastAst.numRows}`;
-    const legendCount = Object.keys(lastAst.legends).length;
-    const inlineCount = lastAst.arrows.filter((a) => a.inline).length;
-    detectedStatsEl.textContent = `${lastAst.boxes.length} Boxes • ${inlineCount} Inline '^' • ${legendCount} Legends`;
   }
 
   function updateCursorPos() {
     const { r, c } = getCursorRC();
-    cursorPosEl.textContent = `Row ${r + 1}, Col ${c + 1}`;
+    const n = Math.abs(editor.selectionEnd - editor.selectionStart);
+    cursorPosEl.textContent = `Ln ${r + 1}, Col ${c + 1}` + (n ? ` · ${n} selected` : '');
   }
 
   /** Caret moved (no text change): update status, repaint only if the selected box changed. */
@@ -411,13 +401,17 @@
     if (!toggleAutofit.checked || e.isComposing) return;
     const op = boxOpFor(e);
     if (!op) return;
+    // Typing a border character is editing the drawing itself: type it exactly as pressed
+    if (op.type === 'insert' && /^[|+]$/.test(op.text)) return;
     const res = boxEdit(op);
     if (!res) return; // not inside a box: normal text editing
-    e.preventDefault();
     if (res.error) {
-      showError(res.error);
+      // The user is always right about what they type: auto-fit couldn't help here, so the
+      // keystroke goes in as plain text (a quiet note, not an error)
+      showToast(`Typed as plain text (${res.error.replace(/^Cannot [^:]*:\s*/, '')})`);
       return;
     }
+    e.preventDefault();
     if (res.text !== editor.value) editor.value = res.text; // a typed space can leave the text unchanged; the caret still moves
     const idx = Grid2DEditor.getIndexFromRowCol(editor.value, res.cursorR, res.cursorC);
     editor.selectionStart = editor.selectionEnd = idx;
@@ -849,8 +843,8 @@
         // Same path as typing: pasting into a box grows it and replaces a selection there
         const res = toggleAutofit.checked ? boxEdit({ type: 'insert', text: clip }) : null;
         if (res && !res.error) applyGridOperationResult(res);
-        else if (res && res.error) showError(res.error);
         else {
+          if (res && res.error) showToast(`Pasted as plain text (${res.error.replace(/^Cannot [^:]*:\s*/, '')})`);
           pushUndoState();
           editor.setRangeText(clip, editor.selectionStart, editor.selectionEnd, 'end');
           refresh();
