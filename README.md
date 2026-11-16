@@ -112,5 +112,8 @@ npm run build
 npm test
 ```
 
+`test/ui.test.js` also drives `text-diagram.html` in a headless Chromium (right-click
+mapping, inserts, paste) when Playwright is installed, and is skipped otherwise.
+
 The tests fail if `text-diagram.html` is out of date with the sources, so always rebuild and
 commit it with your changes. Requires Node 18+; the only (dev) dependency is Tailwind CSS.
