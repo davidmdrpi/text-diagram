@@ -1689,13 +1689,24 @@
       const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
       const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
       const parser = new DitaaParser();
+      const beforeAst = parser.parse(rawText);
+      const afterAst = parser.parse(res.text);
+
       // exceptBox: the box being edited may change its own label/tags, but must still exist.
-      const before = parser.parse(rawText).boxes.filter((b) => !exceptBox || !same(b, exceptBox));
-      const after = parser.parse(res.text).boxes;
-      if (exceptBox && after.length !== before.length + 1) {
-        return { error: `Cannot ${verb}: it would ${after.length > before.length + 1 ? 'create' : 'break'} a box` };
+      // It is tracked by identity, not by its contents (another box may have the same label):
+      // before the edit it is exceptBox; after it, it is the box the caret ended up in, since
+      // every in-box edit leaves the caret inside the box it edited.
+      let selfBefore = null, selfAfter = null;
+      if (exceptBox) {
+        selfBefore = beforeAst.boxes.find((b) => same(b, exceptBox)) || null;
+        selfAfter = this.boxAtCaret(afterAst.boxes, res.cursorR, res.cursorC);
+        if (!selfBefore || !selfAfter) return { error: `Cannot ${verb}: it would break this box` };
+        if (afterAst.boxes.length !== beforeAst.boxes.length) {
+          return { error: `Cannot ${verb}: it would ${afterAst.boxes.length > beforeAst.boxes.length ? 'create' : 'break'} a box` };
+        }
       }
-      const remaining = after.map(sig);
+      const before = beforeAst.boxes.filter((b) => b !== selfBefore);
+      const remaining = afterAst.boxes.filter((b) => b !== selfAfter).map(sig);
       for (const b of before) {
         const i = remaining.indexOf(sig(b));
         if (i === -1) {
@@ -1704,18 +1715,17 @@
         }
         remaining.splice(i, 1);
       }
-      if (remaining.length > (exceptBox ? 1 : 0) + allowNew) return { error: `Cannot ${verb}: it would merge lines into a new box` };
-      // Same boxes is not enough: every wire must still connect the same boxes. (Inserting
+      if (remaining.length > allowNew) return { error: `Cannot ${verb}: it would merge lines into a new box` };
+
+      // Same boxes is not enough: every wire must still connect the same boxes. Boxes are
+      // keyed by contents (so identical boxes are interchangeable, which is fine for a
+      // multiset comparison) except the edited one, which is keyed by identity. (Inserting
       // a new shape may legitimately split a connection in two, so allowNew skips this.)
       if (!allowNew) {
-        const beforeAst = parser.parse(rawText), afterAst = parser.parse(res.text);
-        const keyOf = (ast, isSelf) => ast.boxes.map((b) => (isSelf(b) ? 'SELF' : sig(b)));
-        const selfAfter = new Set(remaining); // the edited box's new signature, if any
-        const kb = keyOf(beforeAst, (b) => exceptBox && same(b, exceptBox));
-        const ka = keyOf(afterAst, (b) => exceptBox && selfAfter.has(sig(b)));
-        const comps = (ast, keys) => parser.connections(ast).map((ids) => JSON.stringify(ids.map((i) => keys[i]).sort()));
-        const after = comps(afterAst, ka);
-        for (const comp of comps(beforeAst, kb)) {
+        const keys = (ast, self) => ast.boxes.map((b) => (b === self ? 'SELF' : sig(b)));
+        const comps = (ast, k) => parser.connections(ast).map((ids) => JSON.stringify(ids.map((i) => k[i]).sort()));
+        const after = comps(afterAst, keys(afterAst, selfAfter));
+        for (const comp of comps(beforeAst, keys(beforeAst, selfBefore))) {
           const i = after.indexOf(comp);
           if (i === -1) {
             const names = JSON.parse(comp).map((k) => (k === 'SELF' ? 'this box' : JSON.parse(k)[0][0] || 'a box'));

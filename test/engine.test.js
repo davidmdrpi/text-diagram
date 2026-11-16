@@ -1012,3 +1012,21 @@ test('typing in the flowchart diamond keeps every wire connecting the same boxes
   }
   assert.deepEqual(connectionsByLabel(t, { 'Valid and complete?': 'Valid?' }), connectionsByLabel(flowchart));
 });
+
+test('regression (PR #4 follow-up review): relabelling a box to match another box is allowed', () => {
+  const text = '+---+   +---+\n| A +-->| B |\n+---+   +---+';
+  const start = text.indexOf('A');
+  const res = Grid2DEditor.editAtSelection(text, start, start + 1, { type: 'insert', text: 'B' });
+  assert.ok(!res.error, res.error);
+  assert.equal(res.text, '+---+   +---+\n| B +-->| B |\n+---+   +---+');
+  // ...and typing into a box whose label already matches another one
+  const twins = '+---+   +---+\n| B +-->| B |\n+---+   +---+';
+  const grow = Grid2DEditor.typeInBox(twins, { r: 1, c: 3 }, null, { type: 'insert', text: 'ee' });
+  assert.ok(!grow.error, grow.error);
+  assert.deepEqual(parse(grow.text).boxes.map((b) => b.lines[0]), ['Bee', 'B']);
+  // The edited box is still tracked by identity: re-wiring it is still caught
+  const three = '+---+   +---+\n| A +-->| B |\n+---+   +---+\n\n+---+\n| B |\n+---+';
+  const moved = '+---+    +---+\n| B +--> | B |\n+---+    +---+\n\n+---+\n| B |\n+---+';
+  const g = Grid2DEditor.guardOtherBoxes(three, { text: moved, cursorR: 1, cursorC: 2 }, 'test', parse(three).boxes[0]);
+  assert.match(g.error, /change what a wire connects/);
+});
