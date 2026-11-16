@@ -101,70 +101,45 @@
     <!-- LEFT PANE: Monospace ASCII Editor & 2D Spatial Manipulation Toolbar -->
     <section class="w-full lg:w-[48%] h-1/2 lg:h-full flex flex-col border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-900/70">
       
-      <!-- Row 1: Smart 2D Stamp Bar (Cursor & Arrow Aware!) -->
-      <div class="px-3 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
-        <div class="flex items-center gap-1.5 flex-wrap">
-          <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mr-0.5">2D Stamp:</span>
-          <button id="stamp-box" class="text-xs font-mono px-2 py-1 rounded bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/40 transition shadow-sm" title="Smart Stamp Box: Connects to arrows at cursor or stamps in 2D grid">+Box+</button>
-          <button id="stamp-rbox" class="text-xs font-mono px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-200 border border-indigo-500/30 transition" title="Smart Stamp Rounded Box">/Round\</button>
-          <button id="stamp-4x4" class="text-xs font-mono px-2 py-1 rounded bg-purple-600/25 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 transition" title="Smart Stamp 4x3 Legend Macro Box">[D] 4x3</button>
-          <button id="stamp-diamond" class="text-xs font-mono px-2 py-1 rounded bg-sky-600/20 hover:bg-sky-600/35 text-sky-200 border border-sky-500/30 transition" title="Smart Stamp Conditional Diamond {c}: attaches to the arrow at the cursor, ports on all 4 vertices">&lt;Diamond?&gt;</button>
-
-          <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
-
-          <button id="stamp-arrow-right" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach solid right arrow from active box or cursor">──&gt;</button>
-          <button id="stamp-darrow-right" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach dotted/dashed right arrow from active box or cursor">==&gt;</button>
-          <button id="stamp-arrow-down" class="text-xs font-mono px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 transition" title="Attach vertical down arrow from active box bottom">│v</button>
-          <button id="stamp-inline-up" class="text-xs font-mono px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/30 transition" title="Stamp inline '^' arrow directly on box border">+--^--+</button>
-
-          <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
-
-          <button data-tag="{s}" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition" title="Inject {s} Cylinder Tag into Active Box">{s}</button>
-          <button data-tag="{c}" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 transition" title="Toggle {c} Conditional Diamond on Active Box">{c}</button>
-          <button data-tag="{d}" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 transition" title="Inject {d} Document Tag into Active Box">{d}</button>
-          <button data-tag="cBLU" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cBLU</button>
-          <button data-tag="cGRE" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cGRE</button>
-          <button data-tag="cYEL" class="tag-btn text-xs font-mono px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-yellow-300 border border-slate-700 transition" title="Toggle Color Tag on Active Box">cYEL</button>
+      <!-- Editor toolbar: one wrapping row of compact button groups (hover a button for what it does) -->
+      <div id="editor-toolbar" class="px-1.5 py-1 bg-slate-900 border-b border-slate-800 flex items-center gap-px flex-wrap">
+        <button id="stamp-box" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-200 border-indigo-500/40" title="Stamp a box at the cursor (attaches to an arrow tip at the cursor)">+Box+</button>
+        <button id="stamp-rbox" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-200 border-indigo-500/30" title="Stamp a rounded box at the cursor">/Rnd\</button>
+        <button id="stamp-4x4" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-purple-600/25 hover:bg-purple-600/40 text-purple-200 border-purple-500/40" title="Stamp a small legend-macro box [M1] and add its legend line">[D]</button>
+        <button id="stamp-diamond" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-sky-600/20 hover:bg-sky-600/35 text-sky-200 border-sky-500/30" title="Stamp a {c} decision diamond (ports on all four points)">&lt;?&gt;</button>
+        <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
+        <button id="stamp-arrow-right" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border-emerald-500/30" title="Arrow to the right from the selected box (or at the cursor)">──&gt;</button>
+        <button id="stamp-darrow-right" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border-emerald-500/30" title="Dashed arrow to the right from the selected box (or at the cursor)">==&gt;</button>
+        <button id="stamp-arrow-down" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border-emerald-500/30" title="Arrow down from the selected box's bottom (or at the cursor)">│v</button>
+        <button id="stamp-inline-up" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border-amber-500/30" title="Inline '^' arrow on the selected box's bottom wall">+^+</button>
+        <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
+        <button data-tag="{c}" class="tag-btn text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-sky-300 border-slate-700" title="Toggle {c} decision diamond on the selected box">{c}</button>
+        <button data-tag="{s}" class="tag-btn text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700" title="Toggle {s} storage cylinder on the selected box">{s}</button>
+        <button data-tag="{d}" class="tag-btn text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-sky-300 border-slate-700" title="Toggle {d} document shape on the selected box">{d}</button>
+        <button data-tag="cBLU" class="tag-btn w-4 h-4 rounded border border-slate-600 hover:ring-2 hover:ring-white/40 transition" style="background:#3b82f6" title="Toggle cBLU (blue) on the selected box" aria-label="Toggle cBLU"></button>
+        <button data-tag="cGRE" class="tag-btn w-4 h-4 rounded border border-slate-600 hover:ring-2 hover:ring-white/40 transition" style="background:#22c55e" title="Toggle cGRE (green) on the selected box" aria-label="Toggle cGRE"></button>
+        <button data-tag="cYEL" class="tag-btn w-4 h-4 rounded border border-slate-600 hover:ring-2 hover:ring-white/40 transition" style="background:#eab308" title="Toggle cYEL (yellow) on the selected box" aria-label="Toggle cYEL"></button>
+        
+        <div class="flex items-center gap-px p-px rounded bg-slate-950/70 border border-slate-800" title="Move the selected box (Alt+Arrow keys)">
+          <button id="shift-left" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box left (Alt+←); attached wires stretch">←</button>
+          <button id="shift-up" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box up (Alt+↑); attached wires stretch">↑</button>
+          <button id="shift-down" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box down (Alt+↓); attached wires stretch">↓</button>
+          <button id="shift-right" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box right (Alt+→); attached wires stretch">→</button>
         </div>
-
-        <div class="flex items-center gap-1">
-          <button id="btn-undo" class="text-xs font-mono px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="Undo (Ctrl+Z)">↶</button>
-          <button id="btn-redo" class="text-xs font-mono px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="Redo (Ctrl+Y)">↷</button>
-          <button id="btn-clear" class="text-xs text-slate-400 hover:text-rose-400 px-2 py-1 rounded transition">Clear</button>
+        <div class="flex items-center gap-px p-px rounded bg-slate-950/70 border border-slate-800" title="Resize the selected box (Alt+Shift+Arrow keys)">
+          <button id="resize-wider" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white border-slate-700" title="Make the selected box wider (Alt+Shift+→)">+W</button>
+          <button id="resize-narrower" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white border-slate-700" title="Make the selected box narrower (Alt+Shift+←)">−W</button>
+          <button id="resize-taller" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white border-slate-700" title="Make the selected box taller (Alt+Shift+↓)">+H</button>
+          <button id="resize-shorter" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white border-slate-700" title="Make the selected box shorter (Alt+Shift+↑)">−H</button>
         </div>
-      </div>
-
-      <!-- Row 2: Active Box Shift & Resize Deck (With Elastic Wire Stretching!) -->
-      <div class="px-3 py-1.5 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
-        <div class="flex items-center gap-2 flex-wrap">
-          <!-- Shift Box Controls -->
-          <div class="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-emerald-400 mr-1" title="Moves entire 2D box and stretches/shrinks attached arrows! (Shortcut: Alt + Arrow Keys)">Shift Box:</span>
-            <button id="shift-left" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Left 1 Col & Stretch Right Wires (Alt+Left)">←</button>
-            <button id="shift-up" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Up 1 Row & Stretch Bottom Wires (Alt+Up)">↑</button>
-            <button id="shift-down" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Down 1 Row & Stretch Top Wires (Alt+Down)">↓</button>
-            <button id="shift-right" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shift Box Right 1 Col & Stretch Left Wires (Alt+Right)">→</button>
-          </div>
-
-          <!-- Resize Box Controls -->
-          <div class="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-amber-400 mr-1" title="Expands or shrinks the selected box walls and pushes connected wires! (Shortcut: Alt+Shift+Arrow)">Size Box:</span>
-            <button id="resize-wider" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Expand Box Width +2 Cols (Alt+Shift+Right)">↔ +W</button>
-            <button id="resize-narrower" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shrink Box Width -2 Cols (Alt+Shift+Left)">&gt;&lt; -W</button>
-            <button id="resize-taller" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Expand Box Height +1 Row (Alt+Shift+Down)">↕ +H</button>
-            <button id="resize-shorter" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white text-xs font-mono border border-slate-700 transition" title="Shrink Box Height -1 Row (Alt+Shift+Up)">^v -H</button>
-          </div>
-        </div>
-
-        <label class="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-300 hover:text-white" title="Typing, Enter, Backspace and paste inside a box grow it to fit, shifting the rest of the diagram to stay aligned">
+        <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
+        <button id="btn-undo" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700" title="Undo (Ctrl+Z)">↶</button>
+        <button id="btn-redo" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700" title="Redo (Ctrl+Y)">↷</button>
+        <button id="btn-clear" class="text-[11px] leading-4 text-slate-400 hover:text-rose-400 px-1 py-0.5 rounded transition" title="Clear the editor (undoable with Ctrl+Z)" aria-label="Clear">✕</button>
+        <label class="flex items-center gap-1 cursor-pointer text-[11px] text-slate-300 hover:text-white ml-0.5" title="Auto-fit: typing, Enter, Backspace and paste inside a box grow it to fit; things beside it move over">
           <input id="toggle-autofit" type="checkbox" checked class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
-          <span>Auto-fit boxes</span>
+          <span>Fit</span>
         </label>
-
-        <!-- Active Box Status Pill -->
-        <div id="active-box-pill" class="text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800/90 text-slate-400 border border-slate-700 truncate max-w-[230px]" title="Click inside any ASCII box or click a box in the SVG preview to select it">
-          No Box Selected (Click box)
-        </div>
       </div>
 
       <!-- Editor Container -->
@@ -186,9 +161,10 @@
           <span id="cursor-pos" class="text-emerald-400 font-semibold">Row 1, Col 1</span>
           <span id="grid-dims">Grid: 0x0</span>
           <span id="detected-stats" class="text-indigo-400">0 Boxes • 0 Legends</span>
+          <span id="active-box-pill" class="text-slate-500 truncate max-w-[220px]" title="The selected box: click inside a box in the text, or click it in the preview">No box selected</span>
         </div>
         <div class="flex items-center gap-2">
-          <span class="text-slate-500 hidden sm:inline">Shortcuts: <code class="text-slate-300">Alt+Arrows</code> Shift • <code class="text-slate-300">Alt+Shift+Arrows</code> Resize • <code class="text-slate-300">Ctrl+Z / Ctrl+Y</code> Undo/Redo</span>
+          <span class="text-slate-500 hidden 2xl:inline">Shortcuts: <code class="text-slate-300">Alt+Arrows</code> Move • <code class="text-slate-300">Alt+Shift+Arrows</code> Resize • <code class="text-slate-300">Ctrl+Z / Ctrl+Y</code> Undo/Redo</span>
         </div>
       </div>
     </section>

@@ -324,14 +324,15 @@
     activeBoxIndex = detectActiveBoxAtCursor();
     const b = activeBox();
     if (b) {
-      const title = b.macroKey ? `[${b.macroKey}]` : (b.lines[0] || 'Box');
-      activeBoxPill.textContent = `Selected: "${title}" (${b.c2 - b.c1 + 1}×${b.r2 - b.r1 + 1})`;
-      activeBoxPill.className = 'text-[11px] font-mono px-2.5 py-1 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 truncate max-w-[230px]';
+      const title = b.macroKey ? `[${b.macroKey}]` : (b.lines[0] || 'box');
+      activeBoxPill.textContent = `Selected: ${title} (${b.c2 - b.c1 + 1}×${b.r2 - b.r1 + 1})`;
+      activeBoxPill.className = 'text-indigo-300 truncate max-w-[220px]';
     } else {
-      activeBoxPill.textContent = 'No Box Selected (Click box)';
-      activeBoxPill.className = 'text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800/90 text-slate-400 border border-slate-700 truncate max-w-[230px]';
+      activeBoxPill.textContent = 'No box selected';
+      activeBoxPill.className = 'text-slate-500 truncate max-w-[220px]';
     }
   }
+
 
   function paintSvg() {
     svgWrapper.innerHTML = makeParser().renderSVG(lastAst, activeBoxIndex);

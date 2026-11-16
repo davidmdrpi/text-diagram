@@ -173,10 +173,12 @@
         for (let c0 = 0; c0 < numCols; c0++) {
           if (seen.has(r0 * numCols + c0) || !(H(r0, c0) || V(r0, c0))) continue;
           const touched = new Set();
+          const cellsOf = [];
           const stack = [[r0, c0]];
           seen.add(r0 * numCols + c0);
           while (stack.length) {
             const [r, c] = stack.pop();
+            cellsOf.push([r, c]);
             const steps = [];
             if (H(r, c)) steps.push([0, -1], [0, 1]);
             if (V(r, c)) steps.push([-1, 0], [1, 0]);
@@ -193,9 +195,19 @@
             }
           }
           if (touched.size) out.push([...touched]);
+          if (this._collectWires) this._collectWires.push({ boxes: [...touched], cells: [...cellsOf] });
         }
       }
       return out;
+    }
+
+    /** Every connected wire run: the boxes it touches and its cells ([r, c] pairs). */
+    wireRuns(ast) {
+      this._collectWires = [];
+      this.connections(ast);
+      const runs = this._collectWires;
+      this._collectWires = null;
+      return runs;
     }
 
     isHorizWallChar(ch, allowInlineArrow) {
@@ -1421,10 +1433,12 @@
         // wire would look attached to that (e.g. a box that grew over it)
         const I = state.grid[inR];
         const sameWall = () => {
-          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (!'-=+'.includes(I[k] || ' ') || (I[k] || ' ') === ' ') return false;
+          // Wall characters, including rounded corners (/ \ . ')
+          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (!"-=+/\\.'".includes(I[k] || ' ') || (I[k] || ' ') === ' ') return false;
           return true; // one unbroken wall from the port to the corner: the same box
         };
-        if (to !== w && (I[w] || ' ') !== ' ' && !sameWall()) { state.grid[outR] = saved; fail(); continue; }
+        const structural = (ch) => "|:+*-=/\\.'<>^v".includes(ch) && ch !== ' ';
+        if (to !== w && structural(I[w] || ' ') && !sameWall()) { state.grid[outR] = saved; fail(); continue; }
         if (to === w) {
           O[w] = head || (Y[w] === ':' || (state.grid[inR][to] || ' ') === ':' ? ':' : '|');
         } else {
@@ -1543,7 +1557,11 @@
      * right of x (it moves or stretches as a whole, so it is never torn).
      */
     static columnBand(state, x, lo, hi) {
-      const boxes = new DitaaParser().parse(this.fromGridState(state)).boxes;
+      const parser = new DitaaParser();
+      const ast = parser.parse(this.fromGridState(state));
+      const boxes = ast.boxes;
+      const runs = parser.wireRuns(ast);
+      const moves = (b) => b.r1 >= lo && b.r2 <= hi && b.c2 >= x; // inside the band, right of x
       let changed = true;
       while (changed) {
         changed = false;
@@ -1551,6 +1569,15 @@
           if (b.r2 < lo || b.r1 > hi || b.c2 < x) continue;
           if (b.r1 < lo) { lo = b.r1; changed = true; }
           if (b.r2 > hi) { hi = b.r2; changed = true; }
+        }
+        // A wire that only connects boxes which move (and lies right of x) moves with them,
+        // rather than being re-joined with jogs: take its rows into the band
+        for (const run of runs) {
+          if (!run.boxes.length || !run.boxes.every((i) => moves(boxes[i]))) continue;
+          if (run.cells.some(([, c]) => c < x)) continue;
+          const rMin = Math.min(...run.cells.map(([r]) => r)), rMax = Math.max(...run.cells.map(([r]) => r));
+          if (rMin < lo) { lo = rMin; changed = true; }
+          if (rMax > hi) { hi = rMax; changed = true; }
         }
       }
       return { lo, hi };
@@ -2216,8 +2243,24 @@
       const state = this.toGridState(rawText);
       let b = { ...box };
 
+      // If a wire already leaves this side, attach on its line so the new shape is spliced
+      // into that connection; otherwise use the middle of the wall.
+      const existingPort = () => {
+        const g = state.grid;
+        const cell = (r, c) => (g[r] && g[r][c]) || ' ';
+        if (horiz) {
+          const out = side === 'right' ? b.c2 + 1 : b.c1 - 1;
+          for (let r = b.r1 + 1; r < b.r2; r++) if ('-=<>'.includes(cell(r, out)) && cell(r, out) !== ' ') return r;
+        } else {
+          const out = side === 'below' ? b.r2 + 1 : b.r1 - 1;
+          for (let c = b.c1 + 1; c < b.c2; c++) if (wireV(g[out] || [], c)) return c;
+        }
+        return null;
+      };
+      const port0 = existingPort();
       const layout = () => {
-        const midR = Math.floor((b.r1 + b.r2) / 2), midC = Math.floor((b.c1 + b.c2) / 2);
+        const midR = horiz && port0 !== null ? port0 + (b.r1 - box.r1) : Math.floor((b.r1 + b.r2) / 2);
+        const midC = !horiz && port0 !== null ? port0 + (b.c1 - box.c1) : Math.floor((b.c1 + b.c2) / 2);
         const arrow = [];
         let port, shape = null, tip;
         if (side === 'right') {

@@ -1074,3 +1074,23 @@ test('inserting below a box moves boxes that straddle the line down whole instea
   const outer = parse(r2.text).boxes.find((b) => b.isContainer);
   assert.ok(outer && outer.r2 - outer.r1 > 4, 'container grew around the new shape');
 });
+
+test('inserting right of the top-left box of the pipeline example splices into its connection', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { arch } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const api = parse(arch).boxes.find((b) => b.lines[0] === 'API Gateway');
+  const res = Grid2DEditor.insertConnected(arch, api, 'right', 'box');
+  assert.ok(!res.error, res.error);
+  // Attached on the line the existing wire leaves from, not the middle line
+  assert.ok(res.text.split('\n')[2].startsWith('|    cBLU           +--->|  Component  +'));
+  const p = new DitaaParser();
+  const ast = p.parse(res.text);
+  const conn = p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].lines[0] || ast.boxes[i].macroKey).sort().join(' – '));
+  assert.ok(conn.includes('API Gateway – Component'));
+  assert.ok(conn.includes('Auth Verifier – Component'));
+  assert.ok(conn.includes('Auth Verifier – Session Cache'), 'the dashed wire under Auth Verifier follows it');
+  assert.ok(!conn.includes('API Gateway – Auth Verifier'));
+});
