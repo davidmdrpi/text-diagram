@@ -118,8 +118,46 @@ test('menu Paste over a selected label replaces it; an over-long paste is refuse
     const pt2 = await cellXY(page, 1, 5);
     await page.mouse.click(pt2.x, pt2.y, { button: 'right' });
     await page.locator('#ctx-menu button', { hasText: 'Paste' }).first().click();
-    await page.waitForFunction(() => /too large/.test(document.getElementById('toast-indicator').textContent));
+    await page.waitForFunction(() => /too large/.test(document.getElementById('error-banner').textContent));
+    assert.ok(await page.locator('#error-banner').isVisible(), 'refusal shown in the red banner');
     assert.equal(await page.inputValue('#ascii-editor'), before);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('inserting below the bottom-left box moves the boxes beside it down; refusals are visible', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    const before = await boxes(page);
+    const D = before.find((b) => b.name === '[D]');
+    const pt = await cellXY(page, D.r2, Math.floor((D.c1 + D.c2) / 2));
+    await page.mouse.click(pt.x, pt.y, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: '↓ Box' }).first().click();
+    const after = await boxes(page);
+    for (const name of ['[A]', '[Q]', '[S]']) {
+      const a = before.find((b) => b.name === name), b = after.find((x) => x.name === name);
+      assert.equal(b.r2 - b.r1, a.r2 - a.r1, `${name} keeps its height`);
+      assert.ok(b.r1 > a.r1, `${name} moved down`);
+    }
+    // Then left of the top-left box (with the new placeholder still selected)
+    const api = after.find((b) => b.name === 'API Gateway');
+    const p2 = await cellXY(page, api.r1 + 1, api.c1);
+    await page.mouse.click(p2.x, p2.y, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: '← Box' }).first().click();
+    assert.equal((await boxes(page)).length, after.length + 1, 'box added left of API Gateway');
+    // A refused insert says why, visibly
+    await page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      ed.value = '+-----+     +-----+\n| A   +---->| B   |\n+-----+     +-----+';
+      ed.dispatchEvent(new Event('input'));
+    });
+    const p3 = await cellXY(page, 1, 12);
+    await page.mouse.click(p3.x, p3.y, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: '← Box' }).first().click();
+    assert.ok(await page.locator('#error-banner').isVisible());
+    assert.match(await page.locator('#error-banner').innerText(), /No room on the left/);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

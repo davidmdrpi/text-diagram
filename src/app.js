@@ -239,11 +239,11 @@
 
   function applyGridOperationResult(res, msg) {
     if (!res) {
-      showToast('Nothing to do here');
+      showError('Nothing to do here');
       return;
     }
     if (res.error) {
-      showToast(res.error);
+      showError(res.error);
       return;
     }
     endTypingBurst();
@@ -287,6 +287,21 @@
     toastTimer = setTimeout(() => toastEl.classList.add('opacity-0'), 2200);
   }
 
+  // Refusals must never look like "nothing happened": a red banner that stays a while.
+  const errorBanner = document.createElement('div');
+  errorBanner.id = 'error-banner';
+  errorBanner.setAttribute('role', 'alert');
+  errorBanner.className = 'fixed left-1/2 -translate-x-1/2 bottom-6 z-50 max-w-[90vw] px-4 py-2 rounded-lg bg-rose-600 text-white text-xs font-medium shadow-2xl hidden';
+  document.body.appendChild(errorBanner);
+  let errorTimer = null;
+  function showError(msg) {
+    errorBanner.textContent = msg;
+    errorBanner.classList.remove('hidden');
+    clearTimeout(errorTimer);
+    errorTimer = setTimeout(() => errorBanner.classList.add('hidden'), 6000);
+  }
+  errorBanner.addEventListener('click', () => errorBanner.classList.add('hidden'));
+
   /*************************************************************************
    * RENDERING
    *************************************************************************/
@@ -309,14 +324,15 @@
     activeBoxIndex = detectActiveBoxAtCursor();
     const b = activeBox();
     if (b) {
-      const title = b.macroKey ? `[${b.macroKey}]` : (b.lines[0] || 'Box');
-      activeBoxPill.textContent = `Selected: "${title}" (${b.c2 - b.c1 + 1}×${b.r2 - b.r1 + 1})`;
-      activeBoxPill.className = 'text-[11px] font-mono px-2.5 py-1 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 truncate max-w-[230px]';
+      const title = b.macroKey ? `[${b.macroKey}]` : (b.lines[0] || 'box');
+      activeBoxPill.textContent = `Selected: ${title} (${b.c2 - b.c1 + 1}×${b.r2 - b.r1 + 1})`;
+      activeBoxPill.className = 'text-indigo-300 truncate max-w-[220px]';
     } else {
-      activeBoxPill.textContent = 'No Box Selected (Click box)';
-      activeBoxPill.className = 'text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800/90 text-slate-400 border border-slate-700 truncate max-w-[230px]';
+      activeBoxPill.textContent = 'No box selected';
+      activeBoxPill.className = 'text-slate-500 truncate max-w-[220px]';
     }
   }
+
 
   function paintSvg() {
     svgWrapper.innerHTML = makeParser().renderSVG(lastAst, activeBoxIndex);
@@ -399,7 +415,7 @@
     if (!res) return; // not inside a box: normal text editing
     e.preventDefault();
     if (res.error) {
-      showToast(res.error);
+      showError(res.error);
       return;
     }
     if (res.text !== editor.value) editor.value = res.text; // a typed space can leave the text unchanged; the caret still moves
@@ -538,7 +554,7 @@
     btn.addEventListener('click', () => {
       const box = activeBox();
       if (!box) {
-        showToast('Click inside a box first to apply a shape/color tag');
+        showError('Click inside a box first to apply a shape/color tag');
         return;
       }
       applyGridOperationResult(Grid2DEditor.toggleTag(editor.value, box, btn.getAttribute('data-tag')));
@@ -548,7 +564,7 @@
   const requireBox = (fn) => () => {
     const box = activeBox();
     if (!box) {
-      showToast('Click inside a box (or click a box in the preview) first');
+      showError('Click inside a box (or click a box in the preview) first');
       return;
     }
     fn(box);
@@ -745,7 +761,16 @@
     const a = measure('M'.repeat(100)), b = measure('M'.repeat(200));
     const c = measure('M\n'.repeat(99) + 'M'), d = measure('M\n'.repeat(199) + 'M');
     probe.remove();
-    return { cw: (b.w - a.w) / 100, lh: (d.h - c.h) / 100 };
+    let cw = (b.w - a.w) / 100, lh = (d.h - c.h) / 100;
+    // Fallback for a browser where the probe can't be measured: canvas text metrics with
+    // the editor's explicit family/size, and its computed line height
+    if (!(cw > 2 && cw < 40)) {
+      const g = document.createElement('canvas').getContext('2d');
+      g.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      cw = g.measureText('M'.repeat(100)).width / 100;
+    }
+    if (!(lh > 4 && lh < 80)) lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.35;
+    return { cw, lh };
   }
 
   /** Grid cell under a mouse event in the textarea (columns past a line's end included). */
@@ -824,14 +849,14 @@
         // Same path as typing: pasting into a box grows it and replaces a selection there
         const res = toggleAutofit.checked ? boxEdit({ type: 'insert', text: clip }) : null;
         if (res && !res.error) applyGridOperationResult(res);
-        else if (res && res.error) showToast(res.error);
+        else if (res && res.error) showError(res.error);
         else {
           pushUndoState();
           editor.setRangeText(clip, editor.selectionStart, editor.selectionEnd, 'end');
           refresh();
         }
       } catch (_) {
-        showToast('Press Ctrl+V to paste (the browser blocked clipboard access)');
+        showError('Press Ctrl+V to paste (the browser blocked clipboard access)');
       }
     }, { hint: 'Ctrl+V' }));
     const tip = document.createElement('div');

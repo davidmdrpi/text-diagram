@@ -16,12 +16,12 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 
 | Action | Buttons | Keys |
 | --- | --- | --- |
-| Move box (attached wires stretch) | Shift Box ← ↑ ↓ → | `Alt+Arrows` |
-| Resize box | Size Box ±W ±H | `Alt+Shift+Arrows` |
+| Move box (attached wires stretch) | ← ↑ ↓ → | `Alt+Arrows` |
+| Resize box | +W −W +H −H | `Alt+Shift+Arrows` |
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
 
-**Typing inside a box grows it** (the *Auto-fit boxes* checkbox, on by default), the way
+**Typing inside a box grows it** (the *Fit* checkbox in the toolbar, on by default), the way
 inserting text naturally pushes the rest of a line along:
 
 - When text would reach the right wall, the box widens on its own lines only. Arrows and boxes
@@ -36,7 +36,7 @@ inserting text naturally pushes the rest of a line along:
   multiple lines. An edit that would break another box is refused with a message. Typing
   outside boxes is ordinary text editing, so you can always adjust anything by hand.
 
-The Size Box ±W buttons follow the same rule (only the box's own lines shift).
+The +W / −W buttons follow the same rule (only the box's own lines shift).
 
 **Right-click** in the editor for connected shapes:
 
@@ -53,7 +53,7 @@ The Size Box ±W buttons follow the same rule (only the box's own lines shift).
 - On empty space: insert a shape right there.
 - Cut / Copy / Paste are in the menu too; Shift+right-click opens the browser's own menu.
 
-Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
+Every toolbar button explains itself on hover. Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 
 Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax
 below into plain ditaa that the Java renderer accepts.

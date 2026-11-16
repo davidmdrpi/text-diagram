@@ -173,10 +173,12 @@
         for (let c0 = 0; c0 < numCols; c0++) {
           if (seen.has(r0 * numCols + c0) || !(H(r0, c0) || V(r0, c0))) continue;
           const touched = new Set();
+          const cellsOf = [];
           const stack = [[r0, c0]];
           seen.add(r0 * numCols + c0);
           while (stack.length) {
             const [r, c] = stack.pop();
+            cellsOf.push([r, c]);
             const steps = [];
             if (H(r, c)) steps.push([0, -1], [0, 1]);
             if (V(r, c)) steps.push([-1, 0], [1, 0]);
@@ -193,9 +195,19 @@
             }
           }
           if (touched.size) out.push([...touched]);
+          if (this._collectWires) this._collectWires.push({ boxes: [...touched], cells: [...cellsOf] });
         }
       }
       return out;
+    }
+
+    /** Every connected wire run: the boxes it touches and its cells ([r, c] pairs). */
+    wireRuns(ast) {
+      this._collectWires = [];
+      this.connections(ast);
+      const runs = this._collectWires;
+      this._collectWires = null;
+      return runs;
     }
 
     isHorizWallChar(ch, allowInlineArrow) {
@@ -1421,10 +1433,12 @@
         // wire would look attached to that (e.g. a box that grew over it)
         const I = state.grid[inR];
         const sameWall = () => {
-          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (!'-=+'.includes(I[k] || ' ') || (I[k] || ' ') === ' ') return false;
+          // Wall characters, including rounded corners (/ \ . ')
+          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (!"-=+/\\.'".includes(I[k] || ' ') || (I[k] || ' ') === ' ') return false;
           return true; // one unbroken wall from the port to the corner: the same box
         };
-        if (to !== w && (I[w] || ' ') !== ' ' && !sameWall()) { state.grid[outR] = saved; fail(); continue; }
+        const structural = (ch) => "|:+*-=/\\.'<>^v".includes(ch) && ch !== ' ';
+        if (to !== w && structural(I[w] || ' ') && !sameWall()) { state.grid[outR] = saved; fail(); continue; }
         if (to === w) {
           O[w] = head || (Y[w] === ':' || (state.grid[inR][to] || ' ') === ':' ? ':' : '|');
         } else {
@@ -1543,7 +1557,11 @@
      * right of x (it moves or stretches as a whole, so it is never torn).
      */
     static columnBand(state, x, lo, hi) {
-      const boxes = new DitaaParser().parse(this.fromGridState(state)).boxes;
+      const parser = new DitaaParser();
+      const ast = parser.parse(this.fromGridState(state));
+      const boxes = ast.boxes;
+      const runs = parser.wireRuns(ast);
+      const moves = (b) => b.r1 >= lo && b.r2 <= hi && b.c2 >= x; // inside the band, right of x
       let changed = true;
       while (changed) {
         changed = false;
@@ -1551,6 +1569,15 @@
           if (b.r2 < lo || b.r1 > hi || b.c2 < x) continue;
           if (b.r1 < lo) { lo = b.r1; changed = true; }
           if (b.r2 > hi) { hi = b.r2; changed = true; }
+        }
+        // A wire that only connects boxes which move (and lies right of x) moves with them,
+        // rather than being re-joined with jogs: take its rows into the band
+        for (const run of runs) {
+          if (!run.boxes.length || !run.boxes.every((i) => moves(boxes[i]))) continue;
+          if (run.cells.some(([, c]) => c < x)) continue;
+          const rMin = Math.min(...run.cells.map(([r]) => r)), rMax = Math.max(...run.cells.map(([r]) => r));
+          if (rMin < lo) { lo = rMin; changed = true; }
+          if (rMax > hi) { hi = rMax; changed = true; }
         }
       }
       return { lo, hi };
@@ -1582,6 +1609,45 @@
       }
       this.insertColumns(state, [box.c1 + 1, box.c2], box.r1, box.r2);
       return 1;
+    }
+
+    /**
+     * Makes k blank rows below row y-1, like pressing Enter there, except that a box that
+     * straddles that line (one beside the source box, spanning across it) is moved down
+     * whole instead of being stretched: in its columns the rows go in just above it.
+     * Vertical lines crossing an insertion point are continued, so wires into the top of a
+     * moved box stretch to follow it. Boxes enclosing `src` (containers) still stretch.
+     */
+    static insertRowsMovingBoxes(state, y, k, src) {
+      const boxes = new DitaaParser().parse(this.fromGridState(state)).boxes;
+      this.normalizeWidth(state);
+      const encloses = (b) => b.r1 <= src.r1 && b.r2 >= src.r2 && b.c1 <= src.c1 && b.c2 >= src.c2;
+      const at = Array(state.cols).fill(y);
+      for (const b of boxes) {
+        if (b.r1 < y && b.r2 >= y && !encloses(b)) {
+          for (let c = b.c1; c <= b.c2; c++) at[c] = Math.min(at[c], b.r1);
+        }
+      }
+      const old = state.grid.map((row) => row.slice());
+      const cont = (r, c) => {
+        const line = old[r] || [];
+        const ch = line[c] || ' ';
+        if ('|:+*/\\'.includes(ch)) return true;
+        return (ch === '^' || ch === 'v' || ch === '.' || ch === "'") && !isAlnum(line[c - 1] || ' ') && !isAlnum(line[c + 1] || ' ');
+      };
+      const rows = state.rows + k;
+      const grid = Array.from({ length: rows }, () => Array(state.cols).fill(' '));
+      for (let c = 0; c < state.cols; c++) {
+        const yc = at[c];
+        const fill = cont(yc - 1, c) && cont(yc, c) ? ((old[yc - 1] || [])[c] === ':' || (old[yc] || [])[c] === ':' ? ':' : '|') : ' ';
+        for (let r = 0; r < rows; r++) {
+          if (r < yc) grid[r][c] = (old[r] || [])[c] || ' ';
+          else if (r < yc + k) grid[r][c] = fill;
+          else grid[r][c] = (old[r - k] || [])[c] || ' ';
+        }
+      }
+      state.grid = grid;
+      state.rows = rows;
     }
 
     /** Row counterpart of insertColumns. */
@@ -2177,8 +2243,24 @@
       const state = this.toGridState(rawText);
       let b = { ...box };
 
+      // If a wire already leaves this side, attach on its line so the new shape is spliced
+      // into that connection; otherwise use the middle of the wall.
+      const existingPort = () => {
+        const g = state.grid;
+        const cell = (r, c) => (g[r] && g[r][c]) || ' ';
+        if (horiz) {
+          const out = side === 'right' ? b.c2 + 1 : b.c1 - 1;
+          for (let r = b.r1 + 1; r < b.r2; r++) if ('-=<>'.includes(cell(r, out)) && cell(r, out) !== ' ') return r;
+        } else {
+          const out = side === 'below' ? b.r2 + 1 : b.r1 - 1;
+          for (let c = b.c1 + 1; c < b.c2; c++) if (wireV(g[out] || [], c)) return c;
+        }
+        return null;
+      };
+      const port0 = existingPort();
       const layout = () => {
-        const midR = Math.floor((b.r1 + b.r2) / 2), midC = Math.floor((b.c1 + b.c2) / 2);
+        const midR = horiz && port0 !== null ? port0 + (b.r1 - box.r1) : Math.floor((b.r1 + b.r2) / 2);
+        const midC = !horiz && port0 !== null ? port0 + (b.c1 - box.c1) : Math.floor((b.c1 + b.c2) / 2);
         const arrow = [];
         let port, shape = null, tip;
         if (side === 'right') {
@@ -2256,7 +2338,7 @@
           const routed = this.routeError(state, 'insert here');
           if (routed) return routed;
         } else {
-          this.insertRows(state, Array(GAP + h).fill(b.r2 + 1));
+          this.insertRowsMovingBoxes(state, b.r2 + 1, GAP + h, b);
         }
         L = layout();
         const hit = blocked(L, true);
