@@ -94,7 +94,7 @@ test('inserting a box right of the top-right box works and scrolls it into view'
   }
 });
 
-test('menu Paste over a selected label replaces it; an over-long paste is refused', { skip }, async () => {
+test('menu Paste over a selected label replaces it; an over-long paste still goes in, as plain text', { skip }, async () => {
   const { browser, page, errors, setClipboard } = await openPage();
   try {
     await page.evaluate(() => {
@@ -118,9 +118,11 @@ test('menu Paste over a selected label replaces it; an over-long paste is refuse
     const pt2 = await cellXY(page, 1, 5);
     await page.mouse.click(pt2.x, pt2.y, { button: 'right' });
     await page.locator('#ctx-menu button', { hasText: 'Paste' }).first().click();
-    await page.waitForFunction(() => /too large/.test(document.getElementById('error-banner').textContent));
-    assert.ok(await page.locator('#error-banner').isVisible(), 'refusal shown in the red banner');
-    assert.equal(await page.inputValue('#ascii-editor'), before);
+    // The user is always right about what they type/paste: it goes in, with a quiet note
+    await page.waitForFunction(() => /Pasted as plain text/.test(document.getElementById('toast-indicator').textContent));
+    assert.ok((await page.inputValue('#ascii-editor')).includes('x'.repeat(2500)));
+    assert.notEqual(await page.inputValue('#ascii-editor'), before);
+    assert.ok(await page.locator('#error-banner').isHidden(), 'no red error for typing');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
@@ -158,6 +160,69 @@ test('inserting below the bottom-left box moves the boxes beside it down; refusa
     await page.locator('#ctx-menu button', { hasText: '← Box' }).first().click();
     assert.ok(await page.locator('#error-banner').isVisible());
     assert.match(await page.locator('#error-banner').innerText(), /No room on the left/);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('typing a border character back into a box is never blocked', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    // Insert a box left of [D], delete its right wall on the middle line, then type it back
+    const D = (await boxes(page)).find((b) => b.name === '[D]');
+    const pt = await cellXY(page, D.r1 + 1, D.c1);
+    await page.mouse.click(pt.x, pt.y, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: '← Box' }).first().click();
+    const nb = (await boxes(page)).find((b) => b.name === 'Component');
+    const row = nb.r1 + 1;
+    const wall = await cellXY(page, row, nb.c2);
+    await page.mouse.click(wall.x + 4, wall.y); // caret just after the '|'
+    await page.evaluate(([r, c]) => {
+      const ed = document.getElementById('ascii-editor');
+      const lines = ed.value.split('\n');
+      let i = 0;
+      for (let k = 0; k < r; k++) i += lines[k].length + 1;
+      ed.selectionStart = ed.selectionEnd = i + c + 1;
+    }, [row, nb.c2]);
+    await page.keyboard.press('Backspace');
+    const line = () => page.inputValue('#ascii-editor').then((v) => v.split('\n')[row]);
+    assert.equal((await line())[nb.c2], '<', 'wall deleted');
+    await page.keyboard.type('|');
+    assert.equal((await line())[nb.c2], '|', 'typed exactly where the caret was');
+    assert.equal((await line()).slice(nb.c2, nb.c2 + 3), '|<-');
+    assert.ok(await page.locator('#error-banner').isHidden(), 'no error for typing');
+    // Status line: one line, shows position and selection
+    assert.match(await page.textContent('#cursor-pos'), /^Ln \d+, Col \d+$/);
+    await page.keyboard.press('Shift+ArrowLeft');
+    assert.match(await page.textContent('#cursor-pos'), /· 1 selected/);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('nested example: right-click just left of Ingress inserts inside the container', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.selectOption('#preset-select', 'nested');
+    const ing = (await boxes(page)).find((b) => b.name === 'Ingress');
+    const pt = await cellXY(page, ing.r1 + 1, ing.c1 - 2); // container space, two cells left of Ingress
+    await page.mouse.click(pt.x, pt.y, { button: 'right' });
+    assert.equal(await menuHeader(page), 'LEFT OF “INGRESS”');
+    await page.locator('#ctx-menu button', { hasText: '← Box' }).first().click();
+    const ast = await page.evaluate(() => new window.DitaaEngine.DitaaParser()
+      .parse(document.getElementById('ascii-editor').value).boxes
+      .map((b) => ({ r1: b.r1, c1: b.c1, r2: b.r2, c2: b.c2, label: b.lines[0] || '', container: b.isContainer })));
+    const cluster = ast.find((b) => b.container);
+    const added = ast.find((b) => b.label === 'Component');
+    assert.ok(added, 'box added');
+    assert.ok(added.c1 > cluster.c1 && added.c2 < cluster.c2 && added.r1 > cluster.r1 && added.r2 < cluster.r2, 'inside Cluster');
+    // Right-clicking the container's own wall names it by its label
+    const wall = await cellXY(page, cluster.r1, cluster.c1 + 5);
+    await page.mouse.click(wall.x, wall.y, { button: 'right' });
+    assert.equal(await menuHeader(page), 'ABOVE “CLUSTER”');
+    await page.keyboard.press('Escape');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

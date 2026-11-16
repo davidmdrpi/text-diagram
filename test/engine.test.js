@@ -598,15 +598,15 @@ test('Backspace and Delete edit within the box and join lines without touching w
   const bs = type(text, 1, 5, { type: 'backspace' });
   assert.equal(bs.text.split('\n')[1], '| Helo   |');
 
-  const join = type(text, 2, 1, { type: 'backspace' });
+  const join = type(text, 2, 2, { type: 'backspace' }); // at the start of the text, after the padding
   assert.equal(join.text, '+------------+\n| Helloworld |\n+------------+');
   assert.deepEqual([join.cursorR, join.cursorC], [1, 7], 'caret at the join point');
 
   const del = type(text, 1, 7, { type: 'delete' });
   assert.equal(del.text, join.text, 'Delete at line end joins the next line');
 
-  const first = type(text, 1, 1, { type: 'backspace' });
-  assert.equal(first.text, text, 'Backspace at the very start does nothing');
+  // Right after the left wall, Backspace deletes the wall: a wall edit, left to the editor
+  assert.equal(type(text, 1, 1, { type: 'backspace' }), null);
 });
 
 test('paste with line breaks types each line', () => {
@@ -664,10 +664,12 @@ test('typing in a container pushes nested boxes along; typing in a child grows t
     '|  +-----+   +-----+     |',
     '+------------------------+'
   ].join('\n');
-  const res = type(text, 3, 3, { type: 'insert', text: 'note' });
+  // Right up against A's wall would be a wall edit; one cell before it is text in the container
+  assert.equal(type(text, 3, 3, { type: 'insert', text: 'note' }), null);
+  const res = type(text, 3, 2, { type: 'insert', text: 'note' });
   const ast = parse(res.text);
   assert.equal(ast.boxes.length, 3);
-  assert.ok(res.text.split('\n')[3].startsWith('|  note | A   |'));
+  assert.ok(res.text.split('\n')[3].startsWith('| note | A   |'), res.text.split('\n')[3]);
   assert.ok(ast.freeTexts.some((t) => t.text === 'Outer'));
 
   const res2 = type(text, 3, 6, { type: 'insert', text: 'lpha-long' });
@@ -1093,4 +1095,52 @@ test('inserting right of the top-left box of the pipeline example splices into i
   assert.ok(conn.includes('Auth Verifier – Component'));
   assert.ok(conn.includes('Auth Verifier – Session Cache'), 'the dashed wire under Auth Verifier follows it');
   assert.ok(!conn.includes('API Gateway – Auth Verifier'));
+});
+
+test('wall edits are plain text editing; text between the walls auto-fits (border rule)', () => {
+  const text = '+---------+\n| Hello   |\n+---------+';
+  // Typing right before the right wall lands in the wall's column: plain editing
+  assert.equal(type(text, 1, 10, { type: 'insert', text: '+' }), null);
+  assert.equal(type(text, 1, 10, { type: 'insert', text: 'x' }), null);
+  // Delete right before the right wall deletes the wall: plain editing
+  assert.equal(type(text, 1, 10, { type: 'delete' }), null);
+  // Backspace right after the left wall deletes the wall: plain editing
+  assert.equal(type(text, 1, 1, { type: 'backspace' }), null);
+  // One space before the wall is still text: it grows the box, keeping the space
+  const grow = type(text, 1, 9, { type: 'insert', text: '!!' });
+  assert.equal(grow.text.split('\n')[1], '| Hello  !! |');
+  // '|' typed between the walls is text like any other character
+  const bar = type(text, 1, 7, { type: 'insert', text: '|' });
+  assert.equal(parse(bar.text).boxes[0].lines[0], 'Hello|');
+  // The reported sequence: right wall deleted, arrowhead '<' now read as the wall; typing
+  // '|' or '+' at that column is a wall edit and goes in as typed
+  const broken = '+-------------+    +-----+\n|  Component  <---+ D   |\n+-------------+    +-----+';
+  assert.equal(type(broken, 1, 14, { type: 'insert', text: '|' }), null);
+  assert.equal(type(broken, 1, 14, { type: 'insert', text: '+' }), null);
+});
+
+test('a right-click near a nested box picks it; inserting left/above inside a container grows the container', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { nested } = new Function(presetSrc + '\nreturn PRESETS;')();
+  for (const c of [1, 2, 3, 4]) assert.equal(Grid2DEditor.hitBoxSides(nested, 4, c).name, 'Ingress', `col ${c}`);
+  assert.deepEqual(Grid2DEditor.hitBoxSides(nested, 4, 1).sides, ['left']);
+  assert.equal(Grid2DEditor.hitBoxSides(nested, 0, 10).name, 'Cluster', 'a container is named by its own label');
+  assert.equal(Grid2DEditor.hitBoxSides(nested, 2, 20), null, 'empty space inside a container: insert here');
+
+  const ingress = (t) => parse(t).boxes.find((b) => b.lines[0] === 'Ingress');
+  const left = Grid2DEditor.insertConnected(nested, ingress(nested), 'left', 'box');
+  assert.ok(!left.error, left.error);
+  const above = Grid2DEditor.insertConnected(left.text, ingress(left.text), 'above', 'box');
+  assert.ok(!above.error, above.error);
+  const ast = parse(above.text);
+  const cluster = ast.boxes.find((b) => b.isContainer);
+  for (const b of ast.boxes.filter((x) => !x.isContainer)) {
+    assert.ok(b.r1 > cluster.r1 && b.r2 < cluster.r2 && b.c1 > cluster.c1 && b.c2 < cluster.c2, `${b.lines[0]} stays inside Cluster`);
+  }
+  const p = new DitaaParser();
+  const conn = p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].lines[0]).sort().join(' – ')).sort();
+  assert.deepEqual(conn, ['App Service – Database', 'App Service – Ingress', 'Component – Ingress', 'Component – Ingress']);
 });
