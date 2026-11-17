@@ -1867,26 +1867,7 @@
           for (let c = b.c1; c <= b.c2; c++) at[c] = Math.min(at[c], b.r1);
         }
       }
-      const old = state.grid.map((row) => row.slice());
-      const cont = (r, c) => {
-        const line = old[r] || [];
-        const ch = line[c] || ' ';
-        if ('|:+*/\\'.includes(ch)) return true;
-        return (ch === '^' || ch === 'v' || ch === '.' || ch === "'") && !isAlnum(line[c - 1] || ' ') && !isAlnum(line[c + 1] || ' ');
-      };
-      const rows = state.rows + k;
-      const grid = Array.from({ length: rows }, () => Array(state.cols).fill(' '));
-      for (let c = 0; c < state.cols; c++) {
-        const yc = at[c];
-        const fill = cont(yc - 1, c) && cont(yc, c) ? ((old[yc - 1] || [])[c] === ':' || (old[yc] || [])[c] === ':' ? ':' : '|') : ' ';
-        for (let r = 0; r < rows; r++) {
-          if (r < yc) grid[r][c] = (old[r] || [])[c] || ' ';
-          else if (r < yc + k) grid[r][c] = fill;
-          else grid[r][c] = (old[r - k] || [])[c] || ' ';
-        }
-      }
-      state.grid = grid;
-      state.rows = rows;
+      this.insertRowsPerColumn(state, at.map((yc) => Array(k).fill(yc)));
     }
 
     /**
@@ -1929,28 +1910,59 @@
       this.insertRowsPerColumn(state, at);
     }
 
-    /** Inserts, in each column c, one blank row before each original row index in at[c]. */
+    /**
+     * Inserts, in each column c, one row before each original row index in at[c]. A new
+     * cell continues a vertical line when the cells above and below are both vertical line
+     * characters, or when a vertical wire meets a box's wall there (the wall may be a plain
+     * '-' or '=': the parser attaches a wire to any wall cell, not just to '+' ports). An
+     * arrowhead pointing at that wall moves into the new cell, so it keeps touching the box.
+     */
     static insertRowsPerColumn(state, at) {
       const old = state.grid.map((row) => row.slice());
+      const roles = new DitaaParser().parse(this.fromGridState(state)).cellRole;
+      const role = (r, c) => (roles[r] && roles[r][c]) || 'empty';
       const k = at[0] ? at[0].length : 0;
-      const cont = (r, c) => {
-        const line = old[r] || [];
-        const ch = line[c] || ' ';
-        if ('|:+*/\\'.includes(ch)) return true;
-        return (ch === '^' || ch === 'v' || ch === '.' || ch === "'") && !isAlnum(line[c - 1] || ' ') && !isAlnum(line[c + 1] || ' ');
+      const ch = (r, c) => (old[r] || [])[c] || ' ';
+      const glyphV = (r, c) => {
+        const x = ch(r, c);
+        if ('|:+*/\\'.includes(x) && x !== ' ') return true;
+        return (x === '^' || x === 'v' || x === '.' || x === "'") && !isAlnum(ch(r, c - 1)) && !isAlnum(ch(r, c + 1));
       };
+      const wireV = (r, c) => {
+        const ro = role(r, c);
+        return ro === 'wire-v' || ro === 'wire-corner' || ro === 'wire-junction' ||
+          (ro === 'wire-arrow' && (ch(r, c) === '^' || ch(r, c) === 'v'));
+      };
+      const wall = (r, c) => role(r, c) === 'box-border';
       const rows = state.rows + k;
       const grid = Array.from({ length: rows }, () => Array(state.cols).fill(' '));
       for (let c = 0; c < state.cols; c++) {
         const ins = at[c].slice().sort((a, b) => a - b);
         let out = 0, i = 0;
+        let nextOverride = null;
         for (let r = 0; r <= state.rows; r++) {
-          while (i < ins.length && ins[i] === r) {
-            const fill = cont(r - 1, c) && cont(r, c) ? ((old[r - 1] || [])[c] === ':' || (old[r] || [])[c] === ':' ? ':' : '|') : ' ';
-            grid[out++][c] = fill;
-            i++;
+          let n = 0;
+          while (i + n < ins.length && ins[i + n] === r) n++;
+          if (n) {
+            const above = r - 1, below = r;
+            const joins = (glyphV(above, c) && glyphV(below, c)) ||
+              (wall(above, c) && wireV(below, c)) || (wireV(above, c) && wall(below, c));
+            const line = ch(above, c) === ':' || ch(below, c) === ':' ? ':' : '|';
+            const start = out;
+            for (let m = 0; m < n; m++) grid[out++][c] = joins ? line : ' ';
+            if (joins && wall(above, c) && ch(below, c) === '^') {
+              grid[start][c] = '^';           // arrowhead stays against the wall above
+              nextOverride = line;
+            } else if (joins && wall(below, c) && ch(above, c) === 'v' && start > 0) {
+              grid[out - 1][c] = 'v';         // arrowhead stays against the wall below
+              grid[start - 1][c] = line;
+            }
+            i += n;
           }
-          if (r < state.rows) grid[out++][c] = (old[r] || [])[c] || ' ';
+          if (r < state.rows) {
+            grid[out++][c] = nextOverride || ch(r, c);
+            nextOverride = null;
+          }
         }
         while (i < ins.length) { grid[out++][c] = ' '; i++; } // past the end
       }
@@ -2008,7 +2020,7 @@
      * each side of the centre, across the whole diagram. The centre ports stay on the
      * diamond's vertices and every wire attached to them keeps its connection.
      */
-    static resizeDiamond(rawText, box, dw, dh) {
+    static resizeDiamond(rawText, box, dw, dh, fullRows = false) {
       const curW = box.c2 - box.c1;
       const curH = box.r2 - box.r1;
       if (curW + dw < 4 || curH + dh < 2) return { error: 'Diamond is already at its minimum size' };
@@ -2032,7 +2044,8 @@
       }
 
       if (dh > 0) {
-        this.growRowsInPlace(state, [box.r1 + 1, box.r2], box);
+        if (fullRows) this.insertRows(state, [box.r1 + 1, box.r2]);
+        else this.growRowsInPlace(state, [box.r1 + 1, box.r2], box);
       } else if (dh < 0) {
         if (!this.canRemoveRow(state, box.r1 + 1, box) || !this.canRemoveRow(state, box.r2 - 1, box)) {
           return { error: 'Cannot shorten: text or wires are in the way' };
@@ -2113,12 +2126,18 @@
 
     static resizeBox(rawText, box, dw, dh) {
       const verb = dw > 0 ? 'widen' : dw < 0 ? 'narrow' : dh > 0 ? 'make taller' : 'make shorter';
-      return this.guardOtherBoxes(rawText, this.resizeBoxUnchecked(rawText, box, dw, dh), verb);
+      const res = this.guardOtherBoxes(rawText, this.resizeBoxUnchecked(rawText, box, dw, dh), verb);
+      if (dh > 0 && res && res.error) {
+        // Growing only this box didn't work out: full-width lines (neighbours grow too)
+        const full = this.guardOtherBoxes(rawText, this.resizeBoxUnchecked(rawText, box, dw, dh, true), verb);
+        if (full && !full.error) return full;
+      }
+      return res;
     }
 
-    static resizeBoxUnchecked(rawText, box, dw, dh) {
+    static resizeBoxUnchecked(rawText, box, dw, dh, fullRows = false) {
       if (!box) return null;
-      if (box.shape === 'choice') return this.resizeDiamond(rawText, box, Math.sign(dw) * 2, Math.sign(dh) * 2);
+      if (box.shape === 'choice') return this.resizeDiamond(rawText, box, Math.sign(dw) * 2, Math.sign(dh) * 2, fullRows);
       const curW = box.c2 - box.c1;
       const curH = box.r2 - box.r1;
       if (curW + dw < 3 || curH + dh < 2) return { error: 'Box is already at its minimum size' };
@@ -2153,7 +2172,8 @@
       if (dh > 0) {
         // A full-width row just above the bottom wall; vertical lines crossing it continue,
         // so neighbouring boxes and wires stretch instead of tearing.
-        this.growRowsInPlace(state, [box.r2], box);
+        if (fullRows) this.insertRows(state, [box.r2]);
+        else this.growRowsInPlace(state, [box.r2], box);
       } else if (dh < 0) {
         const targetR = box.r2 - 1;
         for (let c = box.c1; c <= box.c2; c++) {
@@ -2243,12 +2263,19 @@
       }
       // From here on we are editing inside a box: any failure is an error, never a silent
       // fallback to plain text editing (which would push the box's wall out of line).
-      const res = this.typeInBoxInner(rawText, boxes, box, caret, sel, op);
+      let res = this.typeInBoxInner(rawText, boxes, box, caret, sel, op, false);
+      const addsLines = op.type === 'newline' || (op.type === 'insert' && /[\r\n]/.test(op.text));
+      if (addsLines && (!res || res.error)) {
+        // Growing only this box didn't work out: grow it with full-width lines instead
+        // (boxes beside it get taller too, but nothing is broken)
+        const full = this.typeInBoxInner(rawText, boxes, box, caret, sel, op, true);
+        if (full && !full.error) return full;
+      }
       if (!res) return { error: 'Cannot make that edit inside this box' };
       return res;
     }
 
-    static typeInBoxInner(rawText, boxes, box, caret, sel, op) {
+    static typeInBoxInner(rawText, boxes, box, caret, sel, op, fullRows = false) {
       let text = rawText;
       let cur = { r: caret.r, c: caret.c };
 
@@ -2264,7 +2291,7 @@
       if (op.type === 'insert') {
         for (const piece of op.text.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split(/(\n)/)) {
           if (piece === '') continue;
-          const res = piece === '\n' ? this.boxNewline(text, cur) : this.boxInsert(text, cur, piece);
+          const res = piece === '\n' ? this.boxNewline(text, cur, fullRows) : this.boxInsert(text, cur, piece);
           if (!res || res.error) return res;
           text = res.text;
           cur = { r: res.cursorR, c: res.cursorC };
@@ -2272,7 +2299,7 @@
         return this.finishTyping(rawText, text, cur, box);
       }
       let res;
-      if (op.type === 'newline') res = this.boxNewline(text, cur);
+      if (op.type === 'newline') res = this.boxNewline(text, cur, fullRows);
       else if (op.type === 'backspace') res = this.boxBackspace(text, cur);
       else if (op.type === 'delete') res = this.boxDelete(text, cur);
       if (!res || res.error) return res;
@@ -2393,7 +2420,7 @@
       return Math.min(run.end - 1, run.c0 + left + off);
     }
 
-    static boxNewline(text, cur) {
+    static boxNewline(text, cur, fullRows = false) {
       const ctx = this.caretContext(text, cur);
       if (!ctx) return null;
       const { state, box, run } = ctx;
@@ -2405,9 +2432,10 @@
 
       // The box grows on its own; boxes beside it keep their size. A diamond gets a mirror
       // row on the other side of its centre so it stays symmetric.
-      const ys = [cur.r + 1];
+      let ys = [cur.r + 1];
       if (box.shape === 'choice') ys.push(box.r1 + box.r2 + 1 - (cur.r + 1));
-      this.growRowsInPlace(state, ys, box);
+      if (fullRows) ys = this.insertRows(state, ys); // fallback: full-width rows (neighbours grow too)
+      else this.growRowsInPlace(state, ys, box);
       const oldR = cur.r + ys.filter((y) => y <= cur.r).length;
       const newR = oldR + 1;
       if (box.shape === 'choice') {

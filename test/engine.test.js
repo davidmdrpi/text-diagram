@@ -1207,3 +1207,96 @@ test('Enter in a diamond: the box beside it keeps its size and moves with the di
   assert.ok(no.r > se1.r1 && no.r < se1.r2, 'and level with Show error\'s side, not its corner');
   assert.deepEqual(wiring(res.text), wiring(flowchart));
 });
+
+/* ---------------- PR #8 review: vertical wires into a plain wall survive Enter / +H ---------------- */
+
+test('regression (PR #8 review): Enter / +H beside a box keep a wire that meets its plain bottom wall', () => {
+  const text = '+---+  +---+\n| A +->| B |\n+---+  +---+\n  ^      |\n  +------+';
+  const B = parse(text).boxes[1];
+  for (const [label, res] of [
+    ['Enter in B', Grid2DEditor.typeInBox(text, { r: 1, c: 10 }, null, { type: 'newline' })],
+    ['+H on B', Grid2DEditor.resizeBox(text, B, 0, 1)]
+  ]) {
+    assert.ok(res && !res.error, `${label}: ${res && res.error}`);
+    assert.deepEqual(wiring(res.text), wiring(text), `${label}: same wiring`);
+    const a = parse(res.text).boxes.find((b) => b.lines[0] === 'A');
+    assert.deepEqual([a.r1, a.c1, a.r2, a.c2], [0, 0, 2, 4], `${label}: A keeps its size`);
+    const up = parse(res.text).arrows.find((x) => x.dir === '^');
+    assert.ok(up.touchesBox, `${label}: the ^ still touches A's wall`);
+  }
+});
+
+test('regression (PR #8 review): Enter in [Q] and [S] of the pipeline example succeeds and keeps the wiring', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { arch } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const byKey = (t) => {
+    const p = new DitaaParser();
+    const ast = p.parse(t);
+    return p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].macroKey || ast.boxes[i].lines[0]).sort().join(' – ')).sort();
+  };
+  for (const key of ['Q', 'S']) {
+    const b = parse(arch).boxes.find((x) => x.macroKey === key);
+    for (const r of [13, 14]) {
+      // Enter at the end of the line's text (in the middle of "cBLU" it would split the tag)
+      const line = arch.split('\n')[r].slice(b.c1 + 1, b.c2);
+      const c = b.c1 + 1 + Math.max(1, line.replace(/\s+$/, '').length);
+      const res = Grid2DEditor.typeInBox(arch, { r, c }, null, { type: 'newline' });
+      assert.ok(res && !res.error, `[${key}] row ${r}: ${res && res.error}`);
+      assert.deepEqual(byKey(res.text), byKey(arch), `[${key}] row ${r}: wiring`);
+    }
+  }
+});
+
+test('Enter at the end of the first line of every box in every preset succeeds and keeps the wiring', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
+  const sig = (t) => {
+    const p = new DitaaParser();
+    const ast = p.parse(t);
+    const name = (b) => JSON.stringify([b.lines, b.macroKey, b.colorKey, b.shape]);
+    return p.connections(ast).map((ids) => ids.map((i) => name(ast.boxes[i])).sort().join(' – ')).sort();
+  };
+  let checked = 0;
+  for (const [preset, text] of Object.entries(PRESETS)) {
+    for (const b of parse(text).boxes.filter((x) => !x.isContainer)) {
+      const row = text.split('\n')[b.r1 + 1].slice(b.c1 + 1, b.c2);
+      const end = row.replace(/\s+$/, '').length;
+      const c = b.c1 + 1 + Math.max(1, end);
+      if (c >= b.c2) continue; // no room before the wall on this line
+      const res = Grid2DEditor.typeInBox(text, { r: b.r1 + 1, c }, null, { type: 'newline' });
+      const label = `${preset}: ${b.macroKey || b.lines[0]}`;
+      assert.ok(res && !res.error, `${label}: ${res && res.error}`);
+      assert.equal(parse(res.text).boxes.length, parse(text).boxes.length, `${label}: box count`);
+      assert.deepEqual(sig(res.text), sig(text), `${label}: wiring`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 30, `checked ${checked} boxes`);
+});
+
+test('if growing only the edited box is refused, Enter / +H fall back to full-width lines (never a broken box)', () => {
+  const original = Grid2DEditor.growRowsInPlace;
+  // Simulate a layout the in-place growth can't handle: it tears the neighbour
+  Grid2DEditor.growRowsInPlace = function (state, ys, src) {
+    const at = Array.from({ length: state.cols }, (_, c) => (c >= src.c1 && c <= src.c2 ? ys.slice() : ys.map(() => state.rows)));
+    this.insertRowsPerColumn(state, at);
+  };
+  try {
+    const enter = Grid2DEditor.typeInBox(READ_NEXT, { r: 1, c: 6 }, null, { type: 'newline' });
+    assert.ok(enter && !enter.error, enter && enter.error);
+    assert.equal(parse(enter.text).boxes.length, 3);
+    assert.deepEqual(wiring(enter.text), wiring(READ_NEXT));
+    const read = parse(READ_NEXT).boxes.find((b) => b.lines[0] === 'Read');
+    const taller = Grid2DEditor.resizeBox(READ_NEXT, read, 0, 1);
+    assert.ok(!taller.error, taller.error);
+    assert.equal(parse(taller.text).boxes.length, 3);
+  } finally {
+    Grid2DEditor.growRowsInPlace = original;
+  }
+});
