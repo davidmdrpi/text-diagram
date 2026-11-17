@@ -1144,3 +1144,66 @@ test('a right-click near a nested box picks it; inserting left/above inside a co
   const conn = p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].lines[0]).sort().join(' – ')).sort();
   assert.deepEqual(conn, ['App Service – Database', 'App Service – Ingress', 'Component – Ingress', 'Component – Ingress']);
 });
+
+/* ---------------- Enter / +H: boxes beside keep their size ---------------- */
+
+const READ_NEXT = [
+  '+-----------+     +-------+',
+  '| Read      +---->| Next  |',
+  '|           |     |       |',
+  '+-----------+     +---+---+',
+  '                      |',
+  '                      v',
+  '                  +-------+',
+  '                  | Below |',
+  '                  +-------+'
+].join('\n');
+
+const geom = (t) => Object.fromEntries(parse(t).boxes.map((b) => [b.lines[0], [b.r1, b.c1, b.r2, b.c2]]));
+const wiring = (t, rename = {}) => {
+  const p = new DitaaParser();
+  const ast = p.parse(t);
+  return p.connections(ast).map((ids) => ids.map((i) => rename[ast.boxes[i].lines[0]] || ast.boxes[i].lines[0]).sort().join(' – ')).sort();
+};
+
+test('Enter in a box grows only that box; a box beside it keeps its size and its arrow', () => {
+  const res = Grid2DEditor.typeInBox(READ_NEXT, { r: 1, c: 6 }, null, { type: 'newline' });
+  assert.ok(res && !res.error, res && res.error);
+  const before = geom(READ_NEXT), after = geom(res.text);
+  assert.deepEqual(after.Read, [0, 0, 4, 12], 'Read grew by one line');
+  assert.deepEqual(after.Next, before.Next, 'Next: same size, same place');
+  assert.deepEqual(after.Below, [7, 18, 9, 26], 'Below moved down with everything under the change');
+  assert.deepEqual(wiring(res.text), wiring(READ_NEXT), 'Read – Next arrow and Next – Below wire still connected');
+  assert.equal(res.text.split('\n')[4], '+-----------+         |', 'the wire under Next stretches');
+});
+
+test('the +H button behaves like Enter: neighbours keep their size', () => {
+  const read = parse(READ_NEXT).boxes.find((b) => b.lines[0] === 'Read');
+  const res = Grid2DEditor.resizeBox(READ_NEXT, read, 0, 1);
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(geom(res.text).Next, geom(READ_NEXT).Next);
+  assert.deepEqual(wiring(res.text), wiring(READ_NEXT));
+});
+
+test('Enter in a diamond: the box beside it keeps its size and moves with the diamond\'s middle row', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { flowchart } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const L = flowchart.split('\n');
+  const r = L.findIndex((l) => l.includes('Valid?'));
+  const res = Grid2DEditor.typeInBox(flowchart, { r, c: L[r].indexOf('?') + 1 }, null, { type: 'newline' });
+  assert.ok(res && !res.error, res && res.error);
+  const before = parse(flowchart).boxes, after = parse(res.text).boxes;
+  const find = (list, label) => list.find((b) => b.lines[0] === label);
+  const se0 = find(before, 'Show error'), se1 = find(after, 'Show error');
+  assert.deepEqual([se1.r2 - se1.r1, se1.c1, se1.c2], [se0.r2 - se0.r1, se0.c1, se0.c2], 'Show error keeps its size');
+  const v1 = after.find((b) => b.shape === 'choice' && b.lines[0] === 'Valid?');
+  assert.equal(v1.r2 - v1.r1, 6, 'the diamond grew by two lines (one each side of its centre)');
+  // The "no" arrow leaves the diamond's middle row and still meets Show error's wall
+  const no = parse(res.text).arrows.find((a) => a.dir === '>' && a.r === (v1.r1 + v1.r2) / 2);
+  assert.ok(no && no.touchesBox, '"no" arrow still attached');
+  assert.ok(no.r > se1.r1 && no.r < se1.r2, 'and level with Show error\'s side, not its corner');
+  assert.deepEqual(wiring(res.text), wiring(flowchart));
+});

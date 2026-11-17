@@ -1889,6 +1889,75 @@
       state.rows = rows;
     }
 
+    /**
+     * Grows `src` taller by inserting a row before each original index in `ys` (rows inside
+     * src), the way pressing Enter in it would, without growing the boxes beside it:
+     *  - in src's own columns (and in empty columns / columns of boxes that enclose src) the
+     *    rows go in at `ys`;
+     *  - in the columns of any other box that those rows would cut through, the rows go in
+     *    just below that box instead, so it keeps its size and position.
+     * Vertical lines crossing an insertion point are continued (wires and the whitespace
+     * between boxes stretch); a horizontal arrow on a line above the insertion stays where
+     * it is, so it keeps its connection to the box beside it.
+     */
+    static growRowsInPlace(state, ys, src) {
+      const parser = new DitaaParser();
+      const ast = parser.parse(this.fromGridState(state));
+      const boxes = ast.boxes;
+      this.normalizeWidth(state);
+      const encloses = (b) => b.r1 <= src.r1 && b.r2 >= src.r2 && b.c1 <= src.c1 && b.c2 >= src.c2;
+      const same = (b) => b.r1 === src.r1 && b.c1 === src.c1 && b.r2 === src.r2 && b.c2 === src.c2;
+      const srcIdx = boxes.findIndex(same);
+      const runs = parser.wireRuns(ast);
+      const at = Array.from({ length: state.cols }, () => ys.slice());
+      boxes.forEach((b, bi) => {
+        if (bi === srcIdx || encloses(b)) return;
+        if (!ys.some((y) => b.r1 < y && y <= b.r2)) return;
+        // A box joined to src by a horizontal arrow moves down by the rows inserted above that
+        // arrow (so the arrow stays level and attached); the rest go in below it.
+        let link = Infinity;
+        for (const run of runs) {
+          if (!run.boxes.includes(bi) || !run.boxes.includes(srcIdx)) continue;
+          for (const [r, c] of run.cells) {
+            if (r >= b.r1 && r <= b.r2 && (c === b.c1 - 1 || c === b.c2 + 1)) link = Math.min(link, r);
+          }
+        }
+        const above = link === Infinity ? 0 : ys.filter((y) => y <= link).length;
+        const rows = [...Array(above).fill(b.r1), ...Array(ys.length - above).fill(b.r2 + 1)];
+        for (let c = b.c1; c <= b.c2; c++) at[c] = rows.slice();
+      });
+      this.insertRowsPerColumn(state, at);
+    }
+
+    /** Inserts, in each column c, one blank row before each original row index in at[c]. */
+    static insertRowsPerColumn(state, at) {
+      const old = state.grid.map((row) => row.slice());
+      const k = at[0] ? at[0].length : 0;
+      const cont = (r, c) => {
+        const line = old[r] || [];
+        const ch = line[c] || ' ';
+        if ('|:+*/\\'.includes(ch)) return true;
+        return (ch === '^' || ch === 'v' || ch === '.' || ch === "'") && !isAlnum(line[c - 1] || ' ') && !isAlnum(line[c + 1] || ' ');
+      };
+      const rows = state.rows + k;
+      const grid = Array.from({ length: rows }, () => Array(state.cols).fill(' '));
+      for (let c = 0; c < state.cols; c++) {
+        const ins = at[c].slice().sort((a, b) => a - b);
+        let out = 0, i = 0;
+        for (let r = 0; r <= state.rows; r++) {
+          while (i < ins.length && ins[i] === r) {
+            const fill = cont(r - 1, c) && cont(r, c) ? ((old[r - 1] || [])[c] === ':' || (old[r] || [])[c] === ':' ? ':' : '|') : ' ';
+            grid[out++][c] = fill;
+            i++;
+          }
+          if (r < state.rows) grid[out++][c] = (old[r] || [])[c] || ' ';
+        }
+        while (i < ins.length) { grid[out++][c] = ' '; i++; } // past the end
+      }
+      state.grid = grid;
+      state.rows = rows;
+    }
+
     /** Row counterpart of insertColumns. */
     static insertRows(state, ys) {
       const rows = this.balanceForDiamonds(state, ys, 'r');
@@ -1963,7 +2032,7 @@
       }
 
       if (dh > 0) {
-        this.insertRows(state, [box.r1 + 1, box.r2]);
+        this.growRowsInPlace(state, [box.r1 + 1, box.r2], box);
       } else if (dh < 0) {
         if (!this.canRemoveRow(state, box.r1 + 1, box) || !this.canRemoveRow(state, box.r2 - 1, box)) {
           return { error: 'Cannot shorten: text or wires are in the way' };
@@ -2084,7 +2153,7 @@
       if (dh > 0) {
         // A full-width row just above the bottom wall; vertical lines crossing it continue,
         // so neighbouring boxes and wires stretch instead of tearing.
-        this.insertRows(state, [box.r2]);
+        this.growRowsInPlace(state, [box.r2], box);
       } else if (dh < 0) {
         const targetR = box.r2 - 1;
         for (let c = box.c1; c <= box.c2; c++) {
@@ -2334,8 +2403,11 @@
       const indent = lead === -1 ? k : lead; // keep the line's indentation
       const tail = line.slice(k).trim(); // the new line gets the indentation, not the gap after the caret
 
-      // A diamond (this box or one beside it) gets a mirror row so it stays symmetric.
-      const ys = this.insertRows(state, [cur.r + 1]);
+      // The box grows on its own; boxes beside it keep their size. A diamond gets a mirror
+      // row on the other side of its centre so it stays symmetric.
+      const ys = [cur.r + 1];
+      if (box.shape === 'choice') ys.push(box.r1 + box.r2 + 1 - (cur.r + 1));
+      this.growRowsInPlace(state, ys, box);
       const oldR = cur.r + ys.filter((y) => y <= cur.r).length;
       const newR = oldR + 1;
       if (box.shape === 'choice') {
