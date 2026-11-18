@@ -16,7 +16,7 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 
 | Action | Buttons | Keys |
 | --- | --- | --- |
-| Move box (attached wires stretch) | ← ↑ ↓ → | `Alt+Arrows` |
+| Move box (connections stretch and stay on their `+` points) | ← ↑ ↓ → | `Alt+Arrows` |
 | Resize box | +W −W +H −H | `Alt+Shift+Arrows` |
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |

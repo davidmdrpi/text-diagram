@@ -291,3 +291,34 @@ test('connection: right-click start, then click or right-click a wall to connect
     await browser.close();
   }
 });
+
+test('regression (PR #9 review): a pending connection is cancelled when the diagram changes', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    // Start on API Gateway's bottom wall in the pipeline example, then switch examples
+    const api = (await boxes(page)).find((b) => b.name === 'API Gateway');
+    const p1 = await cellXY(page, api.r2, api.c1 + 3);
+    await page.mouse.click(p1.x, p1.y, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    assert.match(await page.textContent('#conn-status'), /Connecting from/);
+    await page.selectOption('#preset-select', 'showcase');
+    assert.equal(await page.textContent('#conn-status'), '', 'cancelled by loading another example');
+    // A click on a wall now does not connect anything
+    const before = await page.inputValue('#ascii-editor');
+    const sc = (await boxes(page)).find((b) => b.name === 'Storage Cylinder');
+    const p2 = await cellXY(page, sc.r1, sc.c1 + 3);
+    await page.mouse.click(p2.x, p2.y);
+    assert.equal(await page.inputValue('#ascii-editor'), before);
+    // Typing also cancels a pending start
+    const p3 = await cellXY(page, sc.r1, sc.c1 + 3);
+    await page.mouse.click(p3.x, p3.y, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    assert.match(await page.textContent('#conn-status'), /Connecting from/);
+    await page.keyboard.press('End');
+    await page.keyboard.type('x');
+    assert.equal(await page.textContent('#conn-status'), '', 'cancelled by an edit');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

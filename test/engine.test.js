@@ -1412,3 +1412,57 @@ test('connection errors: no route, and a start point that is no longer on a wall
   const start = Grid2DEditor.placePort(boxed, { box: far, sides: ['left'] }, 6, 0);
   assert.ok(start.error || start.port, 'a 1-line box wall can still take a point');
 });
+
+/* ---------------- PR #9 review + sticky connection points ---------------- */
+
+test('regression (PR #9 review): a new route never joins an unrelated line by touching it', () => {
+  const t = [
+    '      +---+     +---+',
+    '    +>+ B |     | C |',
+    '    | +---+     +---+',
+    '    |',
+    '    +------------+        +---+',
+    '                 |        | D |',
+    '            +---+|        +---+',
+    '            | A ++',
+    '            +---+'
+  ].join('\n');
+  const p = new DitaaParser();
+  const boxes = p.parse(t).boxes;
+  const C = boxes.find((b) => b.lines[0] === 'C');
+  const D = boxes.find((b) => b.lines[0] === 'D');
+  const start = Grid2DEditor.placePort(t, { box: C, sides: ['below'] }, 1, 18);
+  const res = Grid2DEditor.connectToWall(start.text, start.port, { box: D, sides: ['above'] }, 5, 28);
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(wiring(res.text), ['A – B', 'C – D'], 'A–B and C–D stay separate');
+});
+
+test('moving a box keeps its connections stuck to their + points (both directions, round trip)', () => {
+  const vertical = ['   +-----+', '   | Top |', '   +--+--+', '      |', '      |', '      v', '   +--+--+', '   | Box |', '   +-----+'].join('\n');
+  let t = vertical;
+  const box = () => parse(t).boxes.find((b) => b.lines[0] === 'Box');
+  for (const dc of [1, 1, -1, -1]) {
+    const res = Grid2DEditor.shiftBoxWithElasticWires(t, box(), 0, dc);
+    assert.ok(!res.error, res.error);
+    t = res.text;
+    assert.deepEqual(wiring(t), ['Box – Top']);
+    const b = box();
+    const L = t.split('\n');
+    assert.equal(L[b.r1][b.c1 + 3], '+', 'the + moved with the box');
+    assert.equal(L[b.r1 - 1][b.c1 + 3], 'v', 'and the arrowhead still points straight into it');
+  }
+  assert.equal(t, vertical, 'moving back straightens the line again');
+
+  const horizontal = ['+-----+       +-----+', '| L   +------>| R   |', '+-----+       |     |', '              +-----+'].join('\n');
+  let u = horizontal;
+  const rbox = () => parse(u).boxes.find((b) => b.lines[0] === 'R');
+  for (const dr of [1, 1, -1, -1]) {
+    const res = Grid2DEditor.shiftBoxWithElasticWires(u, rbox(), dr, 0);
+    assert.ok(!res.error, res.error);
+    u = res.text;
+    assert.deepEqual(wiring(u), ['L – R']);
+    const arrow = parse(u).arrows.find((a) => a.dir === '>');
+    assert.ok(arrow && arrow.touchesBox, 'arrowhead still against R');
+  }
+  assert.equal(u, horizontal);
+});

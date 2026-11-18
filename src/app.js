@@ -162,6 +162,8 @@
   let activeBoxIndex = -1;
   // Grid ops may want the caret past the end of a (whitespace-trimmed) line; remember the intended column.
   let virtualCursor = null;
+  // Connection style (toolbar toggles) and a pending start point (see CONNECTIONS below)
+  const conn = { dashed: false, arrow: true, pending: null, pendingText: null };
 
   function makeParser() {
     return new DitaaParser({
@@ -334,6 +336,10 @@
 
   /** Re-parses the text, refreshes the selection and status bar, and repaints. */
   function refresh() {
+    if (conn.pending && editor.value !== conn.pendingText) {
+      setPending(null);
+      showToast('Connection cancelled: the diagram changed');
+    }
     lastAst = makeParser().parse(editor.value);
     updateActiveBoxUI();
     paintSvg();
@@ -811,7 +817,6 @@
    * CONNECTIONS: right-click a wall to start, right-click another to connect.
    * Line style comes from the two toolbar toggles.
    *************************************************************************/
-  const conn = { dashed: false, arrow: true, pending: null };
   try {
     const saved = JSON.parse(localStorage.getItem('text-diagram.conn') || '{}');
     if (typeof saved.dashed === 'boolean') conn.dashed = saved.dashed;
@@ -837,8 +842,12 @@
   arrowBtn.addEventListener('click', () => { conn.arrow = !conn.arrow; renderConnToggles(); });
   renderConnToggles();
 
-  function setPending(port) {
+  // A pending start belongs to the exact diagram it was placed in: any change to the text
+  // (an edit, undo/redo, Clear, loading an example) cancels it, so it can never silently
+  // start from a different box.
+  function setPending(port, text = null) {
     conn.pending = port;
+    conn.pendingText = port ? text : null;
     connStatus.textContent = port
       ? `· Connecting from Ln ${port.r + 1}, Col ${port.c + 1}: click another box's wall (Esc cancels)`
       : '';
@@ -854,8 +863,8 @@
     ctxMenu.appendChild(menuHeader('Connection'));
     ctxMenu.appendChild(menuItem('● Start connection here', () => {
       const res = Grid2DEditor.placePort(editor.value, hit, cell.r, cell.c);
-      if (!res.error) setPending(res.port);
       applyGridOperationResult(res, 'Start point placed: click another box\'s wall to connect');
+      if (!res.error) setPending(res.port, editor.value);
     }));
   }
 

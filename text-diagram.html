@@ -1475,6 +1475,22 @@
       }
 
       const nr1 = box.r1 + dr, nc1 = box.c1 + dc, nr2 = box.r2 + dr, nc2 = box.c2 + dc;
+      // Connections on the walls across the move (top/bottom for a sideways move, left/right
+      // for an up/down move) stay stuck to their '+': recorded here, re-joined after the move.
+      const across = [];
+      if (dc !== 0) {
+        for (let c = box.c1 + 1; c < box.c2; c++) {
+          if (box.r1 > 0 && wireV(grid[box.r1 - 1], c)) across.push({ inR: box.r1, outR: box.r1 - 1, beyondR: box.r1 - 2, c });
+          if (wireV(grid[box.r2 + 1] || [], c)) across.push({ inR: box.r2, outR: box.r2 + 1, beyondR: box.r2 + 2, c });
+        }
+      } else {
+        const horizWire = (ch) => ch === '-' || ch === '=' || ch === '<' || ch === '>';
+        for (let r = box.r1 + 1; r < box.r2; r++) {
+          // in transposed coordinates: rows are columns
+          if (box.c1 > 0 && horizWire(grid[r][box.c1 - 1])) across.push({ inR: box.c1, outR: box.c1 - 1, beyondR: box.c1 - 2, c: r });
+          if (horizWire(grid[r][box.c2 + 1] || ' ')) across.push({ inR: box.c2, outR: box.c2 + 1, beyondR: box.c2 + 2, c: r });
+        }
+      }
       for (let r = 0; r < boxH; r++) {
         for (let c = 0; c < boxW; c++) grid[nr1 + r][nc1 + c] = snapshot[r][c];
       }
@@ -1527,6 +1543,21 @@
         for (const att of topAttachments) {
           if (att.arrowOrWire === 'v' && nr1 - 1 >= 0) grid[nr1 - 1][att.c] = 'v';
         }
+      }
+
+      if (across.length) {
+        if (dc !== 0) {
+          this.rejoinLinks(state, across, dc);
+        } else {
+          const T = this.transposeState(state);
+          this.rejoinLinks(T, across, dr);
+          const back = this.transposeState(T);
+          state.grid = back.grid;
+          state.rows = back.rows;
+          state.cols = back.cols;
+        }
+        // If a line can't follow (no room for a jog), it keeps touching the wall as before
+        state.routeBlocked = null;
       }
 
       return {
@@ -1634,51 +1665,70 @@
       if (!links.length) return;
       const order = d > 0 ? links.slice().sort((a, b) => b.c - a.c) : links.slice().sort((a, b) => a.c - b.c);
       for (const { inR, outR, beyondR, c } of order) {
-        const O = state.grid[outR];
-        const Y = state.grid[beyondR] || [];
-        const to = c + d;
         const fail = () => { state.routeBlocked = state.routeBlocked || { r: outR, c }; };
-        if (to < 0) { fail(); continue; }
+        const to = c + d;
+        if (to < 0 || outR < 0 || outR >= state.rows) { fail(); continue; }
+        const O = state.grid[outR];
         while (O.length <= Math.max(c, to) + 1) O.push(' ');
-        // Find w, where the wire leaves the outside row away from the band
+        // An arrowhead against the wall moves along with the connection point and keeps
+        // pointing straight in; the jog is then drawn one row further out.
+        const head = O[c] === 'v' || O[c] === '^' ? O[c] : null;
+        const jogR = head ? beyondR : outR;
+        const jbR = head ? beyondR + (beyondR - outR) : beyondR;
+        if (jogR < 0 || jogR >= state.rows) { fail(); continue; }
+        const J = state.grid[jogR];
+        const JB = state.grid[jbR] || [];
+        while (J.length <= Math.max(c, to) + 1) J.push(' ');
+        // Find w, where the wire leaves the jog row away from the box
         let w = -1;
-        if (wireV(Y, c)) w = c;
+        if (wireV(JB, c) && (J[c] === '|' || J[c] === ':' || J[c] === '+')) w = c;
         else {
           for (const step of [-1, 1]) {
             let k = c + step;
-            while (k >= 0 && k < O.length && (O[k] === '-' || O[k] === '=')) k += step;
-            if (k >= 0 && k < O.length && O[k] === '+' && wireV(Y, k)) { w = k; break; }
+            while (k >= 0 && k < J.length && (J[k] === '-' || J[k] === '=')) k += step;
+            if (k >= 0 && k < J.length && J[k] === '+' && wireV(JB, k)) { w = k; break; }
           }
         }
         if (w === -1) { fail(); continue; }
-        const dashed = O.slice(Math.min(w, c), Math.max(w, c) + 1).includes('=') || Y[w] === ':';
-        // An arrowhead next to the band (pointing at the moved box) stays an arrowhead
-        const head = O[c] === 'v' || O[c] === '^' ? O[c] : null;
+        const dashed = J.slice(Math.min(w, c), Math.max(w, c) + 1).includes('=') || JB[w] === ':';
+        const savedO = O.slice(), savedJ = J.slice();
+        const restore = () => { state.grid[outR] = savedO; state.grid[jogR] = savedJ; };
+        if (head) O[c] = ' ';
         // Erase the old jog (w..c), check the new path (w..to) is free, then draw it
-        const saved = O.slice();
-        for (let k = Math.min(w, c); k <= Math.max(w, c); k++) O[k] = ' ';
+        for (let k = Math.min(w, c); k <= Math.max(w, c); k++) J[k] = ' ';
         let free = true;
-        for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (O[k] !== ' ') free = false;
-        if (!free) { state.grid[outR] = saved; fail(); continue; }
-        // The jog's far corner must not touch anything in the band row next to it, or the
-        // wire would look attached to that (e.g. a box that grew over it)
-        const I = state.grid[inR];
+        for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (J[k] !== ' ') free = false;
+        if (head && O[to] !== ' ') free = false;
+        if (!free) { restore(); fail(); continue; }
+        // The jog's far corner must not touch anything in the row next to it (toward the box),
+        // or the wire would look attached to that (e.g. a box that grew over it)
+        const I = head ? O : state.grid[inR];
         const sameWall = () => {
           // Wall characters, including rounded corners (/ \ . ')
           for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (!"-=+/\\.'".includes(I[k] || ' ') || (I[k] || ' ') === ' ') return false;
           return true; // one unbroken wall from the port to the corner: the same box
         };
         const structural = (ch) => "|:+*-=/\\.'<>^v".includes(ch) && ch !== ' ';
-        if (to !== w && structural(I[w] || ' ') && !sameWall()) { state.grid[outR] = saved; fail(); continue; }
+        if (to !== w && structural(I[w] || ' ') && !sameWall()) { restore(); fail(); continue; }
         if (to === w) {
-          O[w] = head || (Y[w] === ':' || (state.grid[inR][to] || ' ') === ':' ? ':' : '|');
+          J[w] = head ? (JB[w] === ':' ? ':' : '|') : (JB[w] === ':' || (state.grid[inR][to] || ' ') === ':' ? ':' : '|');
         } else {
-          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) O[k] = dashed ? '=' : '-';
-          O[w] = '+';
-          O[to] = head || '+';
+          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) J[k] = dashed ? '=' : '-';
+          J[w] = '+';
+          J[to] = '+';
         }
+        if (head) O[to] = head;
       }
       this.normalizeWidth(state);
+    }
+
+    /** Swaps rows and columns (and the line characters with them): used to reuse row logic for columns. */
+    static transposeState(state) {
+      const MAP = { '-': '|', '|': '-', '=': ':', ':': '=', '<': '^', '^': '<', '>': 'v', v: '>' };
+      this.normalizeWidth(state);
+      const grid = Array.from({ length: state.cols }, (_, c) =>
+        Array.from({ length: state.rows }, (_, r) => { const ch = state.grid[r][c]; return MAP[ch] || ch; }));
+      return { grid, rows: state.cols, cols: state.rows, legendLines: state.legendLines };
     }
 
     /** Error if a wire next to a moved box could not be re-joined (see rejoinLinks). */
@@ -2949,9 +2999,19 @@
 
       // A turn is drawn '+', which joins all four neighbours: it must not touch a wall other
       // than the two endpoints, or the line would look attached to that box.
-      const cornerOk = (r, c) => DIRS.every(([dr, dc]) => {
+      // It must not touch an existing line either (a wire cell that would join it from
+      // that side), except the route's own previous / next cells.
+      const joinsFrom = (nr, nc, k) => {
+        const ro = role(nr, nc), ch = g[nr] ? g[nr][nc] : ' ';
+        if (ro === 'wire-corner' || ro === 'wire-junction') return true;
+        if (k === 1 || k === 3) return ro === 'wire-h' || (ro === 'wire-arrow' && (ch === '<' || ch === '>'));
+        return ro === 'wire-v' || (ro === 'wire-arrow' && (ch === '^' || ch === 'v'));
+      };
+      const cornerOk = (r, c, d, nd) => DIRS.every(([dr, dc], k) => {
         const nr = r + dr, nc = c + dc;
-        return isEnd(nr, nc) || role(nr, nc) !== 'box-border';
+        if (isEnd(nr, nc)) return true;
+        if (k === (d + 2) % 4 || k === nd) return true; // where the route comes from / goes to
+        return role(nr, nc) !== 'box-border' && !joinsFrom(nr, nc, k);
       });
       // Dijkstra over (cell, direction)
       const TURN = 3;
@@ -3004,7 +3064,7 @@
         for (let nd = 0; nd < 4; nd++) {
           if (nd === (d + 2) % 4) continue;
           if (here && nd !== d) continue;
-          if (nd !== d && !cornerOk(r, c)) continue;
+          if (nd !== d && !cornerOk(r, c, d, nd)) continue;
           const nr = r + DIRS[nd][0], nc = c + DIRS[nd][1];
           const e = enter(nr, nc, nd);
           if (!e) continue;
@@ -3223,6 +3283,8 @@
   let activeBoxIndex = -1;
   // Grid ops may want the caret past the end of a (whitespace-trimmed) line; remember the intended column.
   let virtualCursor = null;
+  // Connection style (toolbar toggles) and a pending start point (see CONNECTIONS below)
+  const conn = { dashed: false, arrow: true, pending: null, pendingText: null };
 
   function makeParser() {
     return new DitaaParser({
@@ -3395,6 +3457,10 @@
 
   /** Re-parses the text, refreshes the selection and status bar, and repaints. */
   function refresh() {
+    if (conn.pending && editor.value !== conn.pendingText) {
+      setPending(null);
+      showToast('Connection cancelled: the diagram changed');
+    }
     lastAst = makeParser().parse(editor.value);
     updateActiveBoxUI();
     paintSvg();
@@ -3872,7 +3938,6 @@
    * CONNECTIONS: right-click a wall to start, right-click another to connect.
    * Line style comes from the two toolbar toggles.
    *************************************************************************/
-  const conn = { dashed: false, arrow: true, pending: null };
   try {
     const saved = JSON.parse(localStorage.getItem('text-diagram.conn') || '{}');
     if (typeof saved.dashed === 'boolean') conn.dashed = saved.dashed;
@@ -3898,8 +3963,12 @@
   arrowBtn.addEventListener('click', () => { conn.arrow = !conn.arrow; renderConnToggles(); });
   renderConnToggles();
 
-  function setPending(port) {
+  // A pending start belongs to the exact diagram it was placed in: any change to the text
+  // (an edit, undo/redo, Clear, loading an example) cancels it, so it can never silently
+  // start from a different box.
+  function setPending(port, text = null) {
     conn.pending = port;
+    conn.pendingText = port ? text : null;
     connStatus.textContent = port
       ? `· Connecting from Ln ${port.r + 1}, Col ${port.c + 1}: click another box's wall (Esc cancels)`
       : '';
@@ -3915,8 +3984,8 @@
     ctxMenu.appendChild(menuHeader('Connection'));
     ctxMenu.appendChild(menuItem('● Start connection here', () => {
       const res = Grid2DEditor.placePort(editor.value, hit, cell.r, cell.c);
-      if (!res.error) setPending(res.port);
       applyGridOperationResult(res, 'Start point placed: click another box\'s wall to connect');
+      if (!res.error) setPending(res.port, editor.value);
     }));
   }
 
