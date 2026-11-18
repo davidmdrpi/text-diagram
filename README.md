@@ -28,8 +28,10 @@ inserting text naturally pushes the rest of a line along:
   beside it move over to make room (a box beside it moves as a whole); lines above and below
   are untouched. A vertical wire hanging off something that moved is re-joined with a small
   jog (`+--+`), which straightens again if the box shrinks back.
-- Enter inside a box adds a line to it, pushing the lines below down, like a new line in a text
-  editor.
+- Enter inside a box (or the +H button) adds a line to that box only: boxes beside it keep
+  their size, the space and vertical wires around them stretch, and a horizontal arrow to a
+  box beside it stays attached (that box moves down with the arrow if the arrow moves).
+  What is below moves down, like a new line in a text editor.
 - Diamonds grow around their centre so the wires on their top and bottom points stay attached
   (a lead-in wire on the left gets one character shorter).
 - Backspace and Delete edit within the box and join lines; pasted text with line breaks becomes
