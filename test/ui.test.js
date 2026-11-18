@@ -228,3 +228,97 @@ test('nested example: right-click just left of Ingress inserts inside the contai
     await browser.close();
   }
 });
+
+test('connection: right-click start, then click or right-click a wall to connect; toggles; Esc', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      ed.value = ['+-------+          +-------+', '| A     |          | B     |', '+-------+          +-------+', '', '', '+-------+', '| C     |', '+-------+'].join('\n');
+      ed.dispatchEvent(new Event('input'));
+    });
+    const text = () => page.inputValue('#ascii-editor');
+    const at = async (r, c) => cellXY(page, r, c);
+    const rc = async (r, c) => { const p = await at(r, c); await page.mouse.click(p.x, p.y, { button: 'right' }); };
+    const menuItems = async () => (await page.locator('#ctx-menu button').allInnerTexts()).map((t) => t.split('\n')[0].trim());
+    // 1. start on A's right wall
+    await rc(1, 8);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    assert.match(await page.textContent('#conn-status'), /Connecting from Ln 2, Col 9/);
+    // 2. while pending, the right-click menu is only: connect here / cancel
+    await rc(1, 19);
+    assert.deepEqual(await menuItems(), ['→ Connect to here (solid, arrow)', '✕ Cancel connection']);
+    await page.keyboard.press('Escape'); // closes the menu only
+    assert.match(await page.textContent('#conn-status'), /Connecting from/);
+    // ...and a plain left click on B's wall connects
+    const p = await at(1, 19);
+    await page.mouse.click(p.x, p.y);
+    assert.equal((await text()).split('\n')[1], '| A     +--------->+ B     |');
+    assert.equal(await page.textContent('#conn-status'), '');
+    // 3. toggles: dashed, no arrow; A -> C via the right-click menu
+    await page.click('#toggle-conn-dashed');
+    await page.click('#toggle-conn-arrow');
+    assert.equal(await page.getAttribute('#toggle-conn-dashed', 'aria-pressed'), 'true');
+    await rc(2, 3);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    await rc(5, 3);
+    await page.locator('#ctx-menu button', { hasText: 'Connect to here (dashed)' }).click();
+    const lines = (await text()).split('\n');
+    assert.equal(lines[3][3], ':');
+    assert.equal(lines[4][3], ':', 'dashed vertical, no arrowhead');
+    // 4. off any wall, the pending menu offers only Cancel; a left click there just moves the caret
+    await rc(6, 8);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    const before = await text();
+    const near = await at(4, 22); // two lines below B's wall: near, but not on it
+    await page.mouse.click(near.x, near.y);
+    assert.equal(await text(), before, 'a click that is not on a wall draws nothing');
+    assert.match(await page.textContent('#conn-status'), /Connecting from/, 'still pending');
+    await rc(4, 14); // empty space between the boxes
+    assert.deepEqual(await menuItems(), ['✕ Cancel connection']);
+    await page.keyboard.press('Escape');
+    await rc(4, 14);
+    assert.deepEqual(await menuItems(), ['✕ Cancel connection']);
+    await page.locator('#ctx-menu button', { hasText: 'Cancel connection' }).click();
+    assert.equal(await page.textContent('#conn-status'), '');
+    // 5. Esc cancels a pending start
+    await rc(6, 8);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.textContent('#conn-status'), '');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('regression (PR #9 review): a pending connection is cancelled when the diagram changes', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    // Start on API Gateway's bottom wall in the pipeline example, then switch examples
+    const api = (await boxes(page)).find((b) => b.name === 'API Gateway');
+    const p1 = await cellXY(page, api.r2, api.c1 + 3);
+    await page.mouse.click(p1.x, p1.y, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    assert.match(await page.textContent('#conn-status'), /Connecting from/);
+    await page.selectOption('#preset-select', 'showcase');
+    assert.equal(await page.textContent('#conn-status'), '', 'cancelled by loading another example');
+    // A click on a wall now does not connect anything
+    const before = await page.inputValue('#ascii-editor');
+    const sc = (await boxes(page)).find((b) => b.name === 'Storage Cylinder');
+    const p2 = await cellXY(page, sc.r1, sc.c1 + 3);
+    await page.mouse.click(p2.x, p2.y);
+    assert.equal(await page.inputValue('#ascii-editor'), before);
+    // Typing also cancels a pending start
+    const p3 = await cellXY(page, sc.r1, sc.c1 + 3);
+    await page.mouse.click(p3.x, p3.y, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    assert.match(await page.textContent('#conn-status'), /Connecting from/);
+    await page.keyboard.press('End');
+    await page.keyboard.type('x');
+    assert.equal(await page.textContent('#conn-status'), '', 'cancelled by an edit');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

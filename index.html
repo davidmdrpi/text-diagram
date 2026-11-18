@@ -100,6 +100,10 @@
         <button id="stamp-darrow-right" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border-emerald-500/30" title="Dashed arrow to the right from the selected box (or at the cursor)">==&gt;</button>
         <button id="stamp-arrow-down" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border-emerald-500/30" title="Arrow down from the selected box's bottom (or at the cursor)">│v</button>
         <button id="stamp-inline-up" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border-amber-500/30" title="Inline '^' arrow on the selected box's bottom wall">+^+</button>
+        <div class="flex items-center gap-px ml-px" title="Style of connections drawn from the right-click menu">
+          <button id="toggle-conn-dashed" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700" aria-pressed="false"></button>
+          <button id="toggle-conn-arrow" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700" aria-pressed="true"></button>
+        </div>
         <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
         <button data-tag="{c}" class="tag-btn text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-sky-300 border-slate-700" title="Toggle {c} decision diamond on the selected box">{c}</button>
         <button data-tag="{s}" class="tag-btn text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700" title="Toggle {s} storage cylinder on the selected box">{s}</button>
@@ -125,8 +129,7 @@
         <button id="btn-redo" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700" title="Redo (Ctrl+Y)">↷</button>
         <button id="btn-clear" class="text-[11px] leading-4 text-slate-400 hover:text-rose-400 px-1 py-0.5 rounded transition" title="Clear the editor (undoable with Ctrl+Z)" aria-label="Clear">✕</button>
         <label class="flex items-center gap-1 cursor-pointer text-[11px] text-slate-300 hover:text-white ml-0.5" title="Auto-fit: typing, Enter, Backspace and paste inside a box grow it to fit; things beside it move over">
-          <input id="toggle-autofit" type="checkbox" checked class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
-          <span>Fit</span>
+          <input id="toggle-autofit" type="checkbox" checked aria-label="Auto-fit boxes while typing" class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
         </label>
       </div>
 
@@ -147,6 +150,7 @@
       <div class="px-3 py-1 bg-slate-900 border-t border-slate-800 flex items-center gap-3 text-[11px] font-mono text-slate-400 whitespace-nowrap overflow-hidden">
         <span id="cursor-pos" class="text-emerald-400">Ln 1, Col 1</span>
         <span id="active-box-pill" class="text-slate-500 truncate" title="The selected box: click inside a box in the text, or click it in the preview"></span>
+        <span id="conn-status" class="text-amber-300 truncate"></span>
       </div>
     </section>
 

@@ -1300,3 +1300,221 @@ test('if growing only the edited box is refused, Enter / +H fall back to full-wi
     Grid2DEditor.growRowsInPlace = original;
   }
 });
+
+/* ---------------- Connections ---------------- */
+
+const CONN = [
+  '+-------+          +-------+',
+  '| A     |          | B     |',
+  '|       |          |       |',
+  '+-------+          +-------+',
+  '',
+  '         +------+',
+  '         | Mid  |',
+  '         +------+',
+  '',
+  '+-------+',
+  '| C     |',
+  '+-------+'
+].join('\n');
+const boxNamed = (t, n) => parse(t).boxes.find((b) => (b.macroKey || b.lines[0]) === n);
+const connectNamed = (t, from, fromSide, to, toSide, opts = {}) => {
+  const A = boxNamed(t, from), B = boxNamed(t, to);
+  const start = Grid2DEditor.placePort(t, { box: A, sides: [fromSide] }, A.r1 + 1, A.c1 + 2);
+  assert.ok(!start.error, start.error);
+  return Grid2DEditor.connectToWall(start.text, start.port, { box: B, sides: [toSide] }, B.r1 + 1, B.c1 + 2, opts);
+};
+
+test('placePort puts a + on the wall cell nearest the click', () => {
+  const A = boxNamed(CONN, 'A');
+  const res = Grid2DEditor.placePort(CONN, { box: A, sides: ['below'] }, 5, 4);
+  assert.deepEqual(res.port, { r: 3, c: 4 });
+  assert.equal(res.text.split('\n')[3], '+---+---+          +-------+');
+  assert.match(Grid2DEditor.placePort(CONN, { box: A, sides: ['below'] }, 3, 0).text.split('\n')[3], /^\+\+-/, 'corners are skipped');
+});
+
+test('a connection is routed around boxes, enters at right angles, and ends in an arrowhead', () => {
+  const res = connectNamed(CONN, 'A', 'below', 'C', 'above', { arrow: true });
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(wiring(res.text), ['A – C']);
+  const arrow = parse(res.text).arrows.find((a) => a.dir === 'v');
+  assert.ok(arrow && arrow.touchesBox, 'arrowhead touches C');
+  const around = connectNamed(CONN, 'A', 'below', 'B', 'below', {});
+  assert.ok(!around.error, around.error);
+  assert.deepEqual(wiring(around.text), ['A – B']);
+  assert.deepEqual(parse(around.text).boxes.find((b) => b.lines[0] === 'Mid').lines, ['Mid'], 'Mid untouched');
+});
+
+test('connection styles: dashed and plain (no arrowhead)', () => {
+  const dashed = connectNamed(CONN, 'A', 'below', 'C', 'above', { dashed: true, arrow: true });
+  assert.ok(parse(dashed.text).wires.every((w) => w.dashed), 'dashed');
+  const plain = connectNamed(CONN, 'A', 'below', 'C', 'above', { arrow: false });
+  assert.equal(parse(plain.text).arrows.length, 0, 'no arrowhead');
+  assert.deepEqual(wiring(plain.text), ['A – C']);
+});
+
+test('a connection through a container wall replaces that wall cell with + and goes through', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { nested } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const t = nested + '\n\n  +---------+\n  | Outside |\n  +---------+';
+  const res = connectNamed(t, 'Outside', 'above', 'Ingress', 'below', { arrow: true });
+  assert.ok(!res.error, res.error);
+  const cluster = parse(res.text).boxes.find((b) => b.isContainer);
+  assert.ok(cluster, 'Cluster is still a box');
+  const wallRow = res.text.split('\n')[cluster.r2];
+  assert.ok(/^\+-*\+-*\+$/.test(wallRow.trim()) && (wallRow.match(/\+/g) || []).length === 3, `crossing drawn as +: ${wallRow}`);
+  assert.equal(parse(res.text).boxes.length, parse(t).boxes.length, 'no box broken');
+});
+
+test('a connection crosses an existing line with + only when unavoidable, never next to a box', () => {
+  // D above the A -> B line, C below it, both between A and B: C -> D must cross the line
+  const t = [
+    '       +-----+',
+    '       | D   |',
+    '       +-----+',
+    '',
+    '+-----+           +-----+',
+    '| A   +---------->| B   |',
+    '+-----+           +-----+',
+    '',
+    '',
+    '       +-----+',
+    '       | C   |',
+    '       +-----+'
+  ].join('\n');
+  const res = connectNamed(t, 'C', 'above', 'D', 'below', { arrow: true });
+  assert.ok(!res.error, res.error);
+  const row = res.text.split('\n')[5];
+  const plus = [...row].map((ch, i) => (ch === '+' ? i : -1)).filter((i) => i > 6 && i < 18);
+  assert.ok(plus.length >= 1, `crossing on the A -> B line: ${row}`);
+  for (const i of plus) assert.ok(row[i - 1] === '-' && row[i + 1] === '-', 'not right next to a box wall');
+  assert.equal(parse(res.text).boxes.length, 4);
+});
+
+test('connection errors: no route, and a start point that is no longer on a wall', () => {
+  const boxed = [
+    '+---------------+',
+    '|  +-----+      |',
+    '|  | In  |      |',
+    '|  +-----+      |',
+    '+---------------+',
+    '+-----+',
+    '| Far |',
+    '+-----+'
+  ].join('\n');
+  // In is a leaf inside a container; a start on In with no clear path out to Far's (blocked) wall
+  const r1 = Grid2DEditor.connectPorts(CONN, { r: 6, c: 12 }, { r: 3, c: 4 });
+  assert.match(r1.error, /no longer on a box wall/);
+  const far = boxNamed(boxed, 'Far');
+  const start = Grid2DEditor.placePort(boxed, { box: far, sides: ['left'] }, 6, 0);
+  assert.ok(start.error || start.port, 'a 1-line box wall can still take a point');
+});
+
+/* ---------------- PR #9 review + sticky connection points ---------------- */
+
+test('regression (PR #9 review): a new route never joins an unrelated line by touching it', () => {
+  const t = [
+    '      +---+     +---+',
+    '    +>+ B |     | C |',
+    '    | +---+     +---+',
+    '    |',
+    '    +------------+        +---+',
+    '                 |        | D |',
+    '            +---+|        +---+',
+    '            | A ++',
+    '            +---+'
+  ].join('\n');
+  const p = new DitaaParser();
+  const boxes = p.parse(t).boxes;
+  const C = boxes.find((b) => b.lines[0] === 'C');
+  const D = boxes.find((b) => b.lines[0] === 'D');
+  const start = Grid2DEditor.placePort(t, { box: C, sides: ['below'] }, 1, 18);
+  const res = Grid2DEditor.connectToWall(start.text, start.port, { box: D, sides: ['above'] }, 5, 28);
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(wiring(res.text), ['A – B', 'C – D'], 'A–B and C–D stay separate');
+});
+
+test('moving a box keeps its connections stuck to their + points (both directions, round trip)', () => {
+  const vertical = ['   +-----+', '   | Top |', '   +--+--+', '      |', '      |', '      v', '   +--+--+', '   | Box |', '   +-----+'].join('\n');
+  let t = vertical;
+  const box = () => parse(t).boxes.find((b) => b.lines[0] === 'Box');
+  for (const dc of [1, 1, -1, -1]) {
+    const res = Grid2DEditor.shiftBoxWithElasticWires(t, box(), 0, dc);
+    assert.ok(!res.error, res.error);
+    t = res.text;
+    assert.deepEqual(wiring(t), ['Box – Top']);
+    const b = box();
+    const L = t.split('\n');
+    assert.equal(L[b.r1][b.c1 + 3], '+', 'the + moved with the box');
+    assert.equal(L[b.r1 - 1][b.c1 + 3], 'v', 'and the arrowhead still points straight into it');
+  }
+  assert.equal(t, vertical, 'moving back straightens the line again');
+
+  const horizontal = ['+-----+       +-----+', '| L   +------>| R   |', '+-----+       |     |', '              +-----+'].join('\n');
+  let u = horizontal;
+  const rbox = () => parse(u).boxes.find((b) => b.lines[0] === 'R');
+  for (const dr of [1, 1, -1, -1]) {
+    const res = Grid2DEditor.shiftBoxWithElasticWires(u, rbox(), dr, 0);
+    assert.ok(!res.error, res.error);
+    u = res.text;
+    assert.deepEqual(wiring(u), ['L – R']);
+    const arrow = parse(u).arrows.find((a) => a.dir === '>');
+    assert.ok(arrow && arrow.touchesBox, 'arrowhead still against R');
+  }
+  assert.equal(u, horizontal);
+});
+
+test('regression (PR #9 follow-up review): a plain connection keeps following on repeated moves', () => {
+  // No arrowhead: after the first move the cell outside the '+' is the jog corner '+'
+  const plain = ['+-----+       +-----+', '| L   +-------+ R   |', '+-----+       |     |', '              +-----+'].join('\n');
+  let t = plain;
+  for (const dr of [1, 1, 1, -1, -1, -1]) {
+    const R = parse(t).boxes.find((b) => b.lines[0] === 'R');
+    const res = Grid2DEditor.shiftBoxWithElasticWires(t, R, dr, 0);
+    assert.ok(!res.error, res.error);
+    t = res.text;
+    const moved = parse(t).boxes.find((b) => b.lines[0] === 'R');
+    // displaced: a jog corner right outside R's '+'; back in place: the straight line again
+    const expected = moved.r1 === 0 ? '-' : '+';
+    assert.equal(t.split('\n')[moved.r1 + 1][moved.c1 - 1], expected, 'the line still meets R right outside its +');
+    assert.deepEqual(wiring(t), ['L – R']);
+  }
+  assert.equal(t, plain, 'round trip');
+  // The source end of an arrowed connection follows too
+  const arrowed = ['+-----+       +-----+', '| L   +------>| R   |', '|     |       |     |', '+-----+       +-----+'].join('\n');
+  let u = arrowed;
+  for (const dr of [1, 1, -1, -1]) {
+    const L = parse(u).boxes.find((b) => b.lines[0] === 'L');
+    const res = Grid2DEditor.shiftBoxWithElasticWires(u, L, dr, 0);
+    assert.ok(!res.error, res.error);
+    u = res.text;
+    assert.deepEqual(wiring(u), ['L – R']);
+    assert.ok(parse(u).arrows.find((a) => a.dir === '>').touchesBox, 'arrowhead still against R');
+  }
+  assert.equal(u, arrowed, 'round trip');
+});
+
+test('moving boxes in the examples keeps every connection (typed ASCII arrows are connections too)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
+  const nm = (b) => b.macroKey || b.lines[0];
+  const byName = (t) => {
+    const p = new DitaaParser();
+    const ast = p.parse(t);
+    return p.connections(ast).map((ids) => ids.map((i) => nm(ast.boxes[i])).sort().join(' – ')).sort();
+  };
+  for (const [preset, key, dr, dc] of [['arch', 'Q', 1, 0], ['arch', 'Q', 0, 1], ['arch', 'D', 0, 1],
+    ['arch', 'Session Cache', 0, -1], ['flowchart', 'Process', 1, 0], ['flowchart', 'Show error', 0, 1]]) {
+    const t = PRESETS[preset];
+    const b = parse(t).boxes.find((x) => nm(x) === key);
+    const res = Grid2DEditor.shiftBoxWithElasticWires(t, b, dr, dc);
+    assert.ok(!res.error, `${preset} ${key}: ${res.error}`);
+    assert.deepEqual(byName(res.text), byName(t), `${preset}: move ${key}`);
+  }
+});

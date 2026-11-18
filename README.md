@@ -16,7 +16,7 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 
 | Action | Buttons | Keys |
 | --- | --- | --- |
-| Move box (attached wires stretch) | ← ↑ ↓ → | `Alt+Arrows` |
+| Move box (connections stretch and stay on their `+` points) | ← ↑ ↓ → | `Alt+Arrows` |
 | Resize box | +W −W +H −H | `Alt+Shift+Arrows` |
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
@@ -58,6 +58,19 @@ The +W / −W buttons follow the same rule (only the box's own lines shift).
   or type spaces before it.
 - On empty space: insert a shape right there.
 - Cut / Copy / Paste are in the menu too; Shift+right-click opens the browser's own menu.
+
+**Connections** (right-click a box's wall):
+
+1. *Start connection here* puts a `+` on the wall where you clicked.
+2. Click (or right-click → *Connect to here*) another box's wall: a second `+` goes there and the
+   line is drawn. While a start is pending the right-click menu offers only that and *Cancel
+   connection* (Esc also cancels). To leave a lone connection point, just type a `+`.
+
+The line is routed with horizontal and vertical segments, leaving and entering the walls at right
+angles, around boxes and text. Where it has to cross a container's wall, or another line, the
+crossing becomes a `+`. If the exact end cell can't be reached cleanly, the nearest cell on the
+same wall that can is used. Two toolbar toggles set the style for every connection: solid `──` or
+dashed `┄┄`, and arrowhead `─▸` or plain line.
 
 Every toolbar button explains itself on hover. Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 
