@@ -1477,7 +1477,9 @@ test('regression (PR #9 follow-up review): a plain connection keeps following on
     assert.ok(!res.error, res.error);
     t = res.text;
     const moved = parse(t).boxes.find((b) => b.lines[0] === 'R');
-    assert.equal(t.split('\n')[moved.r1 + 1][moved.c1 - 1], '+', 'the line still meets R right outside its +');
+    // displaced: a jog corner right outside R's '+'; back in place: the straight line again
+    const expected = moved.r1 === 0 ? '-' : '+';
+    assert.equal(t.split('\n')[moved.r1 + 1][moved.c1 - 1], expected, 'the line still meets R right outside its +');
     assert.deepEqual(wiring(t), ['L – R']);
   }
   assert.equal(t, plain, 'round trip');
