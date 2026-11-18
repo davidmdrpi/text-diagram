@@ -49,24 +49,15 @@
 </head>
 <body class="bg-slate-950 text-slate-100 font-sans h-screen flex flex-col overflow-hidden select-none">
 
-  <!-- Top Navigation & Global Controls -->
-  <header class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0 z-20">
-    <div class="flex items-center gap-3">
-      <div class="w-9 h-9 rounded-lg bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-mono font-bold text-sm shadow-inner">
-        +^v+
-      </div>
-      <div>
-        <div class="flex items-center gap-2">
-          <h1 class="font-bold text-base tracking-tight text-white">ditaa Studio <span class="text-xs font-mono uppercase px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Local Engine</span></h1>
-        </div>
-        <p class="text-xs text-slate-400">Zero-dependency 2D ASCII Grid Parser • Inline <code class="text-indigo-300">+--^--+</code> Border Healing • 4x4 Legend Macros</p>
-      </div>
+  <!-- Top bar: one line (title, example picker, exports); details are in tooltips -->
+  <header class="bg-slate-900 border-b border-slate-800 px-3 py-1 flex items-center justify-between gap-2 shrink-0 z-20 whitespace-nowrap">
+    <div class="flex items-center gap-2 min-w-0" title="Live ASCII-to-SVG editor for ditaa-style diagrams: inline +--^--+ border arrows, {c} decision diamonds, 4x4 legend macros. Runs entirely in this file, offline.">
+      <div class="w-6 h-6 rounded bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-mono font-bold text-[9px] leading-none">+^v+</div>
+      <h1 class="font-bold text-sm tracking-tight text-white">ditaa Studio</h1>
     </div>
 
-    <!-- Preset Selector -->
-    <div class="flex items-center gap-2 flex-wrap">
-      <label for="preset-select" class="text-xs font-medium text-slate-400">Preset Diagram:</label>
-      <select id="preset-select" class="bg-slate-800 text-slate-100 text-xs font-medium rounded-lg px-3 py-1.5 border border-slate-700 focus:outline-none focus:border-indigo-500 transition">
+    <div class="flex items-center gap-1.5 min-w-0">
+      <select id="preset-select" title="Load an example diagram (replaces the editor text; Ctrl+Z to undo)" class="min-w-0 max-w-[22rem] bg-slate-800 text-slate-100 text-xs font-medium rounded-md px-2 py-1 border border-slate-700 focus:outline-none focus:border-indigo-500 transition">
         <option value="arch">1. Pipeline w/ Inline '^' Arrows & 4x4 Legend</option>
         <option value="showcase">2. Complete ditaa Shapes, Colors & Wires Catalog</option>
         <option value="microservices">3. Dense 4x4 Box Grid with Macro Legend</option>
@@ -75,20 +66,17 @@
         <option value="flowchart">6. Flowchart with {c} Decision Diamonds</option>
       </select>
 
-      <div class="h-5 w-px bg-slate-800 mx-1"></div>
+      <div class="h-4 w-px bg-slate-800 mx-0.5"></div>
 
-      <!-- Export & Backend Sanitizer Actions -->
-      <button id="btn-legacy-modal" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition shadow-sm" title="Expand inline border arrows into strict multi-row legacy ditaa for your company backend">
+      <button id="btn-legacy-modal" class="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-md transition bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30" title="Export strict ditaa for the Java renderer: inline border arrows are moved onto the adjacent wire so every box is closed">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
-        Export Strict Backend ditaa
+        Export ditaa
       </button>
-
-      <button id="btn-download-svg" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm">
+      <button id="btn-download-svg" class="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-md transition bg-indigo-600 hover:bg-indigo-500 text-white" title="Download the diagram as SVG">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
         SVG
       </button>
-
-      <button id="btn-download-png" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm">
+      <button id="btn-download-png" class="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-md transition bg-emerald-600 hover:bg-emerald-500 text-white" title="Download the diagram as a 2x PNG">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
         PNG
       </button>
