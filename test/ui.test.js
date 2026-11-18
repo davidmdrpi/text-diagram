@@ -229,7 +229,7 @@ test('nested example: right-click just left of Ingress inserts inside the contai
   }
 });
 
-test('connection via right-click: start, connect, toggles, place-only, Esc', { skip }, async () => {
+test('connection: right-click start, then click or right-click a wall to connect; toggles; Esc', { skip }, async () => {
   const { browser, page, errors } = await openPage();
   try {
     await page.evaluate(() => {
@@ -238,18 +238,24 @@ test('connection via right-click: start, connect, toggles, place-only, Esc', { s
       ed.dispatchEvent(new Event('input'));
     });
     const text = () => page.inputValue('#ascii-editor');
-    const rc = async (r, c) => { const p = await cellXY(page, r, c); await page.mouse.click(p.x, p.y, { button: 'right' }); };
+    const at = async (r, c) => cellXY(page, r, c);
+    const rc = async (r, c) => { const p = await at(r, c); await page.mouse.click(p.x, p.y, { button: 'right' }); };
+    const menuItems = async () => (await page.locator('#ctx-menu button').allInnerTexts()).map((t) => t.split('\n')[0].trim());
     // 1. start on A's right wall
     await rc(1, 8);
     await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
     assert.match(await page.textContent('#conn-status'), /Connecting from Ln 2, Col 9/);
-    // 2. connect to B's left wall (solid, arrow by default)
+    // 2. while pending, the right-click menu is only: connect here / cancel
     await rc(1, 19);
-    assert.ok(await page.locator('#ctx-menu button', { hasText: 'Connect to here (solid, arrow)' }).isVisible());
-    await page.locator('#ctx-menu button', { hasText: 'Connect to here' }).click();
+    assert.deepEqual(await menuItems(), ['→ Connect to here (solid, arrow)', '✕ Cancel connection']);
+    await page.keyboard.press('Escape'); // closes the menu only
+    assert.match(await page.textContent('#conn-status'), /Connecting from/);
+    // ...and a plain left click on B's wall connects
+    const p = await at(1, 19);
+    await page.mouse.click(p.x, p.y);
     assert.equal((await text()).split('\n')[1], '| A     +--------->+ B     |');
     assert.equal(await page.textContent('#conn-status'), '');
-    // 3. toggles: dashed, no arrow; A -> C
+    // 3. toggles: dashed, no arrow; A -> C via the right-click menu
     await page.click('#toggle-conn-dashed');
     await page.click('#toggle-conn-arrow');
     assert.equal(await page.getAttribute('#toggle-conn-dashed', 'aria-pressed'), 'true');
@@ -260,13 +266,24 @@ test('connection via right-click: start, connect, toggles, place-only, Esc', { s
     const lines = (await text()).split('\n');
     assert.equal(lines[3][3], ':');
     assert.equal(lines[4][3], ':', 'dashed vertical, no arrowhead');
-    // 4. place a point only, then Esc cancels a pending start
+    // 4. off any wall, the pending menu offers only Cancel; a left click there just moves the caret
     await rc(6, 8);
     await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
-    await rc(1, 26);
-    await page.locator('#ctx-menu button', { hasText: 'Place a point only' }).click();
-    assert.equal((await text()).split('\n')[1][27], '+', 'on B\'s right wall, nearest the click');
+    const before = await text();
+    const near = await at(4, 22); // two lines below B's wall: near, but not on it
+    await page.mouse.click(near.x, near.y);
+    assert.equal(await text(), before, 'a click that is not on a wall draws nothing');
     assert.match(await page.textContent('#conn-status'), /Connecting from/, 'still pending');
+    await rc(4, 14); // empty space between the boxes
+    assert.deepEqual(await menuItems(), ['✕ Cancel connection']);
+    await page.keyboard.press('Escape');
+    await rc(4, 14);
+    assert.deepEqual(await menuItems(), ['✕ Cancel connection']);
+    await page.locator('#ctx-menu button', { hasText: 'Cancel connection' }).click();
+    assert.equal(await page.textContent('#conn-status'), '');
+    // 5. Esc cancels a pending start
+    await rc(6, 8);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
     await page.keyboard.press('Escape');
     assert.equal(await page.textContent('#conn-status'), '');
     assert.deepEqual(errors, []);

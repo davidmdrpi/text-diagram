@@ -840,7 +840,7 @@
   function setPending(port) {
     conn.pending = port;
     connStatus.textContent = port
-      ? `· Connecting from Ln ${port.r + 1}, Col ${port.c + 1}: right-click another wall (Esc cancels)`
+      ? `· Connecting from Ln ${port.r + 1}, Col ${port.c + 1}: click another box's wall (Esc cancels)`
       : '';
   }
   document.addEventListener('keydown', (e) => {
@@ -852,28 +852,56 @@
 
   function addConnectionItems(hit, cell) {
     ctxMenu.appendChild(menuHeader('Connection'));
-    const style = `${conn.dashed ? 'dashed' : 'solid'}${conn.arrow ? ', arrow' : ''}`;
-    if (!conn.pending) {
-      ctxMenu.appendChild(menuItem('● Start connection here', () => {
-        const res = Grid2DEditor.placePort(editor.value, hit, cell.r, cell.c);
-        if (!res.error) setPending(res.port);
-        applyGridOperationResult(res, 'Start point placed: right-click another box\'s wall to connect');
-      }));
-      return;
+    ctxMenu.appendChild(menuItem('● Start connection here', () => {
+      const res = Grid2DEditor.placePort(editor.value, hit, cell.r, cell.c);
+      if (!res.error) setPending(res.port);
+      applyGridOperationResult(res, 'Start point placed: click another box\'s wall to connect');
+    }));
+  }
+
+  /**
+   * Finishes the pending connection at the wall near `cell`. With `onWallOnly` (a plain
+   * left click) the click must be on a wall or right next to it; otherwise nothing happens
+   * and the click just moves the caret. Returns whether it connected (or tried to).
+   */
+  function connectPendingAt(cell, onWallOnly = false) {
+    const hit = Grid2DEditor.hitBoxSides(editor.value, cell.r, cell.c);
+    if (!hit) return false;
+    if (onWallOnly) {
+      const w = Grid2DEditor.nearestWallCell(hit.box, hit.sides, cell.r, cell.c);
+      if (!w || Math.abs(w.r - cell.r) + Math.abs(w.c - cell.c) > 1) return false;
     }
-    ctxMenu.appendChild(menuItem(`→ Connect to here (${style})`, () => {
-      const res = Grid2DEditor.connectToWall(editor.value, conn.pending, hit, cell.r, cell.c, { dashed: conn.dashed, arrow: conn.arrow });
-      if (!res.error) setPending(null);
-      applyGridOperationResult(res, 'Connected');
-    }));
-    ctxMenu.appendChild(menuItem('● Place a point only', () => {
-      applyGridOperationResult(Grid2DEditor.placePort(editor.value, hit, cell.r, cell.c), 'Point placed');
-    }));
-    ctxMenu.appendChild(menuItem('✕ Cancel connection', () => { setPending(null); showToast('Connection cancelled'); }));
+    const res = Grid2DEditor.connectToWall(editor.value, conn.pending, hit, cell.r, cell.c, { dashed: conn.dashed, arrow: conn.arrow });
+    if (!res.error) setPending(null);
+    applyGridOperationResult(res, 'Connected');
+    return true;
+  }
+
+  /** While a connection is pending the menu is just: connect here, or cancel. */
+  function openPendingMenu(ev, cell) {
+    const hit = Grid2DEditor.hitBoxSides(editor.value, cell.r, cell.c);
+    if (hit) {
+      const style = `${conn.dashed ? 'dashed' : 'solid'}${conn.arrow ? ', arrow' : ''}`;
+      ctxMenu.appendChild(menuHeader(`Connection to “${hit.name}”`));
+      ctxMenu.appendChild(menuItem(`→ Connect to here (${style})`, () => connectPendingAt(cell)));
+    } else {
+      ctxMenu.appendChild(menuHeader('Connection'));
+    }
+    ctxMenu.appendChild(menuItem('✕ Cancel connection', () => { setPending(null); showToast('Connection cancelled'); }, { hint: 'Esc' }));
+    showMenu(ev);
+  }
+
+  function showMenu(ev) {
+    ctxMenu.classList.remove('hidden');
+    const { innerWidth: W, innerHeight: H } = window;
+    const mw = ctxMenu.offsetWidth, mh = ctxMenu.offsetHeight;
+    ctxMenu.style.left = `${Math.min(ev.clientX, W - mw - 8)}px`;
+    ctxMenu.style.top = `${Math.max(8, Math.min(ev.clientY, H - mh - 8))}px`;
   }
 
   function openMenu(ev, cell) {
     ctxMenu.innerHTML = '';
+    if (conn.pending) return openPendingMenu(ev, cell);
     const text = editor.value;
     const hit = Grid2DEditor.hitBoxSides(text, cell.r, cell.c);
     if (hit) {
@@ -921,12 +949,7 @@
     tip.className = 'px-3 pt-1 pb-1 text-[10px] text-slate-500';
     tip.textContent = 'Shift+right-click: browser menu';
     ctxMenu.appendChild(tip);
-
-    ctxMenu.classList.remove('hidden');
-    const { innerWidth: W, innerHeight: H } = window;
-    const mw = ctxMenu.offsetWidth, mh = ctxMenu.offsetHeight;
-    ctxMenu.style.left = `${Math.min(ev.clientX, W - mw - 8)}px`;
-    ctxMenu.style.top = `${Math.max(8, Math.min(ev.clientY, H - mh - 8))}px`;
+    showMenu(ev);
   }
 
   // The browser may move the caret on the right-button press; remember the selection first
@@ -963,6 +986,12 @@
     openMenu(ev, cell);
   });
   document.addEventListener('mousedown', (e) => { if (!ctxMenu.contains(e.target)) closeMenu(); });
+  // While a connection is pending, a left click on a box's wall drops the endpoint there
+  editor.addEventListener('click', (ev) => {
+    if (!conn.pending || ev.button !== 0 || ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (editor.selectionStart !== editor.selectionEnd) return; // a drag-selection, not a click
+    connectPendingAt(cellAt(ev), true);
+  });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   editor.addEventListener('scroll', closeMenu);
   window.addEventListener('resize', closeMenu);

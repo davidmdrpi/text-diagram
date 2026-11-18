@@ -62,9 +62,9 @@ The +W / −W buttons follow the same rule (only the box's own lines shift).
 **Connections** (right-click a box's wall):
 
 1. *Start connection here* puts a `+` on the wall where you clicked.
-2. Right-click another box's wall: *Connect to here* puts a second `+` there and draws the line
-   between them; *Place a point only* just adds a `+` (the first point stays pending); *Cancel
-   connection* (or Esc) drops the pending start.
+2. Click (or right-click → *Connect to here*) another box's wall: a second `+` goes there and the
+   line is drawn. While a start is pending the right-click menu offers only that and *Cancel
+   connection* (Esc also cancels). To leave a lone connection point, just type a `+`.
 
 The line is routed with horizontal and vertical segments, leaving and entering the walls at right
 angles, around boxes and text. Where it has to cross a container's wall, or another line, the
