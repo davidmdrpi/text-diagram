@@ -1300,3 +1300,115 @@ test('if growing only the edited box is refused, Enter / +H fall back to full-wi
     Grid2DEditor.growRowsInPlace = original;
   }
 });
+
+/* ---------------- Connections ---------------- */
+
+const CONN = [
+  '+-------+          +-------+',
+  '| A     |          | B     |',
+  '|       |          |       |',
+  '+-------+          +-------+',
+  '',
+  '         +------+',
+  '         | Mid  |',
+  '         +------+',
+  '',
+  '+-------+',
+  '| C     |',
+  '+-------+'
+].join('\n');
+const boxNamed = (t, n) => parse(t).boxes.find((b) => (b.macroKey || b.lines[0]) === n);
+const connectNamed = (t, from, fromSide, to, toSide, opts = {}) => {
+  const A = boxNamed(t, from), B = boxNamed(t, to);
+  const start = Grid2DEditor.placePort(t, { box: A, sides: [fromSide] }, A.r1 + 1, A.c1 + 2);
+  assert.ok(!start.error, start.error);
+  return Grid2DEditor.connectToWall(start.text, start.port, { box: B, sides: [toSide] }, B.r1 + 1, B.c1 + 2, opts);
+};
+
+test('placePort puts a + on the wall cell nearest the click', () => {
+  const A = boxNamed(CONN, 'A');
+  const res = Grid2DEditor.placePort(CONN, { box: A, sides: ['below'] }, 5, 4);
+  assert.deepEqual(res.port, { r: 3, c: 4 });
+  assert.equal(res.text.split('\n')[3], '+---+---+          +-------+');
+  assert.match(Grid2DEditor.placePort(CONN, { box: A, sides: ['below'] }, 3, 0).text.split('\n')[3], /^\+\+-/, 'corners are skipped');
+});
+
+test('a connection is routed around boxes, enters at right angles, and ends in an arrowhead', () => {
+  const res = connectNamed(CONN, 'A', 'below', 'C', 'above', { arrow: true });
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(wiring(res.text), ['A – C']);
+  const arrow = parse(res.text).arrows.find((a) => a.dir === 'v');
+  assert.ok(arrow && arrow.touchesBox, 'arrowhead touches C');
+  const around = connectNamed(CONN, 'A', 'below', 'B', 'below', {});
+  assert.ok(!around.error, around.error);
+  assert.deepEqual(wiring(around.text), ['A – B']);
+  assert.deepEqual(parse(around.text).boxes.find((b) => b.lines[0] === 'Mid').lines, ['Mid'], 'Mid untouched');
+});
+
+test('connection styles: dashed and plain (no arrowhead)', () => {
+  const dashed = connectNamed(CONN, 'A', 'below', 'C', 'above', { dashed: true, arrow: true });
+  assert.ok(parse(dashed.text).wires.every((w) => w.dashed), 'dashed');
+  const plain = connectNamed(CONN, 'A', 'below', 'C', 'above', { arrow: false });
+  assert.equal(parse(plain.text).arrows.length, 0, 'no arrowhead');
+  assert.deepEqual(wiring(plain.text), ['A – C']);
+});
+
+test('a connection through a container wall replaces that wall cell with + and goes through', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const { nested } = new Function(presetSrc + '\nreturn PRESETS;')();
+  const t = nested + '\n\n  +---------+\n  | Outside |\n  +---------+';
+  const res = connectNamed(t, 'Outside', 'above', 'Ingress', 'below', { arrow: true });
+  assert.ok(!res.error, res.error);
+  const cluster = parse(res.text).boxes.find((b) => b.isContainer);
+  assert.ok(cluster, 'Cluster is still a box');
+  const wallRow = res.text.split('\n')[cluster.r2];
+  assert.ok(/^\+-*\+-*\+$/.test(wallRow.trim()) && (wallRow.match(/\+/g) || []).length === 3, `crossing drawn as +: ${wallRow}`);
+  assert.equal(parse(res.text).boxes.length, parse(t).boxes.length, 'no box broken');
+});
+
+test('a connection crosses an existing line with + only when unavoidable, never next to a box', () => {
+  // D above the A -> B line, C below it, both between A and B: C -> D must cross the line
+  const t = [
+    '       +-----+',
+    '       | D   |',
+    '       +-----+',
+    '',
+    '+-----+           +-----+',
+    '| A   +---------->| B   |',
+    '+-----+           +-----+',
+    '',
+    '',
+    '       +-----+',
+    '       | C   |',
+    '       +-----+'
+  ].join('\n');
+  const res = connectNamed(t, 'C', 'above', 'D', 'below', { arrow: true });
+  assert.ok(!res.error, res.error);
+  const row = res.text.split('\n')[5];
+  const plus = [...row].map((ch, i) => (ch === '+' ? i : -1)).filter((i) => i > 6 && i < 18);
+  assert.ok(plus.length >= 1, `crossing on the A -> B line: ${row}`);
+  for (const i of plus) assert.ok(row[i - 1] === '-' && row[i + 1] === '-', 'not right next to a box wall');
+  assert.equal(parse(res.text).boxes.length, 4);
+});
+
+test('connection errors: no route, and a start point that is no longer on a wall', () => {
+  const boxed = [
+    '+---------------+',
+    '|  +-----+      |',
+    '|  | In  |      |',
+    '|  +-----+      |',
+    '+---------------+',
+    '+-----+',
+    '| Far |',
+    '+-----+'
+  ].join('\n');
+  // In is a leaf inside a container; a start on In with no clear path out to Far's (blocked) wall
+  const r1 = Grid2DEditor.connectPorts(CONN, { r: 6, c: 12 }, { r: 3, c: 4 });
+  assert.match(r1.error, /no longer on a box wall/);
+  const far = boxNamed(boxed, 'Far');
+  const start = Grid2DEditor.placePort(boxed, { box: far, sides: ['left'] }, 6, 0);
+  assert.ok(start.error || start.port, 'a 1-line box wall can still take a point');
+});

@@ -59,6 +59,19 @@ The +W / −W buttons follow the same rule (only the box's own lines shift).
 - On empty space: insert a shape right there.
 - Cut / Copy / Paste are in the menu too; Shift+right-click opens the browser's own menu.
 
+**Connections** (right-click a box's wall):
+
+1. *Start connection here* puts a `+` on the wall where you clicked.
+2. Right-click another box's wall: *Connect to here* puts a second `+` there and draws the line
+   between them; *Place a point only* just adds a `+` (the first point stays pending); *Cancel
+   connection* (or Esc) drops the pending start.
+
+The line is routed with horizontal and vertical segments, leaving and entering the walls at right
+angles, around boxes and text. Where it has to cross a container's wall, or another line, the
+crossing becomes a `+`. If the exact end cell can't be reached cleanly, the nearest cell on the
+same wall that can is used. Two toolbar toggles set the style for every connection: solid `──` or
+dashed `┄┄`, and arrowhead `─▸` or plain line.
+
 Every toolbar button explains itself on hover. Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 
 Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax

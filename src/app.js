@@ -807,6 +807,71 @@
     return el;
   }
 
+  /*************************************************************************
+   * CONNECTIONS: right-click a wall to start, right-click another to connect.
+   * Line style comes from the two toolbar toggles.
+   *************************************************************************/
+  const conn = { dashed: false, arrow: true, pending: null };
+  try {
+    const saved = JSON.parse(localStorage.getItem('text-diagram.conn') || '{}');
+    if (typeof saved.dashed === 'boolean') conn.dashed = saved.dashed;
+    if (typeof saved.arrow === 'boolean') conn.arrow = saved.arrow;
+  } catch (_) { /* storage unavailable: defaults */ }
+  const dashedBtn = $('toggle-conn-dashed');
+  const arrowBtn = $('toggle-conn-arrow');
+  const connStatus = $('conn-status');
+  function renderConnToggles() {
+    dashedBtn.textContent = conn.dashed ? '┄┄' : '──';
+    dashedBtn.title = conn.dashed
+      ? 'Connections: dashed lines (click for solid)'
+      : 'Connections: solid lines (click for dashed)';
+    dashedBtn.setAttribute('aria-pressed', String(conn.dashed));
+    arrowBtn.textContent = conn.arrow ? '─▸' : '──';
+    arrowBtn.title = conn.arrow
+      ? 'Connections end in an arrowhead (click for plain lines)'
+      : 'Connections are plain lines (click to add an arrowhead)';
+    arrowBtn.setAttribute('aria-pressed', String(conn.arrow));
+    try { localStorage.setItem('text-diagram.conn', JSON.stringify({ dashed: conn.dashed, arrow: conn.arrow })); } catch (_) { /* ignore */ }
+  }
+  dashedBtn.addEventListener('click', () => { conn.dashed = !conn.dashed; renderConnToggles(); });
+  arrowBtn.addEventListener('click', () => { conn.arrow = !conn.arrow; renderConnToggles(); });
+  renderConnToggles();
+
+  function setPending(port) {
+    conn.pending = port;
+    connStatus.textContent = port
+      ? `· Connecting from Ln ${port.r + 1}, Col ${port.c + 1}: right-click another wall (Esc cancels)`
+      : '';
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && conn.pending && ctxMenu.classList.contains('hidden')) {
+      setPending(null);
+      showToast('Connection cancelled');
+    }
+  });
+
+  function addConnectionItems(hit, cell) {
+    ctxMenu.appendChild(menuHeader('Connection'));
+    const style = `${conn.dashed ? 'dashed' : 'solid'}${conn.arrow ? ', arrow' : ''}`;
+    if (!conn.pending) {
+      ctxMenu.appendChild(menuItem('● Start connection here', () => {
+        const res = Grid2DEditor.placePort(editor.value, hit, cell.r, cell.c);
+        if (!res.error) setPending(res.port);
+        applyGridOperationResult(res, 'Start point placed: right-click another box\'s wall to connect');
+      }));
+      return;
+    }
+    ctxMenu.appendChild(menuItem(`→ Connect to here (${style})`, () => {
+      const res = Grid2DEditor.connectToWall(editor.value, conn.pending, hit, cell.r, cell.c, { dashed: conn.dashed, arrow: conn.arrow });
+      if (!res.error) setPending(null);
+      applyGridOperationResult(res, 'Connected');
+    }));
+    ctxMenu.appendChild(menuItem('● Place a point only', () => {
+      applyGridOperationResult(Grid2DEditor.placePort(editor.value, hit, cell.r, cell.c), 'Point placed');
+    }));
+    ctxMenu.appendChild(menuItem('✕ Cancel connection', () => { setPending(null); showToast('Connection cancelled'); }));
+  }
+
   function openMenu(ev, cell) {
     ctxMenu.innerHTML = '';
     const text = editor.value;
@@ -822,6 +887,7 @@
           }));
         }
       }
+      addConnectionItems(hit, cell);
     } else {
       ctxMenu.appendChild(menuHeader('Insert here'));
       for (const [kind, label] of KINDS.slice(0, 3)) {

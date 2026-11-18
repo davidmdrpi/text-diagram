@@ -1832,7 +1832,7 @@
      * change). Glyph-level checks can't see that, e.g. removing the last interior column of
      * a small empty box elsewhere collapses it.
      */
-    static guardOtherBoxes(rawText, res, verb, exceptBox = null, allowNew = 0) {
+    static guardOtherBoxes(rawText, res, verb, exceptBox = null, allowNew = 0, checkWires = true) {
       if (!res || res.error) return res;
       const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
       const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
@@ -1869,7 +1869,7 @@
       // keyed by contents (so identical boxes are interchangeable, which is fine for a
       // multiset comparison) except the edited one, which is keyed by identity. (Inserting
       // a new shape may legitimately split a connection in two, so allowNew skips this.)
-      if (!allowNew) {
+      if (!allowNew && checkWires) {
         const keys = (ast, self) => ast.boxes.map((b) => (b === self ? 'SELF' : sig(b)));
         const comps = (ast, k) => parser.connections(ast).map((ids) => JSON.stringify(ids.map((i) => k[i]).sort()));
         const after = comps(afterAst, keys(afterAst, selfAfter));
@@ -2566,6 +2566,258 @@
       const lc = c + tpl.lines[li].indexOf(tpl.label);
       const res = { text: this.fromGridState(state), cursorR: r + li, cursorC: lc + tpl.label.length, selC1: lc, selC2: lc + tpl.label.length };
       return this.guardOtherBoxes(rawText, res, 'insert here', null, 1);
+    }
+
+    /*************************************************************************
+     * CONNECTIONS: '+' endpoints on box walls, joined by a routed line
+     *************************************************************************/
+
+    /**
+     * The wall cell of `box` nearest to (r, c) on one of `sides` (corners excluded), and
+     * the side it is on. Returns { r, c, side } or null for a box too small to have one.
+     */
+    static nearestWallCell(box, sides, r, c) {
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+      let best = null;
+      for (const side of sides) {
+        let cell;
+        if (side === 'right' || side === 'left') {
+          if (box.r2 - box.r1 < 2) continue;
+          cell = { r: clamp(r, box.r1 + 1, box.r2 - 1), c: side === 'right' ? box.c2 : box.c1 };
+        } else {
+          if (box.c2 - box.c1 < 2) continue;
+          cell = { r: side === 'below' ? box.r2 : box.r1, c: clamp(c, box.c1 + 1, box.c2 - 1) };
+        }
+        const d = Math.abs(cell.r - r) + Math.abs(cell.c - c);
+        if (!best || d < best.d) best = { ...cell, side, d };
+      }
+      return best && { r: best.r, c: best.c, side: best.side };
+    }
+
+    /**
+     * Puts a connection point '+' on the wall of `hit.box` nearest to (r, c).
+     * Returns { text, cursorR, cursorC, port: { r, c } } or { error }.
+     */
+    static placePort(rawText, hit, r, c) {
+      const cell = this.nearestWallCell(hit.box, hit.sides, r, c);
+      if (!cell) return { error: 'This box is too small for a connection point there' };
+      const state = this.toGridState(rawText);
+      const ch = state.grid[cell.r][cell.c];
+      if (!'-=|:+'.includes(ch) || ch === ' ') return { error: 'A connection point can only go on a straight part of a wall' };
+      state.grid[cell.r][cell.c] = '+';
+      const res = { text: this.fromGridState(state), cursorR: cell.r, cursorC: cell.c, port: { r: cell.r, c: cell.c } };
+      return this.guardOtherBoxes(rawText, res, 'place a connection point');
+    }
+
+    /**
+     * "Connect to here": draws a connection from the point `a` to the wall of `hit.box` near
+     * (r, c). The end point goes on the wall cell nearest the click; if no clean route reaches
+     * that cell, the next nearest cells on the same wall are tried. Returns the
+     * connectPorts result for the first one that works, or the first error.
+     */
+    static connectToWall(rawText, a, hit, r, c, opts = {}) {
+      const b = hit.box;
+      const cells = [];
+      for (const side of hit.sides) {
+        if (side === 'right' || side === 'left') {
+          for (let rr = b.r1 + 1; rr < b.r2; rr++) cells.push({ r: rr, c: side === 'right' ? b.c2 : b.c1 });
+        } else {
+          for (let cc = b.c1 + 1; cc < b.c2; cc++) cells.push({ r: side === 'below' ? b.r2 : b.r1, c: cc });
+        }
+      }
+      cells.sort((p, q) => (Math.abs(p.r - r) + Math.abs(p.c - c)) - (Math.abs(q.r - r) + Math.abs(q.c - c)));
+      let firstError = null;
+      for (const cell of cells.slice(0, 16)) {
+        const res = this.connectPorts(rawText, a, cell, opts);
+        if (!res.error) return res;
+        firstError = firstError || res;
+      }
+      return firstError || { error: 'Put the end point on a straight part of a box wall' };
+    }
+
+    /** Directions a line can leave a wall point in: outward, and inward for a container. */
+    static portDirections(boxes, r, c) {
+      const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]]; // up right down left
+      const out = [];
+      for (const b of boxes) {
+        const corner = (r === b.r1 || r === b.r2) && (c === b.c1 || c === b.c2);
+        if (corner || r < b.r1 || r > b.r2 || c < b.c1 || c > b.c2) continue;
+        let d = -1;
+        if (r === b.r1) d = 0;
+        else if (c === b.c2) d = 1;
+        else if (r === b.r2) d = 2;
+        else if (c === b.c1) d = 3;
+        if (d === -1) continue;
+        out.push({ d, box: b });
+        if (b.isContainer) out.push({ d: (d + 2) % 4, box: b });
+      }
+      return out.map((x) => x.d).filter((d, i, a) => a.indexOf(d) === i).map((d) => ({ d, delta: DIRS[d] }));
+    }
+
+    /**
+     * Draws a connection from the point at `a` to `b` (both { r, c } wall cells; b gets a '+'
+     * if it doesn't have one). The line is routed with horizontal and vertical segments,
+     * leaving and entering the walls at right angles, around boxes and text. It may cross a
+     * container's wall (that cell becomes '+') or, when there is no other way, another line
+     * (the crossing becomes '+'); both cost extra, as do turns, so it prefers clean routes.
+     * opts: { dashed, arrow }. Returns { text, cursorR, cursorC } or { error }.
+     */
+    static connectPorts(rawText, a, b, opts = {}) {
+      const parser = new DitaaParser();
+      const ast0 = parser.parse(rawText);
+      const startDirs = this.portDirections(ast0.boxes, a.r, a.c);
+      const endDirs = this.portDirections(ast0.boxes, b.r, b.c);
+      if (!startDirs.length) return { error: 'The start point is no longer on a box wall: start the connection again' };
+      if (!endDirs.length) return { error: 'Put the end point on a straight part of a box wall' };
+      if (a.r === b.r && a.c === b.c) return { error: 'Pick a different point to connect to' };
+
+      const R = ast0.numRows + 8, C = ast0.numCols + 40;
+      const state = this.toGridState(rawText, R, C);
+      const g = state.grid;
+      if (!'-=|:+'.includes(g[b.r][b.c]) || g[b.r][b.c] === ' ') return { error: 'Put the end point on a straight part of a box wall' };
+      g[b.r][b.c] = '+';
+      const ast = parser.parse(this.fromGridState(state));
+      const role = (r, c) => (ast.cellRole[r] && ast.cellRole[r][c]) || 'empty';
+      const owners = new Map();
+      for (const bx of ast.boxes) {
+        for (let r = bx.r1; r <= bx.r2; r++) for (let c = bx.c1; c <= bx.c2; c++) {
+          if (r !== bx.r1 && r !== bx.r2 && c !== bx.c1 && c !== bx.c2) continue;
+          const k = r * C + c;
+          if (!owners.has(k)) owners.set(k, []);
+          owners.get(k).push(bx);
+        }
+      }
+      const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+      const horiz = (d) => d === 1 || d === 3;
+      const isEnd = (r, c) => (r === a.r && c === a.c) || (r === b.r && c === b.c);
+      // cost of entering (r, c) moving in direction d; crossing cells can't be turned on
+      const enter = (r, c, d) => {
+        if (r < 0 || c < 0 || r >= R || c >= C || isEnd(r, c)) return null;
+        const ch = g[r][c] || ' ';
+        const ro = role(r, c);
+        if (ro === 'empty') return ch === ' ' ? { cost: 1, cross: false } : null;
+        if (ro === 'box-border') {
+          const own = owners.get(r * C + c) || [];
+          if (!own.length || !own.every((bx) => bx.isContainer)) return null;
+          for (const bx of own) {
+            const corner = (r === bx.r1 || r === bx.r2) && (c === bx.c1 || c === bx.c2);
+            const hWall = r === bx.r1 || r === bx.r2;
+            if (corner || hWall === horiz(d)) return null; // only straight across a wall
+          }
+          return { cost: 8, cross: true };
+        }
+        // Crossing another line: the '+' joins all four ways, so never right next to a wall
+        // (it would look attached to that box)
+        const wallBeside = (dr, dc) => role(r + dr, c + dc) === 'box-border' || role(r - dr, c - dc) === 'box-border';
+        if (ro === 'wire-h' && (ch === '-' || ch === '=') && !horiz(d) && !wallBeside(0, 1)) return { cost: 25, cross: true };
+        if (ro === 'wire-v' && (ch === '|' || ch === ':') && horiz(d) && !wallBeside(1, 0)) return { cost: 25, cross: true };
+        return null;
+      };
+      // Prefer open space: cells right next to a box cost a little more
+      const nearWall = (r, c) => DIRS.some(([dr, dc]) => !isEnd(r + dr, c + dc) && role(r + dr, c + dc) === 'box-border');
+
+      // A turn is drawn '+', which joins all four neighbours: it must not touch a wall other
+      // than the two endpoints, or the line would look attached to that box.
+      const cornerOk = (r, c) => DIRS.every(([dr, dc]) => {
+        const nr = r + dr, nc = c + dc;
+        return isEnd(nr, nc) || role(nr, nc) !== 'box-border';
+      });
+      // Dijkstra over (cell, direction)
+      const TURN = 3;
+      const key = (r, c, d) => (r * C + c) * 4 + d;
+      const dist = new Map(), prev = new Map(), crossAt = new Set();
+      const heap = [];
+      const push = (cost, r, c, d) => {
+        heap.push([cost, r, c, d]);
+        let i = heap.length - 1;
+        while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; }
+      };
+      const pop = () => {
+        const top = heap[0], last = heap.pop();
+        if (heap.length) {
+          heap[0] = last;
+          let i = 0;
+          for (;;) {
+            const l = 2 * i + 1, rr = l + 1;
+            let m = i;
+            if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+            if (rr < heap.length && heap[rr][0] < heap[m][0]) m = rr;
+            if (m === i) break;
+            [heap[m], heap[i]] = [heap[i], heap[m]];
+            i = m;
+          }
+        }
+        return top;
+      };
+      for (const { d } of startDirs) {
+        const r = a.r + DIRS[d][0], c = a.c + DIRS[d][1];
+        const e = enter(r, c, d);
+        if (!e || e.cross) continue;
+        const k = key(r, c, d);
+        dist.set(k, e.cost);
+        prev.set(k, null);
+        push(e.cost, r, c, d);
+      }
+      const goals = new Map(); // key -> true when arriving there moving into b
+      for (const { d } of endDirs) {
+        const r = b.r + DIRS[d][0], c = b.c + DIRS[d][1];
+        goals.set(key(r, c, (d + 2) % 4), true);
+      }
+      let found = null;
+      while (heap.length) {
+        const [cost, r, c, d] = pop();
+        const k = key(r, c, d);
+        if (cost > dist.get(k)) continue;
+        if (goals.has(k) && !crossAt.has(r * C + c)) { found = k; break; }
+        const here = crossAt.has(r * C + c);
+        for (let nd = 0; nd < 4; nd++) {
+          if (nd === (d + 2) % 4) continue;
+          if (here && nd !== d) continue;
+          if (nd !== d && !cornerOk(r, c)) continue;
+          const nr = r + DIRS[nd][0], nc = c + DIRS[nd][1];
+          const e = enter(nr, nc, nd);
+          if (!e) continue;
+          const nk = key(nr, nc, nd);
+          const ncost = cost + e.cost + (nd !== d ? TURN : 0) + (nearWall(nr, nc) ? 2 : 0);
+          if (ncost < (dist.has(nk) ? dist.get(nk) : Infinity)) {
+            dist.set(nk, ncost);
+            prev.set(nk, k);
+            if (e.cross) crossAt.add(nr * C + nc);
+            push(ncost, nr, nc, nd);
+          }
+        }
+      }
+      if (found === null) return { error: 'No route found between the two points (boxes or text are in the way)' };
+
+      // Walk back, then draw
+      const cells = [];
+      for (let k = found; k !== null; k = prev.get(k)) {
+        const d = k % 4, rc = (k - d) / 4;
+        cells.unshift({ r: Math.floor(rc / C), c: rc % C, d });
+      }
+      const endD = (endDirs.find(({ d }) => {
+        const last = cells[cells.length - 1];
+        return last.r === b.r + DIRS[d][0] && last.c === b.c + DIRS[d][1];
+      }) || endDirs[0]).d;
+      const intoB = (endD + 2) % 4;
+      const HEAD = ['^', '>', 'v', '<'];
+      cells.forEach((cell, i) => {
+        const inD = cell.d;
+        const outD = i < cells.length - 1 ? cells[i + 1].d : intoB;
+        const crossing = crossAt.has(cell.r * C + cell.c) && role(cell.r, cell.c) !== 'empty';
+        let ch;
+        if (crossing || inD !== outD) ch = '+';
+        else if (horiz(inD)) ch = opts.dashed ? '=' : '-';
+        else ch = opts.dashed ? ':' : '|';
+        if (i === cells.length - 1 && opts.arrow !== false) ch = HEAD[intoB];
+        g[cell.r][cell.c] = ch;
+      });
+      this.normalizeWidth(state);
+      const last = cells[cells.length - 1];
+      const res = { text: this.fromGridState(state), cursorR: last.r, cursorC: last.c };
+      // Boxes must all survive (a container wall crossing becomes '+', still a wall); the
+      // wiring changes by design, so only boxes are checked.
+      return this.guardOtherBoxes(rawText, res, 'connect', null, 0, false);
     }
   }
 

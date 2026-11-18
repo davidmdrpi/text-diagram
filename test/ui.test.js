@@ -228,3 +228,49 @@ test('nested example: right-click just left of Ingress inserts inside the contai
     await browser.close();
   }
 });
+
+test('connection via right-click: start, connect, toggles, place-only, Esc', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      ed.value = ['+-------+          +-------+', '| A     |          | B     |', '+-------+          +-------+', '', '', '+-------+', '| C     |', '+-------+'].join('\n');
+      ed.dispatchEvent(new Event('input'));
+    });
+    const text = () => page.inputValue('#ascii-editor');
+    const rc = async (r, c) => { const p = await cellXY(page, r, c); await page.mouse.click(p.x, p.y, { button: 'right' }); };
+    // 1. start on A's right wall
+    await rc(1, 8);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    assert.match(await page.textContent('#conn-status'), /Connecting from Ln 2, Col 9/);
+    // 2. connect to B's left wall (solid, arrow by default)
+    await rc(1, 19);
+    assert.ok(await page.locator('#ctx-menu button', { hasText: 'Connect to here (solid, arrow)' }).isVisible());
+    await page.locator('#ctx-menu button', { hasText: 'Connect to here' }).click();
+    assert.equal((await text()).split('\n')[1], '| A     +--------->+ B     |');
+    assert.equal(await page.textContent('#conn-status'), '');
+    // 3. toggles: dashed, no arrow; A -> C
+    await page.click('#toggle-conn-dashed');
+    await page.click('#toggle-conn-arrow');
+    assert.equal(await page.getAttribute('#toggle-conn-dashed', 'aria-pressed'), 'true');
+    await rc(2, 3);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    await rc(5, 3);
+    await page.locator('#ctx-menu button', { hasText: 'Connect to here (dashed)' }).click();
+    const lines = (await text()).split('\n');
+    assert.equal(lines[3][3], ':');
+    assert.equal(lines[4][3], ':', 'dashed vertical, no arrowhead');
+    // 4. place a point only, then Esc cancels a pending start
+    await rc(6, 8);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    await rc(1, 26);
+    await page.locator('#ctx-menu button', { hasText: 'Place a point only' }).click();
+    assert.equal((await text()).split('\n')[1][27], '+', 'on B\'s right wall, nearest the click');
+    assert.match(await page.textContent('#conn-status'), /Connecting from/, 'still pending');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.textContent('#conn-status'), '');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
