@@ -1484,7 +1484,9 @@
           if (wireV(grid[box.r2 + 1] || [], c)) across.push({ inR: box.r2, outR: box.r2 + 1, beyondR: box.r2 + 2, c });
         }
       } else {
-        const horizWire = (ch) => ch === '-' || ch === '=' || ch === '<' || ch === '>';
+        // A line leaving the wall sideways: a straight piece, an arrowhead, or a corner/junction
+        // (after a first move the cell outside the '+' is the jog's corner)
+        const horizWire = (ch) => '-=<>+*'.includes(ch) && ch !== ' ';
         for (let r = box.r1 + 1; r < box.r2; r++) {
           // in transposed coordinates: rows are columns
           if (box.c1 > 0 && horizWire(grid[r][box.c1 - 1])) across.push({ inR: box.c1, outR: box.c1 - 1, beyondR: box.c1 - 2, c: r });

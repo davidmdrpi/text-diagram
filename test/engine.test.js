@@ -1466,3 +1466,53 @@ test('moving a box keeps its connections stuck to their + points (both direction
   }
   assert.equal(u, horizontal);
 });
+
+test('regression (PR #9 follow-up review): a plain connection keeps following on repeated moves', () => {
+  // No arrowhead: after the first move the cell outside the '+' is the jog corner '+'
+  const plain = ['+-----+       +-----+', '| L   +-------+ R   |', '+-----+       |     |', '              +-----+'].join('\n');
+  let t = plain;
+  for (const dr of [1, 1, 1, -1, -1, -1]) {
+    const R = parse(t).boxes.find((b) => b.lines[0] === 'R');
+    const res = Grid2DEditor.shiftBoxWithElasticWires(t, R, dr, 0);
+    assert.ok(!res.error, res.error);
+    t = res.text;
+    const moved = parse(t).boxes.find((b) => b.lines[0] === 'R');
+    assert.equal(t.split('\n')[moved.r1 + 1][moved.c1 - 1], '+', 'the line still meets R right outside its +');
+    assert.deepEqual(wiring(t), ['L – R']);
+  }
+  assert.equal(t, plain, 'round trip');
+  // The source end of an arrowed connection follows too
+  const arrowed = ['+-----+       +-----+', '| L   +------>| R   |', '|     |       |     |', '+-----+       +-----+'].join('\n');
+  let u = arrowed;
+  for (const dr of [1, 1, -1, -1]) {
+    const L = parse(u).boxes.find((b) => b.lines[0] === 'L');
+    const res = Grid2DEditor.shiftBoxWithElasticWires(u, L, dr, 0);
+    assert.ok(!res.error, res.error);
+    u = res.text;
+    assert.deepEqual(wiring(u), ['L – R']);
+    assert.ok(parse(u).arrows.find((a) => a.dir === '>').touchesBox, 'arrowhead still against R');
+  }
+  assert.equal(u, arrowed, 'round trip');
+});
+
+test('moving boxes in the examples keeps every connection (typed ASCII arrows are connections too)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
+  const nm = (b) => b.macroKey || b.lines[0];
+  const byName = (t) => {
+    const p = new DitaaParser();
+    const ast = p.parse(t);
+    return p.connections(ast).map((ids) => ids.map((i) => nm(ast.boxes[i])).sort().join(' – ')).sort();
+  };
+  for (const [preset, key, dr, dc] of [['arch', 'Q', 1, 0], ['arch', 'Q', 0, 1], ['arch', 'D', 0, 1],
+    ['arch', 'Session Cache', 0, -1], ['flowchart', 'Process', 1, 0], ['flowchart', 'Show error', 0, 1]]) {
+    const t = PRESETS[preset];
+    const b = parse(t).boxes.find((x) => nm(x) === key);
+    const res = Grid2DEditor.shiftBoxWithElasticWires(t, b, dr, dc);
+    assert.ok(!res.error, `${preset} ${key}: ${res.error}`);
+    assert.deepEqual(byName(res.text), byName(t), `${preset}: move ${key}`);
+  }
+});
