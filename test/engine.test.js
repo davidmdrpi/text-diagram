@@ -1952,3 +1952,23 @@ test('regression (PR #12 review): in OVR, a collision on one line does not stop 
   assert.equal(withX.text.split('\n')[1], without.text.split('\n')[1]);
   assert.deepEqual(conns(withX.text), ['A–B']);
 });
+
+test('regression (PR #12 re-review): when INS makes room, lines behind the block stay attached too', () => {
+  const G = Grid2DEditor;
+  const group = { r1: 0, c1: 8, r2: 2, c2: 18 };
+  const clear = '+---+   +---+ +---+\n| A +--+| B |>| C |\n+---+  |+---+ +---+\n       |';
+  const blocked = '+---+   +---+ +---+x\n| A +--+| B |>| C |\n+---+  |+---+ +---+\n       |';
+  for (const t of [clear, blocked]) {
+    const res = G.moveBlock(t, group, 0, 1);
+    assert.ok(!res.error, res.error);
+    assert.equal(res.text.split('\n')[1], '| A +--+-| B |>| C |', JSON.stringify(t));
+    assert.deepEqual(conns(res.text), ['A–B', 'B–C']);
+  }
+  assert.equal(G.moveBlock(blocked, group, 0, 1).text.split('\n')[0], '+---+    +---+ +---+x', 'the x was moved over to make room');
+  // The same going down, with a junction above and something in the way below
+  const v = '+---+\n| A |\n+-+-+\n  +--\n+---+\n| B |\n+---+\nxxxxx';
+  const res = G.moveBlock(v, { r1: 4, c1: 0, r2: 6, c2: 4 }, 1, 0);
+  assert.deepEqual(res.text.split('\n').slice(3, 6), ['  +--', '  |', '+---+']);
+  assert.deepEqual(conns(res.text), ['A–B']);
+  assert.equal(res.text.split('\n').pop(), 'xxxxx');
+});

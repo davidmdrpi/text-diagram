@@ -3228,25 +3228,30 @@
       }
       const moved = { r1: b.r1 + dr, c1: b.c1 + dc, r2: b.r2 + dr, c2: b.c2 + dc };
       const done = (text) => ({ text, cursorR: moved.r1, cursorC: moved.c1, block: moved });
-      if (blocked && !opts.overwrite) {
-        if (dr < 0 || dc < 0) {
-          return { error: `Something is in the way ${dr < 0 ? 'above' : 'on the left'}: move it first, or switch to OVR to move over it` };
-        }
-        const n = Math.max(this.diagramLineCount(rawText), b.r2 + 1);
-        while (lines.length < n) lines.push('');
-        if (dc > 0) this.insertContinuingColumn(lines, b.c1, n, { lo: b.r1, hi: b.r2 });
-        else this.insertContinuingRow(lines, b.r1);
-        return done(lines.map((l) => l.replace(/\s+$/, '')).join('\n'));
+      const makeRoom = blocked && !opts.overwrite;
+      if (makeRoom && (dr < 0 || dc < 0)) {
+        return { error: `Something is in the way ${dr < 0 ? 'above' : 'on the left'}: move it first, or switch to OVR to move over it` };
       }
-      const block = this.blockText(rawText, b);
-      const out = this.textLines(this.overwriteBlock(this.clearBlock(rawText, b).text, moved.r1, moved.c1, block).text);
+      let out;
+      if (makeRoom) {
+        // Make room: a column / line before the block moves it (and what's beside it) over
+        out = lines.slice();
+        const n = Math.max(this.diagramLineCount(rawText), b.r2 + 1);
+        while (out.length < n) out.push('');
+        if (dc > 0) this.insertContinuingColumn(out, b.c1, n, { lo: b.r1, hi: b.r2 });
+        else this.insertContinuingRow(out, b.r1);
+      } else {
+        const block = this.blockText(rawText, b);
+        out = this.textLines(this.overwriteBlock(this.clearBlock(rawText, b).text, moved.r1, moved.c1, block).text);
+      }
       const put = (r, c, ch) => {
         while (out.length <= r) out.push('');
         const l = out[r].padEnd(c + 1);
         out[r] = l.slice(0, c) + ch + l.slice(c + 1);
       };
-      for (const [r, c, ch] of heads) put(r, c, ch);
-      // Lines attached on the side the block moved away from follow it across the gap: an
+      if (!makeRoom) for (const [r, c, ch] of heads) put(r, c, ch);
+      // (both when lifted and when room was made) Lines attached on the side the block moved
+      // away from follow it across the gap: an
       // arrowhead pointing at the block moves up to it; any other line end (a shaft, an
       // arrowhead pointing away, a junction) gets a piece of shaft to reach it
       const fill = (o, dashed) => (dc ? (o === '=' || dashed ? '=' : '-') : (o === ':' || dashed ? ':' : '|'));
@@ -3257,6 +3262,7 @@
         const [gr, gc] = dc ? [i, dc > 0 ? b.c1 : b.c2] : [dr > 0 ? b.r1 : b.r2, i];
         const [nr, nc] = [gr + dr, gc + dc];
         const o = get(or, oc), e = (out[nr] || '')[nc] || ' ';
+        if (((out[gr] || '')[gc] || ' ') !== ' ') continue; // the gap is already bridged
         if (o === ' ' || !ends.includes(o) || !wire(or, oc) || !edge(e)) continue;
         if (o === toward) {
           put(gr, gc, o);
