@@ -881,7 +881,9 @@
       if (!w || Math.abs(w.r - cell.r) + Math.abs(w.c - cell.c) > 1) return false;
     }
     const res = Grid2DEditor.connectToWall(editor.value, conn.pending, hit, cell.r, cell.c, { dashed: conn.dashed, arrow: conn.arrow });
-    if (!res.error) setPending(null);
+    // Success or not, the attempt ends the pending connection: never leave the user stuck
+    setPending(null);
+    if (res.error) res.error += ' (connection cancelled)';
     applyGridOperationResult(res, 'Connected');
     return true;
   }

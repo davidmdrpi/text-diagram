@@ -1431,7 +1431,8 @@
      * Shifts a box by (dr, dc) and stretches/compresses wires attached to its walls.
      */
     static shiftBoxWithElasticWires(rawText, box, dr, dc) {
-      return this.guardOtherBoxes(rawText, this.shiftBoxUnchecked(rawText, box, dr, dc), 'move');
+      // A move is a plain text operation: the user is always right (Undo is there)
+      return this.shiftBoxUnchecked(rawText, box, dr, dc);
     }
 
     static shiftBoxUnchecked(rawText, box, dr, dc) {
@@ -1475,24 +1476,6 @@
       }
 
       const nr1 = box.r1 + dr, nc1 = box.c1 + dc, nr2 = box.r2 + dr, nc2 = box.c2 + dc;
-      // Connections on the walls across the move (top/bottom for a sideways move, left/right
-      // for an up/down move) stay stuck to their '+': recorded here, re-joined after the move.
-      const across = [];
-      if (dc !== 0) {
-        for (let c = box.c1 + 1; c < box.c2; c++) {
-          if (box.r1 > 0 && wireV(grid[box.r1 - 1], c)) across.push({ inR: box.r1, outR: box.r1 - 1, beyondR: box.r1 - 2, c });
-          if (wireV(grid[box.r2 + 1] || [], c)) across.push({ inR: box.r2, outR: box.r2 + 1, beyondR: box.r2 + 2, c });
-        }
-      } else {
-        // A line leaving the wall sideways: a straight piece, an arrowhead, or a corner/junction
-        // (after a first move the cell outside the '+' is the jog's corner)
-        const horizWire = (ch) => '-=<>+*'.includes(ch) && ch !== ' ';
-        for (let r = box.r1 + 1; r < box.r2; r++) {
-          // in transposed coordinates: rows are columns
-          if (box.c1 > 0 && horizWire(grid[r][box.c1 - 1])) across.push({ inR: box.c1, outR: box.c1 - 1, beyondR: box.c1 - 2, c: r });
-          if (horizWire(grid[r][box.c2 + 1] || ' ')) across.push({ inR: box.c2, outR: box.c2 + 1, beyondR: box.c2 + 2, c: r });
-        }
-      }
       for (let r = 0; r < boxH; r++) {
         for (let c = 0; c < boxW; c++) grid[nr1 + r][nc1 + c] = snapshot[r][c];
       }
@@ -1547,20 +1530,6 @@
         }
       }
 
-      if (across.length) {
-        if (dc !== 0) {
-          this.rejoinLinks(state, across, dc);
-        } else {
-          const T = this.transposeState(state);
-          this.rejoinLinks(T, across, dr);
-          const back = this.transposeState(T);
-          state.grid = back.grid;
-          state.rows = back.rows;
-          state.cols = back.cols;
-        }
-        // If a line can't follow (no room for a jog), it keeps touching the wall as before
-        state.routeBlocked = null;
-      }
 
       return {
         text: this.fromGridState(state),
@@ -1605,7 +1574,6 @@
      */
     static insertColumnEverywhere(state, at, band = null) {
       const lo = band ? band.lo : 0, hi = band ? band.hi : state.rows - 1;
-      const links = band ? this.boundaryLinks(state, lo, hi, (c) => c >= at) : [];
       for (let r = lo; r <= hi; r++) {
         const row = state.grid[r];
         while (row.length < at) row.push(' ');
@@ -1626,117 +1594,7 @@
         row.splice(pos, 0, ch);
       }
       this.normalizeWidth(state);
-      this.rejoinLinks(state, links, +1);
       return null;
-    }
-
-    /**
-     * Vertical lines that cross the edge of a band of shifted rows: for each boundary
-     * (inside row, outside row) the columns where both cells are vertical-ish and `moves(c)`
-     * says the inside cell is about to shift.
-     */
-    static boundaryLinks(state, lo, hi, moves) {
-      const links = [];
-      // Box corners are not wire ports: a jog drawn right under one must not look attached
-      const corners = new Set();
-      for (const bx of new DitaaParser().parse(this.fromGridState(state)).boxes) {
-        for (const [r, c] of [[bx.r1, bx.c1], [bx.r1, bx.c2], [bx.r2, bx.c1], [bx.r2, bx.c2]]) corners.add(`${r},${c}`);
-      }
-      const pairs = [[lo, lo - 1, lo - 2], [hi, hi + 1, hi + 2]];
-      for (const [inR, outR, beyondR] of pairs) {
-        if (outR < 0 || outR >= state.rows) continue;
-        const I = state.grid[inR], O = state.grid[outR];
-        for (let c = 0; c < Math.min(I.length, O.length); c++) {
-          if (moves(c) && wireV(I, c) && wireV(O, c) && !corners.has(`${inR},${c}`) && !corners.has(`${outR},${c}`)) {
-            links.push({ inR, outR, beyondR, c });
-          }
-        }
-      }
-      return links;
-    }
-
-    /**
-     * After the band shifted by `d` (+1/-1), reconnects each link through the outside row.
-     * The wire continues away from the band at column w (the link's own column, or the far
-     * corner of a jog drawn by an earlier step), so the outside row is redrawn as a single
-     * jog from w to the link's new column: "+--+", or a straight "|" once they line up
-     * again. Stateless: works the same whether the jog was drawn this keystroke or earlier.
-     * A link whose path is blocked by something else is left as it is.
-     */
-    static rejoinLinks(state, links, d) {
-      if (!links.length) return;
-      const order = d > 0 ? links.slice().sort((a, b) => b.c - a.c) : links.slice().sort((a, b) => a.c - b.c);
-      for (const { inR, outR, beyondR, c } of order) {
-        const fail = () => { state.routeBlocked = state.routeBlocked || { r: outR, c }; };
-        const to = c + d;
-        if (to < 0 || outR < 0 || outR >= state.rows) { fail(); continue; }
-        const O = state.grid[outR];
-        while (O.length <= Math.max(c, to) + 1) O.push(' ');
-        // An arrowhead against the wall moves along with the connection point and keeps
-        // pointing straight in; the jog is then drawn one row further out.
-        const head = O[c] === 'v' || O[c] === '^' ? O[c] : null;
-        const jogR = head ? beyondR : outR;
-        const jbR = head ? beyondR + (beyondR - outR) : beyondR;
-        if (jogR < 0 || jogR >= state.rows) { fail(); continue; }
-        const J = state.grid[jogR];
-        const JB = state.grid[jbR] || [];
-        while (J.length <= Math.max(c, to) + 1) J.push(' ');
-        // Find w, where the wire leaves the jog row away from the box
-        let w = -1;
-        if (wireV(JB, c) && (J[c] === '|' || J[c] === ':' || J[c] === '+')) w = c;
-        else {
-          for (const step of [-1, 1]) {
-            let k = c + step;
-            while (k >= 0 && k < J.length && (J[k] === '-' || J[k] === '=')) k += step;
-            if (k >= 0 && k < J.length && J[k] === '+' && wireV(JB, k)) { w = k; break; }
-          }
-        }
-        if (w === -1) { fail(); continue; }
-        const dashed = J.slice(Math.min(w, c), Math.max(w, c) + 1).includes('=') || JB[w] === ':';
-        const savedO = O.slice(), savedJ = J.slice();
-        const restore = () => { state.grid[outR] = savedO; state.grid[jogR] = savedJ; };
-        if (head) O[c] = ' ';
-        // Erase the old jog (w..c), check the new path (w..to) is free, then draw it
-        for (let k = Math.min(w, c); k <= Math.max(w, c); k++) J[k] = ' ';
-        let free = true;
-        for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (J[k] !== ' ') free = false;
-        if (head && O[to] !== ' ') free = false;
-        if (!free) { restore(); fail(); continue; }
-        // The jog's far corner must not touch anything in the row next to it (toward the box),
-        // or the wire would look attached to that (e.g. a box that grew over it)
-        const I = head ? O : state.grid[inR];
-        const sameWall = () => {
-          // Wall characters, including rounded corners (/ \ . ')
-          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (!"-=+/\\.'".includes(I[k] || ' ') || (I[k] || ' ') === ' ') return false;
-          return true; // one unbroken wall from the port to the corner: the same box
-        };
-        const structural = (ch) => "|:+*-=/\\.'<>^v".includes(ch) && ch !== ' ';
-        if (to !== w && structural(I[w] || ' ') && !sameWall()) { restore(); fail(); continue; }
-        if (to === w) {
-          J[w] = head ? (JB[w] === ':' ? ':' : '|') : (JB[w] === ':' || (state.grid[inR][to] || ' ') === ':' ? ':' : '|');
-        } else {
-          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) J[k] = dashed ? '=' : '-';
-          J[w] = '+';
-          J[to] = '+';
-        }
-        if (head) O[to] = head;
-      }
-      this.normalizeWidth(state);
-    }
-
-    /** Swaps rows and columns (and the line characters with them): used to reuse row logic for columns. */
-    static transposeState(state) {
-      const MAP = { '-': '|', '|': '-', '=': ':', ':': '=', '<': '^', '^': '<', '>': 'v', v: '>' };
-      this.normalizeWidth(state);
-      const grid = Array.from({ length: state.cols }, (_, c) =>
-        Array.from({ length: state.rows }, (_, r) => { const ch = state.grid[r][c]; return MAP[ch] || ch; }));
-      return { grid, rows: state.cols, cols: state.rows, legendLines: state.legendLines };
-    }
-
-    /** Error if a wire next to a moved box could not be re-joined (see rejoinLinks). */
-    static routeError(state, verb) {
-      if (!state.routeBlocked) return null;
-      return { error: `Cannot ${verb}: the wire at line ${state.routeBlocked.r + 1} has no room to follow the box that moves (clear the space next to it first)` };
     }
 
     static normalizeWidth(state) {
@@ -1767,10 +1625,8 @@
           return { error: `Cannot narrow: ${ch === ' ' ? 'it would join text' : `"${ch}" is in the way`} on line ${r + 1}` };
         }
       }
-      const links = band ? this.boundaryLinks(state, lo, hi, (c) => c > at) : [];
       for (let r = lo; r <= hi; r++) state.grid[r].splice(at, 1);
       this.normalizeWidth(state);
-      this.rejoinLinks(state, links, -1);
       return null;
     }
 
@@ -2072,8 +1928,6 @@
 
       if (dw > 0) {
         this.growDiamondH(state, box);
-        const routed = this.routeError(state, 'widen');
-        if (routed) return routed;
       } else if (dw < 0) {
         // Take a column out on each side of the centre, then put one back left of the left
         // wall so the centre (and the wires on the top/bottom ports) stays put.
@@ -2083,8 +1937,6 @@
           this.removeColumnEverywhere(state, box.c1 + 1, box, band);
         if (err) return err;
         this.insertColumnEverywhere(state, box.c1, band);
-        const routed = this.routeError(state, 'narrow');
-        if (routed) return routed;
       }
 
       if (dh > 0) {
@@ -2115,7 +1967,7 @@
      * change). Glyph-level checks can't see that, e.g. removing the last interior column of
      * a small empty box elsewhere collapses it.
      */
-    static guardOtherBoxes(rawText, res, verb, exceptBox = null, allowNew = 0, checkWires = true) {
+    static guardOtherBoxes(rawText, res, verb, exceptBox = null, allowNew = 0, checkWires = false) {
       if (!res || res.error) return res;
       const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
       const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
@@ -2204,8 +2056,6 @@
           if (err) return err;
         }
       }
-      const routed = this.routeError(state, dw > 0 ? 'widen' : 'narrow');
-      if (routed) return routed;
       if (dh < 0) {
         const targetR = box.r2 - 1;
         for (let c = box.c1 + 1; c < box.c2; c++) {
@@ -2399,8 +2249,6 @@
           const cols = this.insertColumns(state, Array(missing).fill(run.end), box.r1, box.r2);
           cur = { r: cur.r, c: cur.c + cols.filter((x) => x < cur.c).length };
         }
-        const routed = this.routeError(state, 'grow the box');
-        if (routed) return routed;
         text = this.fromGridState(state);
       }
       return { error: 'Cannot fit that much text: the box would grow too large' };
@@ -2742,8 +2590,6 @@
             const need = encl.c1 + 2 - Math.min(...cellsOf(L).map(([, c]) => c));
             if (need > 0) {
               this.insertColumns(state, Array(need).fill(b.c1), encl.r1, encl.r2);
-              const routed = this.routeError(state, 'insert here');
-              if (routed) return routed;
               b = { ...b, c1: b.c1 + need, c2: b.c2 + need };
             }
           } else {
@@ -2784,8 +2630,6 @@
         if (side === 'right') {
           const lo = Math.min(b.r1, L.shape ? L.shape.r0 : b.r1), hi = Math.max(b.r2, L.shape ? L.shape.r0 + h - 1 : b.r2);
           this.insertColumns(state, Array(GAP + w + (tpl ? 1 : 0)).fill(b.c2 + 1), Math.max(0, lo), hi);
-          const routed = this.routeError(state, 'insert here');
-          if (routed) return routed;
         } else {
           this.insertRowsMovingBoxes(state, b.r2 + 1, GAP + h, b);
         }
@@ -4004,7 +3848,9 @@
       if (!w || Math.abs(w.r - cell.r) + Math.abs(w.c - cell.c) > 1) return false;
     }
     const res = Grid2DEditor.connectToWall(editor.value, conn.pending, hit, cell.r, cell.c, { dashed: conn.dashed, arrow: conn.arrow });
-    if (!res.error) setPending(null);
+    // Success or not, the attempt ends the pending connection: never leave the user stuck
+    setPending(null);
+    if (res.error) res.error += ' (connection cancelled)';
     applyGridOperationResult(res, 'Connected');
     return true;
   }
