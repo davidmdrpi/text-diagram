@@ -1612,3 +1612,41 @@ test('pasting a copied column inserts it on every diagram line: horizontal lines
   const over = G.pasteBlockOverwrite(ROWCOL, 4, 2, text, kind);
   assert.equal(over.text.split('\n')[1], '| - +--->+ B |');
 });
+
+/* ---------------- PR #10 review ---------------- */
+
+test('regression (PR #10 review): a connection in empty space ends exactly on the cell clicked, past the text in any direction', () => {
+  const G = Grid2DEditor;
+  for (const t of ['', '+---+\n| A |\n+---+']) {
+    for (const [r, c] of [[0, 50], [12, 4], [20, 60], [3, 0]]) {
+      const from = t ? { r: 1, c: 4 } : { r: 0, c: 0 };
+      const start = G.startConnection(t, from.r, from.c);
+      assert.ok(!start.error, start.error);
+      const res = G.connectTo(t, start.port, r, c, { arrow: true });
+      assert.ok(!res.error, `${JSON.stringify(t)} → (${r},${c}): ${res.error}`);
+      assert.deepEqual([res.cursorR, res.cursorC], [r, c], 'the end is the clicked cell');
+      assert.match(res.text.split('\n')[r][c], /[<>^v]/, 'with the arrowhead on it');
+    }
+  }
+});
+
+test('regression (PR #10 review): pasting whole columns never writes into the legend or comments', () => {
+  const G = Grid2DEditor;
+  const { text, kind } = G.blockCopy('axx\nbxx\ncxx\ndxx', { r1: 0, r2: 3, c1: 0, c2: 0 });
+  assert.equal(kind, 'cols');
+  // Taller than the destination's diagram: blank lines are added above the footer first
+  assert.equal(G.pasteBlockInsert('XX\nYY\n# keep', 0, 0, text, kind).text, 'aXX\nbYY\nc\nd\n# keep');
+  assert.equal(G.pasteBlockOverwrite('XX\nYY\n# keep', 0, 0, text, kind).text, 'aX\nbY\nc\nd\n# keep');
+  // Shorter: in insert mode every diagram line still shifts together; the legend doesn't
+  const dest = 'XX\nYY\nZZ\nWW\nVV\n\n# [D] = keep';
+  assert.equal(G.pasteBlockInsert(dest, 0, 1, 'a\nb', 'cols').text, 'XaX\nYbY\nZ Z\nW W\nV V\n\n# [D] = keep');
+  assert.equal(G.pasteBlockOverwrite(dest, 0, 1, 'a\nb', 'cols').text, 'Xa\nYb\nZZ\nWW\nVV\n\n# [D] = keep');
+});
+
+test('regression (PR #10 review): deleting every row leaves an empty text with the caret at (0, 0)', () => {
+  const G = Grid2DEditor;
+  const res = G.removeBlock('abc', { r1: 0, r2: 0, c1: 0, c2: 2 }, false);
+  assert.deepEqual(res, { text: '', cursorR: 0, cursorC: 0 });
+  assert.equal(G.overwriteBlock(res.text, res.cursorR, res.cursorC, 'X').text, 'X');
+  assert.equal(G.overwriteBlock('', -1, -1, 'X').text, 'X', 'a stale negative caret is clamped');
+});

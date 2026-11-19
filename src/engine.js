@@ -2655,6 +2655,7 @@
      * after the last character written.
      */
     static overwriteBlock(rawText, r, c, block) {
+      r = Math.max(0, r); c = Math.max(0, c);
       const lines = this.textLines(rawText);
       const bl = this.blockLines(block);
       bl.forEach((s, i) => {
@@ -2667,6 +2668,7 @@
 
     /** Inserts `block` as columns at (r, c) on consecutive lines: text to its right moves over. */
     static insertBlock(rawText, r, c, block) {
+      r = Math.max(0, r); c = Math.max(0, c);
       const lines = this.textLines(rawText);
       const bl = this.blockLines(block);
       bl.forEach((s, i) => {
@@ -2727,7 +2729,8 @@
     static deleteTextRows(rawText, r1, r2) {
       const lines = this.textLines(rawText);
       lines.splice(r1, r2 - r1 + 1);
-      return { text: lines.join('\n'), cursorR: Math.min(r1, lines.length - 1), cursorC: 0 };
+      if (!lines.length) lines.push(''); // an empty text still has a line for the caret
+      return { text: lines.join('\n'), cursorR: Math.max(0, Math.min(r1, lines.length - 1)), cursorC: 0 };
     }
 
     /**
@@ -2737,15 +2740,36 @@
      */
     static pasteBlockInsert(rawText, r, c, block, kind) {
       if (kind === 'rows') return this.insertTextRows(rawText, r, block, c);
-      if (kind === 'cols') return { ...this.insertBlock(rawText, 0, c, block), cursorR: r, cursorC: c };
+      if (kind === 'cols') {
+        const fit = this.fitColumnsToDiagram(rawText, block, true);
+        return { ...this.insertBlock(fit.text, 0, c, fit.block), cursorR: r, cursorC: c };
+      }
       return this.insertBlock(rawText, r, c, block);
     }
 
     /** Pastes a copied block in overwrite mode: rows over whole lines from line r, columns from the top. */
     static pasteBlockOverwrite(rawText, r, c, block, kind) {
       if (kind === 'rows') return { ...this.overwriteBlock(rawText, r, 0, block), cursorR: r, cursorC: c };
-      if (kind === 'cols') return { ...this.overwriteBlock(rawText, 0, c, block), cursorR: r, cursorC: c };
+      if (kind === 'cols') {
+        const fit = this.fitColumnsToDiagram(rawText, block, false);
+        return { ...this.overwriteBlock(fit.text, 0, c, fit.block), cursorR: r, cursorC: c };
+      }
       return this.overwriteBlock(rawText, r, c, block);
+    }
+
+    /**
+     * Whole columns go into the destination's diagram lines only, never its legend / comment
+     * lines: a taller block gets blank lines added above that footer first. With `pad`
+     * (insert mode) a shorter block is padded with blanks so every diagram line shifts
+     * together and stays aligned.
+     */
+    static fitColumnsToDiagram(rawText, block, pad) {
+      const lines = this.textLines(rawText);
+      const n = this.diagramLineCount(rawText);
+      const bl = this.blockLines(block);
+      if (bl.length > n) lines.splice(n, 0, ...Array(bl.length - n).fill(''));
+      if (pad) while (bl.length < n) bl.push(' '.repeat(bl[0].length));
+      return { text: lines.join('\n'), block: bl.join('\n') };
     }
 
     /** Cut / Delete of a block: insert mode removes the room it took (lines, columns), overwrite mode blanks it. */
@@ -2934,7 +2958,9 @@
       const startDirs = kindA === 'wall' ? this.portDirections(ast0.boxes, a.r, a.c) : ALL;
       const endDirs = kindB === 'wall' ? this.portDirections(ast0.boxes, b.r, b.c) : ALL;
 
-      const R = ast0.numRows + 8, C = ast0.numCols + 40;
+      // The search grid must hold both ends (a free end can be past the text), or cell keys alias
+      const R = Math.max(ast0.numRows, a.r + 1, b.r + 1) + 8;
+      const C = Math.max(ast0.numCols, a.c + 1, b.c + 1) + 40;
       const state = this.toGridState(rawText, R, C);
       const g = state.grid;
       if (kindB === 'wall') g[b.r][b.c] = '+';

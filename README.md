@@ -52,7 +52,8 @@ make the outer box bigger first.
 overwrite mode typing replaces the character under the caret (shown as a highlighted cell),
 Backspace and Delete blank characters instead of pulling text along, a click puts the caret on
 the cell clicked (even past the end of a line), and paste writes over the text at the caret.
-Nothing is auto-fitted in overwrite mode; Enter works as usual.
+Nothing is auto-fitted in overwrite mode, even with *Fit* on: Enter is a plain line break and
+typing over a selection is plain replacement.
 
 **Block selection** is on by default (`▭ Block` at the bottom right): a drag selects a
 rectangle, not runs of lines. Shift+Arrows grow a rectangle from the caret (Shift+Down from a

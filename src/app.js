@@ -410,7 +410,8 @@
     typingBurstTimer = setTimeout(() => { typingBurstTimer = null; }, 700);
 
     if (overwriteInput(e)) return;
-    if (!toggleAutofit.checked || e.isComposing) return;
+    // Auto-fit is an insert-mode feature: in overwrite mode every edit is literal text editing
+    if (!toggleAutofit.checked || modes.overwrite || e.isComposing) return;
     const op = boxOpFor(e);
     if (!op) return;
     const res = boxEdit(op);
@@ -966,7 +967,7 @@
         const clip = await navigator.clipboard.readText();
         if (pasteSpecial(clip)) return;
         // Same path as typing: pasting into a box grows it and replaces a selection there
-        const res = toggleAutofit.checked ? boxEdit({ type: 'insert', text: clip }) : null;
+        const res = toggleAutofit.checked && !modes.overwrite ? boxEdit({ type: 'insert', text: clip }) : null;
         if (res && !res.error) applyGridOperationResult(res);
         else {
           if (res && res.error) showToast(`Pasted as plain text (${res.error.replace(/^Cannot [^:]*:\s*/, '')})`);

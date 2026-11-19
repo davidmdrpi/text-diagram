@@ -494,3 +494,41 @@ test('block selection (on by default): rectangles, whole rows and whole columns;
     await browser.close();
   }
 });
+
+test('regression (PR #10 review): with Fit on, overwrite mode never auto-fits (Enter, typing over a selection)', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    const box = ['+-----+', '| A   |', '+-----+'];
+    const set = (lines) => page.evaluate((v) => {
+      const ed = document.getElementById('ascii-editor');
+      ed.value = v.join('\n');
+      ed.dispatchEvent(new Event('input'));
+    }, lines);
+    await set(box);
+    assert.equal(await page.isChecked('#toggle-autofit'), true, 'Fit is on');
+    await page.click('#toggle-overwrite');
+    const caret = (r, c) => page.evaluate(([r, c]) => {
+      const ed = document.getElementById('ascii-editor');
+      const lines = ed.value.split('\n');
+      let i = c;
+      for (let k = 0; k < r; k++) i += lines[k].length + 1;
+      ed.focus();
+      ed.selectionStart = ed.selectionEnd = i;
+    }, [r, c]);
+    // Enter after "A": a plain line break, not a new bordered row
+    await caret(1, 3);
+    await page.keyboard.press('Enter');
+    assert.equal(await page.inputValue('#ascii-editor'), ['+-----+', '| A', '   |', '+-----+'].join('\n'));
+    // Typing over a selection: the first key replaces it as plain text (the box isn't
+    // refitted), then the rest overwrite what follows, the wall included
+    await set(box);
+    await page.evaluate(() => { const ed = document.getElementById('ascii-editor'); ed.focus(); ed.selectionStart = 10; ed.selectionEnd = 11; });
+    await page.keyboard.type('L');
+    assert.equal(await page.inputValue('#ascii-editor'), ['+-----+', '| L   |', '+-----+'].join('\n'));
+    await page.keyboard.type('ONGER');
+    assert.equal(await page.inputValue('#ascii-editor'), ['+-----+', '| LONGER', '+-----+'].join('\n'));
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
