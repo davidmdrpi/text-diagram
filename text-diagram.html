@@ -2031,8 +2031,122 @@
       return res;
     }
 
+    /** The smallest box that strictly encloses `box` (its container), or null. */
+    static enclosingBox(boxes, box) {
+      const inside = (p) => p.r1 < box.r1 && p.r2 > box.r2 && p.c1 < box.c1 && p.c2 > box.c2;
+      return boxes.filter(inside).sort((p, q) => (p.r2 - p.r1) * (p.c2 - p.c1) - (q.r2 - q.r1) * (q.c2 - q.c1))[0] || null;
+    }
+
+    /**
+     * Resizes a box that sits inside another box by moving its own walls into (or out of)
+     * the empty space around it. The outer box never changes: if there isn't enough empty
+     * space inside it, the user is asked to make the outer box bigger first.
+     * Rectangles grow/shrink on the right and bottom; diamonds on both sides of their centre
+     * (so their ports stay on the vertices). Returns { text, cursorR, cursorC } or { error }.
+     */
+    static resizeInside(rawText, box, outer, dw, dh) {
+      const state = this.toGridState(rawText, box.r2 + 2, box.c2 + 2);
+      const g = state.grid;
+      const at = (r, c) => (g[r] && g[r][c]) || ' ';
+      const outerName = this.boxName(new DitaaParser().parse(rawText), outer);
+      const name = outerName && outerName !== 'box' ? `“${outerName}”` : 'the box around it';
+      const noRoom = { error: `Not enough empty space inside ${name}: make it bigger first` };
+      const blank = (r1, c1, r2, c2) => {
+        for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) if (at(r, c) !== ' ') return false;
+        return true;
+      };
+      const insideOuter = (r1, c1, r2, c2) => r1 > outer.r1 && r2 < outer.r2 && c1 > outer.c1 && c2 < outer.c2;
+      const dashedH = at(box.r1, box.c1 + 1) === '=' ? '=' : '-';
+      const dashedV = at(box.r1 + 1, box.c1) === ':' ? ':' : '|';
+      // Move the vertical wall at column `from` to column `to` (rows r1..r2), filling the gap
+      const moveWallCol = (b, from, to) => {
+        for (let r = b.r1; r <= b.r2; r++) {
+          const wall = at(r, from);
+          const fill = r === b.r1 || r === b.r2 ? dashedH : ' ';
+          for (let c = Math.min(from, to); c <= Math.max(from, to); c++) g[r][c] = fill;
+          g[r][to] = wall;
+        }
+      };
+      const moveWallRow = (b, from, to) => {
+        for (let c = b.c1; c <= b.c2; c++) {
+          const wall = at(from, c);
+          const fill = c === b.c1 || c === b.c2 ? dashedV : ' ';
+          for (let r = Math.min(from, to); r <= Math.max(from, to); r++) g[r][c] = fill;
+          g[to][c] = wall;
+        }
+      };
+      const shrinkable = (cells) => cells.every(([r, c, wallRow]) => (wallRow ? '-='.includes(at(r, c)) : at(r, c) === ' '));
+      let b = { ...box };
+      const diamond = box.shape === 'choice';
+      if (dw > 0) {
+        if (diamond) {
+          if (!insideOuter(b.r1, b.c1 - 1, b.r2, b.c2 + 1) || !blank(b.r1, b.c1 - 1, b.r2, b.c1 - 1) || !blank(b.r1, b.c2 + 1, b.r2, b.c2 + 1)) return noRoom;
+          moveWallCol(b, b.c2, b.c2 + 1);
+          moveWallCol(b, b.c1, b.c1 - 1);
+          b = { ...b, c1: b.c1 - 1, c2: b.c2 + 1 };
+        } else {
+          if (!insideOuter(b.r1, b.c2 + 1, b.r2, b.c2 + dw) || !blank(b.r1, b.c2 + 1, b.r2, b.c2 + dw)) return noRoom;
+          moveWallCol(b, b.c2, b.c2 + dw);
+          b = { ...b, c2: b.c2 + dw };
+        }
+      } else if (dw < 0) {
+        const k = -dw;
+        const cols = diamond ? [b.c1 + 1, b.c2 - 1] : Array.from({ length: k }, (_, i) => b.c2 - 1 - i);
+        const cells = [];
+        for (const c of cols) for (let r = b.r1; r <= b.r2; r++) cells.push([r, c, r === b.r1 || r === b.r2]);
+        if (!shrinkable(cells)) return { error: 'Cannot narrow: text is in the way' };
+        if (diamond) {
+          moveWallCol(b, b.c1, b.c1 + 1);
+          for (let r = b.r1; r <= b.r2; r++) g[r][b.c1] = ' ';
+          moveWallCol(b, b.c2, b.c2 - 1);
+          for (let r = b.r1; r <= b.r2; r++) g[r][b.c2] = ' ';
+          b = { ...b, c1: b.c1 + 1, c2: b.c2 - 1 };
+        } else {
+          moveWallCol(b, b.c2, b.c2 - k);
+          for (let r = b.r1; r <= b.r2; r++) for (let c = b.c2 - k + 1; c <= b.c2; c++) g[r][c] = ' ';
+          b = { ...b, c2: b.c2 - k };
+        }
+      }
+      if (dh > 0) {
+        if (diamond) {
+          if (!insideOuter(b.r1 - 1, b.c1, b.r2 + 1, b.c2) || !blank(b.r1 - 1, b.c1, b.r1 - 1, b.c2) || !blank(b.r2 + 1, b.c1, b.r2 + 1, b.c2)) return noRoom;
+          moveWallRow(b, b.r2, b.r2 + 1);
+          moveWallRow(b, b.r1, b.r1 - 1);
+          b = { ...b, r1: b.r1 - 1, r2: b.r2 + 1 };
+        } else {
+          if (!insideOuter(b.r2 + 1, b.c1, b.r2 + dh, b.c2) || !blank(b.r2 + 1, b.c1, b.r2 + dh, b.c2)) return noRoom;
+          moveWallRow(b, b.r2, b.r2 + dh);
+          b = { ...b, r2: b.r2 + dh };
+        }
+      } else if (dh < 0 && diamond) {
+        const cells = [];
+        for (const r of [b.r1 + 1, b.r2 - 1]) for (let c = b.c1; c <= b.c2; c++) cells.push([r, c, false]);
+        if (!cells.every(([r, c]) => (c === b.c1 || c === b.c2 ? '|:'.includes(at(r, c)) : at(r, c) === ' '))) {
+          return { error: 'Cannot shorten: text is in the way' };
+        }
+        moveWallRow(b, b.r1, b.r1 + 1);
+        for (let c = b.c1; c <= b.c2; c++) g[b.r1][c] = ' ';
+        moveWallRow(b, b.r2, b.r2 - 1);
+        for (let c = b.c1; c <= b.c2; c++) g[b.r2][c] = ' ';
+        b = { ...b, r1: b.r1 + 1, r2: b.r2 - 1 };
+      }
+      return { text: this.fromGridState(state), cursorR: Math.floor((b.r1 + b.r2) / 2), cursorC: Math.floor((b.c1 + b.c2) / 2), box: b };
+    }
+
     static resizeBoxUnchecked(rawText, box, dw, dh, fullRows = false) {
       if (!box) return null;
+      // A box inside another box grows into the empty space inside it; the outer box never
+      // changes (the user makes it bigger first if needed). Shortening a rectangle is already
+      // local (its bottom wall moves up), so it keeps the generic path.
+      const outer = this.enclosingBox(new DitaaParser().parse(rawText).boxes, box);
+      if (outer && !(box.shape !== 'choice' && dh < 0 && dw === 0)) {
+        const diamond = box.shape === 'choice';
+        const min = diamond ? 4 : 3;
+        if (box.c2 - box.c1 + (diamond ? Math.sign(dw) * 2 : dw) < min || box.r2 - box.r1 + (diamond ? Math.sign(dh) * 2 : dh) < 2) {
+          return { error: 'Box is already at its minimum size' };
+        }
+        return this.resizeInside(rawText, box, outer, diamond ? Math.sign(dw) * 2 : dw, diamond ? Math.sign(dh) * 2 : dh);
+      }
       if (box.shape === 'choice') return this.resizeDiamond(rawText, box, Math.sign(dw) * 2, Math.sign(dh) * 2, fullRows);
       const curW = box.c2 - box.c1;
       const curH = box.r2 - box.r1;
@@ -2159,7 +2273,8 @@
       // fallback to plain text editing (which would push the box's wall out of line).
       let res = this.typeInBoxInner(rawText, boxes, box, caret, sel, op, false);
       const addsLines = op.type === 'newline' || (op.type === 'insert' && /[\r\n]/.test(op.text));
-      if (addsLines && (!res || res.error)) {
+      if (addsLines && (!res || res.error) && !this.enclosingBox(boxes, box)) {
+        // (Not for a box inside another box: the outer box never grows on its own.)
         // Growing only this box didn't work out: grow it with full-width lines instead
         // (boxes beside it get taller too, but nothing is broken)
         const full = this.typeInBoxInner(rawText, boxes, box, caret, sel, op, true);
@@ -2240,6 +2355,15 @@
         const missing = needed(ctx, cur) + 1 - (run.end - run.c0);
         if (missing > 2000) return { error: 'Cannot fit that much text: the box would grow too large' };
         if (missing <= 0) return { text, cur };
+        // Inside another box: grow into the empty space there; the outer box never changes
+        const outer = this.enclosingBox(ctx.boxes, box);
+        if (outer) {
+          const grown = this.resizeInside(text, box, outer, box.shape === 'choice' ? 2 : missing, 0);
+          if (grown.error) return grown;
+          if (box.shape === 'choice') cur = { r: cur.r, c: cur.c }; // grows on both sides around a fixed centre
+          text = grown.text;
+          continue;
+        }
         // Grow only on the box's own lines, like typing on them: what is beside it moves
         // over, lines above and below stay put. A diamond grows around its centre.
         if (box.shape === 'choice') {
@@ -2321,6 +2445,43 @@
       const lead = line.slice(0, k).search(/\S/);
       const indent = lead === -1 ? k : lead; // keep the line's indentation
       const tail = line.slice(k).trim(); // the new line gets the indentation, not the gap after the caret
+
+      // Inside another box: take the new line from the empty space inside it (the outer box
+      // never changes); the lines of this box below the caret move down by one.
+      const outer = !fullRows && this.enclosingBox(ctx.boxes, box);
+      if (outer) {
+        const diamond = box.shape === 'choice';
+        const grown = this.resizeInside(text, box, outer, 0, diamond ? 2 : 1);
+        if (grown.error) return grown;
+        const st = this.toGridState(grown.text);
+        const b = grown.box;
+        const copyRow = (from, to) => { for (let c = b.c1; c <= b.c2; c++) st.grid[to][c] = st.grid[from][c]; };
+        const blankRow = (r) => { for (let c = b.c1 + 1; c < b.c2; c++) st.grid[r][c] = ' '; };
+        let oldR = cur.r, newR;
+        const mid = (b.r1 + b.r2) / 2;
+        if (diamond && cur.r < mid) {
+          // a diamond grew a line on each side: lines above the caret move up into the top one
+          for (let r = b.r1 + 1; r < cur.r; r++) copyRow(r + 1, r);
+          oldR = cur.r - 1;
+          copyRow(cur.r, oldR);
+          newR = cur.r;
+        } else {
+          // lines below the caret move down into the new bottom line
+          for (let r = b.r2 - 1; r > cur.r + 1; r--) copyRow(r - 1, r);
+          newR = cur.r + 1;
+        }
+        blankRow(newR);
+        const r0 = { c0: b.c1 + 1, end: b.c2 };
+        if (diamond) {
+          this.placeCentred(st, oldR, r0, line.slice(0, k), 0);
+          const c = this.placeCentred(st, newR, r0, tail, tail.search(/\S/));
+          return { text: this.fromGridState(st), cursorR: newR, cursorC: c };
+        }
+        const run2 = { c0: run.c0, end: run.end };
+        this.writeRun(st, oldR, run2, line.slice(0, k));
+        this.writeRun(st, newR, run2, ' '.repeat(indent) + tail);
+        return { text: this.fromGridState(st), cursorR: newR, cursorC: run.c0 + indent };
+      }
 
       // The box grows on its own; boxes beside it keep their size. A diamond gets a mirror
       // row on the other side of its centre so it stays symmetric.

@@ -653,7 +653,7 @@ test('typing in a diamond keeps it a diamond: ports on vertices, text centred, o
   assert.deepEqual(check(res.text).lines, ['Ok really long', 'question?']);
 });
 
-test('typing in a container pushes nested boxes along; typing in a child grows the container', () => {
+test('typing in a container pushes nested boxes along; typing in a child uses the container\'s empty space', () => {
   const text = [
     '+------------------------+',
     '| Outer                  |',
@@ -670,10 +670,16 @@ test('typing in a container pushes nested boxes along; typing in a child grows t
   assert.ok(res.text.split('\n')[3].startsWith('| note | A   |'), res.text.split('\n')[3]);
   assert.ok(ast.freeTexts.some((t) => t.text === 'Outer'));
 
-  const res2 = type(text, 3, 6, { type: 'insert', text: 'lpha-long' });
+  // Typing in a nested box grows it into the empty space inside its container; the
+  // container itself never changes
+  const res2 = type(text, 3, 6, { type: 'insert', text: 'lp' });
   const ast2 = parse(res2.text);
-  assert.deepEqual(ast2.boxes.map((b) => b.lines[0] || null).sort(), ['Alpha-long', 'B', null].sort());
-  assert.equal(ast2.boxes.find((b) => b.isContainer).c2 - ast2.boxes.find((b) => b.lines[0] === 'B').c2, 6, 'container grew with it');
+  assert.deepEqual(ast2.boxes.map((b) => b.lines[0] || null).sort(), ['Alp', 'B', null].sort());
+  const cont0 = parse(text).boxes.find((b) => b.isContainer), cont2 = ast2.boxes.find((b) => b.isContainer);
+  assert.deepEqual([cont2.r1, cont2.c1, cont2.r2, cont2.c2], [cont0.r1, cont0.c1, cont0.r2, cont0.c2], 'container unchanged');
+  // Not enough empty space next to A (B is in the way): typing goes in as plain text
+  const res3 = type(text, 3, 6, { type: 'insert', text: 'lpha-very-long' });
+  assert.ok(res3.error, 'auto-fit declines; the editor types it as plain text');
 });
 
 test('typing and Enter in every box of every preset never changes another box', () => {
@@ -1216,6 +1222,9 @@ test('Enter at the end of the first line of every box in every preset succeeds a
       if (c >= b.c2) continue; // no room before the wall on this line
       const res = Grid2DEditor.typeInBox(text, { r: b.r1 + 1, c }, null, { type: 'newline' });
       const label = `${preset}: ${b.macroKey || b.lines[0]}`;
+      // A box inside another box only grows into empty space inside it; with none there,
+      // auto-fit declines (the editor then types the newline as plain text)
+      if (Grid2DEditor.enclosingBox(parse(text).boxes, b) && res && /Not enough empty space/.test(res.error || '')) continue;
       assert.ok(res && !res.error, `${label}: ${res && res.error}`);
       assert.equal(parse(res.text).boxes.length, parse(text).boxes.length, `${label}: box count`);
       assert.deepEqual(sig(res.text), sig(text), `${label}: wiring`);
@@ -1404,4 +1413,79 @@ test('moving boxes in the examples keeps every connection (typed ASCII arrows ar
     assert.ok(!res.error, `${preset} ${key}: ${res.error}`);
     assert.deepEqual(byName(res.text), byName(t), `${preset}: move ${key}`);
   }
+});
+
+/* ---------------- Boxes inside boxes resize into empty space only ---------------- */
+
+const NESTED3 = [
+  '+------------------------------------+',
+  '|  Outer                             |',
+  '|   +--------------------------+     |',
+  '|   |  Mid                     |     |',
+  '|   |   +-----+                |     |',
+  '|   |   | In  |                |     |',
+  '|   |   +-----+                |     |',
+  '|   |                          |     |',
+  '|   +--------------------------+     |',
+  '+------------------------------------+'
+].join('\n');
+const rectOf = (t, pick) => { const b = parse(t).boxes.find(pick); return [b.r1, b.c1, b.r2, b.c2]; };
+const isOuter = (b) => b.r1 === 0;
+const isMid = (b) => b.r1 === 2;
+
+test('resizing a box inside boxes uses the empty space; the outer boxes never change', () => {
+  let t = NESTED3;
+  const inner = () => parse(t).boxes.find((b) => b.lines[0] === 'In');
+  for (const [dw, dh] of [[2, 0], [2, 0], [0, 1]]) {
+    const res = Grid2DEditor.resizeBox(t, inner(), dw, dh);
+    assert.ok(!res.error, res.error);
+    t = res.text;
+    assert.deepEqual(rectOf(t, isOuter), rectOf(NESTED3, isOuter), 'Outer unchanged');
+    assert.deepEqual(rectOf(t, isMid), rectOf(NESTED3, isMid), 'Mid unchanged');
+  }
+  assert.deepEqual(rectOf(t, (b) => b.lines[0] === 'In'), [4, 8, 7, 18]);
+  // No empty space left below (Mid's wall): the user must make Mid bigger first
+  const full = Grid2DEditor.resizeBox(t, inner(), 0, 1);
+  assert.match(full.error, /Not enough empty space inside “Mid”: make it bigger first/);
+  // Narrowing back works and leaves the space empty again
+  const back = Grid2DEditor.resizeBox(t, inner(), -2, 0);
+  assert.ok(!back.error, back.error);
+  assert.deepEqual(rectOf(back.text, (b) => b.lines[0] === 'In'), [4, 8, 7, 16]);
+});
+
+test('a diamond inside a box grows around its centre into the empty space', () => {
+  const t = [
+    '+-----------------------------+',
+    '|                             |',
+    '|      +-------+-------+      |',
+    '|      |               |      |',
+    '|      +    Ok? {c}    +      |',
+    '|      |               |      |',
+    '|      +-------+-------+      |',
+    '|                             |',
+    '+-----------------------------+'
+  ].join('\n');
+  const d = parse(t).boxes.find((b) => b.shape === 'choice');
+  const res = Grid2DEditor.resizeBox(t, d, 2, 1);
+  assert.ok(!res.error, res.error);
+  const d2 = parse(res.text).boxes.find((b) => b.shape === 'choice');
+  assert.deepEqual([d2.r1, d2.c1, d2.r2, d2.c2], [1, 6, 7, 24]);
+  assert.equal((d2.c1 + d2.c2) / 2, (d.c1 + d.c2) / 2, 'centre unchanged');
+  assert.equal((d2.r1 + d2.r2) / 2, (d.r1 + d.r2) / 2, 'middle unchanged');
+  assert.deepEqual(rectOf(res.text, (b) => b.isContainer), rectOf(t, (b) => b.isContainer), 'container unchanged');
+});
+
+test('typing and Enter in a nested box grow it into empty space only', () => {
+  let res = type(NESTED3, 5, 12, { type: 'insert', text: 'ner box' });
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(parse(res.text).boxes.find((b) => b.lines[0] === 'Inner box').c2, 20);
+  res = type(res.text, 5, 19, { type: 'newline' });
+  assert.ok(!res.error, res.error);
+  const inner = parse(res.text).boxes.find((b) => b.lines[0] === 'Inner box');
+  assert.equal(inner.r2 - inner.r1, 3, 'one line taller');
+  assert.deepEqual(rectOf(res.text, isMid), rectOf(NESTED3, isMid));
+  assert.deepEqual(rectOf(res.text, isOuter), rectOf(NESTED3, isOuter));
+  // No room left: auto-fit declines rather than growing Mid (the editor types it plainly)
+  const again = type(res.text, 6, 10, { type: 'newline' });
+  assert.match(again.error, /Not enough empty space/);
 });
