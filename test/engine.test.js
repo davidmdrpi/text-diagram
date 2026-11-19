@@ -1824,3 +1824,35 @@ test('regression (PR #11 re-review): making a column never edits label text else
   const free = 'API-Gateway and more\n\n XYz';
   assert.equal(G.drawBoxAround(free, { r1: 2, c1: 1, r2: 2, c2: 2 }, { wrap: true }).text.split('\n')[0], 'API-Gateway and more');
 });
+
+test('regression (PR #11 review 3): a one-cell arrow stays attached at both ends, pointing the same way, whichever box is wrapped', () => {
+  const G = Grid2DEditor;
+  const cases = [
+    ['+---+ +---+\n| A |>| B |\n+---+ +---+', '>', 'right'],
+    ['+---+ +---+\n| A |<| B |\n+---+ +---+', '<', 'left'],
+    ['+---+\n| A |\n+---+\n  v\n+---+\n| B |\n+---+', 'v', 'down'],
+    ['+---+\n| A |\n+---+\n  ^\n+---+\n| B |\n+---+', '^', 'up']
+  ];
+  for (const [t, head] of cases) {
+    assert.deepEqual(conns(t), ['A–B']);
+    for (const name of ['A', 'B']) {
+      const b = parse(t).boxes.find((x) => x.lines[0] === name);
+      const res = G.drawBoxAround(t, b, { wrap: true });
+      assert.deepEqual(conns(res.text), ['A–container', 'B–container'], `wrapping ${name}:\n${res.text}`);
+      const heads = [...res.text].filter((ch) => '<>^v'.includes(ch));
+      assert.deepEqual(heads, [head], `one arrowhead, still pointing the same way:\n${res.text}`);
+    }
+  }
+  const one = '+---+ +---+\n| A |>| B |\n+---+ +---+';
+  assert.equal(G.drawBoxAround(one, parse(one).boxes.find((x) => x.lines[0] === 'A'), { wrap: true }).text.split('\n')[2], '|| A |-+>| B |');
+});
+
+test('regression (PR #11 review 3): free text right above or below the block is kept verbatim', () => {
+  const G = Grid2DEditor;
+  assert.equal(G.drawBoxAround('API-Gateway\n XYz', { r1: 1, c1: 1, r2: 1, c2: 2 }, { wrap: true }).text,
+    'API-Gateway\n +--+\n |XY|z\n +--+');
+  const below = G.drawBoxAround(' XYz\nAPI Gateway, v2', { r1: 0, c1: 1, r2: 0, c2: 2 }, { wrap: true }).text.split('\n');
+  assert.equal(below[below.length - 1], 'API Gateway, v2');
+  const boxed = G.drawBoxAround('+-------------+\n| API-Gateway |\n+-------------+\n XYz', { r1: 3, c1: 1, r2: 3, c2: 2 }, { wrap: true });
+  assert.equal(parse(boxed.text).boxes.find((b) => b.r1 === 0).lines[0], 'API-Gateway');
+});

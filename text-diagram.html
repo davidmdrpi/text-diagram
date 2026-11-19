@@ -3051,7 +3051,8 @@
         const vertA = '|:+*v^'.includes(a) && a !== ' ', vertB = '|:+*v^'.includes(b) && b !== ' ';
         const line = '|:'.includes(a) || '|:'.includes(b);
         // a vertical line that ends on a horizontal wall (or leaves one) stays on it
-        const meets = (('|:'.includes(a) && '-='.includes(b)) || ('-='.includes(a) && '|:'.includes(b))) && a !== ' ' && b !== ' ';
+        const meets = (('|:'.includes(a) && '-='.includes(b)) || ('-='.includes(a) && '|:'.includes(b)) ||
+          ('-=+'.includes(a) && b === 'v') || (a === '^' && '-=+'.includes(b))) && a !== ' ' && b !== ' ';
         row.push((vertA && vertB && line && a !== 'v' && b !== '^') || meets ? (dashed ? ':' : '|') : ' ');
       }
       if (at > 0) lines[at - 1] = up.join('');
@@ -3104,7 +3105,8 @@
         else {
           const hA = '-=+*<>'.includes(a) && a !== ' ', hB = '-=+*<>'.includes(b) && b !== ' ';
           // a horizontal line that ends on a vertical wall (or leaves one) stays on it
-          const meets = (('-='.includes(a) && '|:'.includes(b)) || ('|:'.includes(a) && '-='.includes(b))) && a !== ' ' && b !== ' ';
+          const meets = (('-='.includes(a) && '|:'.includes(b)) || ('|:'.includes(a) && '-='.includes(b)) ||
+            ('|:+'.includes(a) && b === '>') || (a === '<' && '|:+'.includes(b))) && a !== ' ' && b !== ' ';
           if ((hA && hB && ('-='.includes(a) || '-='.includes(b)) && a !== '>' && b !== '<') || meets) ch = dashed ? '=' : '-';
         }
         lines[r] = (left + ch + right).replace(/\s+$/, '');
@@ -3133,12 +3135,12 @@
         // can cross it with a '+' and a piece of the line still reaches what it reached.
         let top = 1, bottom = 1, left = 1, right = 1;
         for (let c = c1; c <= c2; c++) {
-          if (ch(r1 - 1, c) === 'v' || (has('|:', ch(r1 - 1, c)) && has('-=+', ch(r1, c)))) top = 2;
-          if (ch(r2 + 1, c) === '^' || (has('|:', ch(r2 + 1, c)) && has('-=+', ch(r2, c)))) bottom = 2;
+          if (ch(r1 - 1, c) === 'v' || (has('|:^', ch(r1 - 1, c)) && has('-=+', ch(r1, c)))) top = 2;
+          if (ch(r2 + 1, c) === '^' || (has('|:v', ch(r2 + 1, c)) && has('-=+', ch(r2, c)))) bottom = 2;
         }
         for (let r = r1; r <= r2; r++) {
-          if (ch(r, c1 - 1) === '>' || (has('-=', ch(r, c1 - 1)) && has('|:+', ch(r, c1)))) left = 2;
-          if (ch(r, c2 + 1) === '<' || (has('-=', ch(r, c2 + 1)) && has('|:+', ch(r, c2)))) right = 2;
+          if (ch(r, c1 - 1) === '>' || (has('-=<', ch(r, c1 - 1)) && has('|:+', ch(r, c1)))) left = 2;
+          if (ch(r, c2 + 1) === '<' || (has('-=>', ch(r, c2 + 1)) && has('|:+', ch(r, c2)))) right = 2;
         }
         // Empty space already there is used as it is: a side only gets new lines / columns
         // when its border would land on something other than space or a line it can cross
@@ -3155,7 +3157,9 @@
         const localR = free(rows, [c2 + 1, c2 + right], '-=<') && outsideH(c2 + right, c2 + right + 1);
         const localT = r1 - top >= 0 && free([r1 - top, r1 - 1], cols, '|:v') && outsideV(r1 - top, r1 - top - 1);
         const localB = free([r2 + 1, r2 + bottom], cols, '|:^') && outsideV(r2 + bottom, r2 + bottom + 1);
-        const keep = { lo: Math.max(0, r1 - top), hi: r2 + bottom };
+        // Rows that become part of the new box as they are; every other row keeps its labels
+        // (rows the border will get are made later, so the lines above / below are "other")
+        const keep = { lo: localT ? r1 - top : r1, hi: localB ? r2 + bottom : r2 };
         if (!localR) for (let i = 0; i < right; i++) this.insertContinuingColumn(lines, c2 + 1 + i, n, keep);
         if (!localL) for (let i = 0; i < left; i++) this.insertContinuingColumn(lines, c1, n, keep);
         const L = localL ? 0 : left;
