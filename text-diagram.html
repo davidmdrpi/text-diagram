@@ -2996,7 +2996,8 @@
 
     /**
      * Whole columns go into the destination's diagram lines only, never its legend / comment
-     * lines: a taller block gets blank lines added above that footer first. With `pad`
+     * lines: a taller block uses the blank lines below the diagram, then gets more blank
+     * lines added above that footer. With `pad`
      * (insert mode) a shorter block is padded with blanks so every diagram line shifts
      * together and stays aligned.
      */
@@ -3004,7 +3005,14 @@
       const lines = this.textLines(rawText);
       const n = this.diagramLineCount(rawText);
       const bl = this.blockLines(block);
-      if (bl.length > n) lines.splice(n, 0, ...Array(bl.length - n).fill(''));
+      if (bl.length > n) {
+        // Blank lines right below the diagram (e.g. the rows a cut column left empty) are
+        // reused first, so cutting columns and pasting them back gives back the same text
+        let blank = 0;
+        while (n + blank < lines.length && lines[n + blank].trim() === '') blank++;
+        const add = bl.length - n - Math.min(blank, bl.length - n);
+        if (add > 0) lines.splice(n + blank, 0, ...Array(add).fill(''));
+      }
       if (pad) while (bl.length < n) bl.push(' '.repeat(bl[0].length));
       return { text: lines.join('\n'), block: bl.join('\n') };
     }

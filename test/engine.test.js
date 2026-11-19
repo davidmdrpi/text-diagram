@@ -1650,3 +1650,23 @@ test('regression (PR #10 review): deleting every row leaves an empty text with t
   assert.equal(G.overwriteBlock(res.text, res.cursorR, res.cursorC, 'X').text, 'X');
   assert.equal(G.overwriteBlock('', -1, -1, 'X').text, 'X', 'a stale negative caret is clamped');
 });
+
+test('regression (PR #10 review): cutting whole columns and pasting them straight back gives back the same text', () => {
+  const G = Grid2DEditor;
+  const texts = ['AA\n B\n# keep', 'AA\n B', 'AA\n B\n\n# keep', '+--+\n|AB|\n+--+\n\n# [D] = x', ROWCOL];
+  for (const overwrite of [false, true]) {
+    for (const t of texts) {
+      for (const c of [0, 1, 2]) {
+        let x = t;
+        for (let i = 0; i < 3; i++) { // repeating it must not add a line each time either
+          const b = { r1: 0, r2: G.diagramLineCount(x) - 1, c1: c, c2: c };
+          const { text, kind } = G.blockCopy(x, b);
+          assert.equal(kind, 'cols');
+          const cut = G.removeBlock(x, b, overwrite).text;
+          x = (overwrite ? G.pasteBlockOverwrite : G.pasteBlockInsert).call(G, cut, 0, c, text, kind).text;
+        }
+        assert.equal(x, t, `${overwrite ? 'OVR' : 'INS'} column ${c} of ${JSON.stringify(t)}`);
+      }
+    }
+  }
+});
