@@ -1200,7 +1200,8 @@
      * Shifts a box by (dr, dc) and stretches/compresses wires attached to its walls.
      */
     static shiftBoxWithElasticWires(rawText, box, dr, dc) {
-      return this.guardOtherBoxes(rawText, this.shiftBoxUnchecked(rawText, box, dr, dc), 'move');
+      // A move is a plain text operation: the user is always right (Undo is there)
+      return this.shiftBoxUnchecked(rawText, box, dr, dc);
     }
 
     static shiftBoxUnchecked(rawText, box, dr, dc) {
@@ -1244,24 +1245,6 @@
       }
 
       const nr1 = box.r1 + dr, nc1 = box.c1 + dc, nr2 = box.r2 + dr, nc2 = box.c2 + dc;
-      // Connections on the walls across the move (top/bottom for a sideways move, left/right
-      // for an up/down move) stay stuck to their '+': recorded here, re-joined after the move.
-      const across = [];
-      if (dc !== 0) {
-        for (let c = box.c1 + 1; c < box.c2; c++) {
-          if (box.r1 > 0 && wireV(grid[box.r1 - 1], c)) across.push({ inR: box.r1, outR: box.r1 - 1, beyondR: box.r1 - 2, c });
-          if (wireV(grid[box.r2 + 1] || [], c)) across.push({ inR: box.r2, outR: box.r2 + 1, beyondR: box.r2 + 2, c });
-        }
-      } else {
-        // A line leaving the wall sideways: a straight piece, an arrowhead, or a corner/junction
-        // (after a first move the cell outside the '+' is the jog's corner)
-        const horizWire = (ch) => '-=<>+*'.includes(ch) && ch !== ' ';
-        for (let r = box.r1 + 1; r < box.r2; r++) {
-          // in transposed coordinates: rows are columns
-          if (box.c1 > 0 && horizWire(grid[r][box.c1 - 1])) across.push({ inR: box.c1, outR: box.c1 - 1, beyondR: box.c1 - 2, c: r });
-          if (horizWire(grid[r][box.c2 + 1] || ' ')) across.push({ inR: box.c2, outR: box.c2 + 1, beyondR: box.c2 + 2, c: r });
-        }
-      }
       for (let r = 0; r < boxH; r++) {
         for (let c = 0; c < boxW; c++) grid[nr1 + r][nc1 + c] = snapshot[r][c];
       }
@@ -1316,20 +1299,6 @@
         }
       }
 
-      if (across.length) {
-        if (dc !== 0) {
-          this.rejoinLinks(state, across, dc);
-        } else {
-          const T = this.transposeState(state);
-          this.rejoinLinks(T, across, dr);
-          const back = this.transposeState(T);
-          state.grid = back.grid;
-          state.rows = back.rows;
-          state.cols = back.cols;
-        }
-        // If a line can't follow (no room for a jog), it keeps touching the wall as before
-        state.routeBlocked = null;
-      }
 
       return {
         text: this.fromGridState(state),
@@ -1374,7 +1343,6 @@
      */
     static insertColumnEverywhere(state, at, band = null) {
       const lo = band ? band.lo : 0, hi = band ? band.hi : state.rows - 1;
-      const links = band ? this.boundaryLinks(state, lo, hi, (c) => c >= at) : [];
       for (let r = lo; r <= hi; r++) {
         const row = state.grid[r];
         while (row.length < at) row.push(' ');
@@ -1395,117 +1363,7 @@
         row.splice(pos, 0, ch);
       }
       this.normalizeWidth(state);
-      this.rejoinLinks(state, links, +1);
       return null;
-    }
-
-    /**
-     * Vertical lines that cross the edge of a band of shifted rows: for each boundary
-     * (inside row, outside row) the columns where both cells are vertical-ish and `moves(c)`
-     * says the inside cell is about to shift.
-     */
-    static boundaryLinks(state, lo, hi, moves) {
-      const links = [];
-      // Box corners are not wire ports: a jog drawn right under one must not look attached
-      const corners = new Set();
-      for (const bx of new DitaaParser().parse(this.fromGridState(state)).boxes) {
-        for (const [r, c] of [[bx.r1, bx.c1], [bx.r1, bx.c2], [bx.r2, bx.c1], [bx.r2, bx.c2]]) corners.add(`${r},${c}`);
-      }
-      const pairs = [[lo, lo - 1, lo - 2], [hi, hi + 1, hi + 2]];
-      for (const [inR, outR, beyondR] of pairs) {
-        if (outR < 0 || outR >= state.rows) continue;
-        const I = state.grid[inR], O = state.grid[outR];
-        for (let c = 0; c < Math.min(I.length, O.length); c++) {
-          if (moves(c) && wireV(I, c) && wireV(O, c) && !corners.has(`${inR},${c}`) && !corners.has(`${outR},${c}`)) {
-            links.push({ inR, outR, beyondR, c });
-          }
-        }
-      }
-      return links;
-    }
-
-    /**
-     * After the band shifted by `d` (+1/-1), reconnects each link through the outside row.
-     * The wire continues away from the band at column w (the link's own column, or the far
-     * corner of a jog drawn by an earlier step), so the outside row is redrawn as a single
-     * jog from w to the link's new column: "+--+", or a straight "|" once they line up
-     * again. Stateless: works the same whether the jog was drawn this keystroke or earlier.
-     * A link whose path is blocked by something else is left as it is.
-     */
-    static rejoinLinks(state, links, d) {
-      if (!links.length) return;
-      const order = d > 0 ? links.slice().sort((a, b) => b.c - a.c) : links.slice().sort((a, b) => a.c - b.c);
-      for (const { inR, outR, beyondR, c } of order) {
-        const fail = () => { state.routeBlocked = state.routeBlocked || { r: outR, c }; };
-        const to = c + d;
-        if (to < 0 || outR < 0 || outR >= state.rows) { fail(); continue; }
-        const O = state.grid[outR];
-        while (O.length <= Math.max(c, to) + 1) O.push(' ');
-        // An arrowhead against the wall moves along with the connection point and keeps
-        // pointing straight in; the jog is then drawn one row further out.
-        const head = O[c] === 'v' || O[c] === '^' ? O[c] : null;
-        const jogR = head ? beyondR : outR;
-        const jbR = head ? beyondR + (beyondR - outR) : beyondR;
-        if (jogR < 0 || jogR >= state.rows) { fail(); continue; }
-        const J = state.grid[jogR];
-        const JB = state.grid[jbR] || [];
-        while (J.length <= Math.max(c, to) + 1) J.push(' ');
-        // Find w, where the wire leaves the jog row away from the box
-        let w = -1;
-        if (wireV(JB, c) && (J[c] === '|' || J[c] === ':' || J[c] === '+')) w = c;
-        else {
-          for (const step of [-1, 1]) {
-            let k = c + step;
-            while (k >= 0 && k < J.length && (J[k] === '-' || J[k] === '=')) k += step;
-            if (k >= 0 && k < J.length && J[k] === '+' && wireV(JB, k)) { w = k; break; }
-          }
-        }
-        if (w === -1) { fail(); continue; }
-        const dashed = J.slice(Math.min(w, c), Math.max(w, c) + 1).includes('=') || JB[w] === ':';
-        const savedO = O.slice(), savedJ = J.slice();
-        const restore = () => { state.grid[outR] = savedO; state.grid[jogR] = savedJ; };
-        if (head) O[c] = ' ';
-        // Erase the old jog (w..c), check the new path (w..to) is free, then draw it
-        for (let k = Math.min(w, c); k <= Math.max(w, c); k++) J[k] = ' ';
-        let free = true;
-        for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (J[k] !== ' ') free = false;
-        if (head && O[to] !== ' ') free = false;
-        if (!free) { restore(); fail(); continue; }
-        // The jog's far corner must not touch anything in the row next to it (toward the box),
-        // or the wire would look attached to that (e.g. a box that grew over it)
-        const I = head ? O : state.grid[inR];
-        const sameWall = () => {
-          // Wall characters, including rounded corners (/ \ . ')
-          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) if (!"-=+/\\.'".includes(I[k] || ' ') || (I[k] || ' ') === ' ') return false;
-          return true; // one unbroken wall from the port to the corner: the same box
-        };
-        const structural = (ch) => "|:+*-=/\\.'<>^v".includes(ch) && ch !== ' ';
-        if (to !== w && structural(I[w] || ' ') && !sameWall()) { restore(); fail(); continue; }
-        if (to === w) {
-          J[w] = head ? (JB[w] === ':' ? ':' : '|') : (JB[w] === ':' || (state.grid[inR][to] || ' ') === ':' ? ':' : '|');
-        } else {
-          for (let k = Math.min(w, to); k <= Math.max(w, to); k++) J[k] = dashed ? '=' : '-';
-          J[w] = '+';
-          J[to] = '+';
-        }
-        if (head) O[to] = head;
-      }
-      this.normalizeWidth(state);
-    }
-
-    /** Swaps rows and columns (and the line characters with them): used to reuse row logic for columns. */
-    static transposeState(state) {
-      const MAP = { '-': '|', '|': '-', '=': ':', ':': '=', '<': '^', '^': '<', '>': 'v', v: '>' };
-      this.normalizeWidth(state);
-      const grid = Array.from({ length: state.cols }, (_, c) =>
-        Array.from({ length: state.rows }, (_, r) => { const ch = state.grid[r][c]; return MAP[ch] || ch; }));
-      return { grid, rows: state.cols, cols: state.rows, legendLines: state.legendLines };
-    }
-
-    /** Error if a wire next to a moved box could not be re-joined (see rejoinLinks). */
-    static routeError(state, verb) {
-      if (!state.routeBlocked) return null;
-      return { error: `Cannot ${verb}: the wire at line ${state.routeBlocked.r + 1} has no room to follow the box that moves (clear the space next to it first)` };
     }
 
     static normalizeWidth(state) {
@@ -1536,10 +1394,8 @@
           return { error: `Cannot narrow: ${ch === ' ' ? 'it would join text' : `"${ch}" is in the way`} on line ${r + 1}` };
         }
       }
-      const links = band ? this.boundaryLinks(state, lo, hi, (c) => c > at) : [];
       for (let r = lo; r <= hi; r++) state.grid[r].splice(at, 1);
       this.normalizeWidth(state);
-      this.rejoinLinks(state, links, -1);
       return null;
     }
 
@@ -1841,8 +1697,6 @@
 
       if (dw > 0) {
         this.growDiamondH(state, box);
-        const routed = this.routeError(state, 'widen');
-        if (routed) return routed;
       } else if (dw < 0) {
         // Take a column out on each side of the centre, then put one back left of the left
         // wall so the centre (and the wires on the top/bottom ports) stays put.
@@ -1852,8 +1706,6 @@
           this.removeColumnEverywhere(state, box.c1 + 1, box, band);
         if (err) return err;
         this.insertColumnEverywhere(state, box.c1, band);
-        const routed = this.routeError(state, 'narrow');
-        if (routed) return routed;
       }
 
       if (dh > 0) {
@@ -1884,7 +1736,7 @@
      * change). Glyph-level checks can't see that, e.g. removing the last interior column of
      * a small empty box elsewhere collapses it.
      */
-    static guardOtherBoxes(rawText, res, verb, exceptBox = null, allowNew = 0, checkWires = true) {
+    static guardOtherBoxes(rawText, res, verb, exceptBox = null, allowNew = 0, checkWires = false) {
       if (!res || res.error) return res;
       const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
       const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
@@ -1948,8 +1800,122 @@
       return res;
     }
 
+    /** The smallest box that strictly encloses `box` (its container), or null. */
+    static enclosingBox(boxes, box) {
+      const inside = (p) => p.r1 < box.r1 && p.r2 > box.r2 && p.c1 < box.c1 && p.c2 > box.c2;
+      return boxes.filter(inside).sort((p, q) => (p.r2 - p.r1) * (p.c2 - p.c1) - (q.r2 - q.r1) * (q.c2 - q.c1))[0] || null;
+    }
+
+    /**
+     * Resizes a box that sits inside another box by moving its own walls into (or out of)
+     * the empty space around it. The outer box never changes: if there isn't enough empty
+     * space inside it, the user is asked to make the outer box bigger first.
+     * Rectangles grow/shrink on the right and bottom; diamonds on both sides of their centre
+     * (so their ports stay on the vertices). Returns { text, cursorR, cursorC } or { error }.
+     */
+    static resizeInside(rawText, box, outer, dw, dh) {
+      const state = this.toGridState(rawText, box.r2 + 2, box.c2 + 2);
+      const g = state.grid;
+      const at = (r, c) => (g[r] && g[r][c]) || ' ';
+      const outerName = this.boxName(new DitaaParser().parse(rawText), outer);
+      const name = outerName && outerName !== 'box' ? `“${outerName}”` : 'the box around it';
+      const noRoom = { error: `Not enough empty space inside ${name}: make it bigger first` };
+      const blank = (r1, c1, r2, c2) => {
+        for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) if (at(r, c) !== ' ') return false;
+        return true;
+      };
+      const insideOuter = (r1, c1, r2, c2) => r1 > outer.r1 && r2 < outer.r2 && c1 > outer.c1 && c2 < outer.c2;
+      const dashedH = at(box.r1, box.c1 + 1) === '=' ? '=' : '-';
+      const dashedV = at(box.r1 + 1, box.c1) === ':' ? ':' : '|';
+      // Move the vertical wall at column `from` to column `to` (rows r1..r2), filling the gap
+      const moveWallCol = (b, from, to) => {
+        for (let r = b.r1; r <= b.r2; r++) {
+          const wall = at(r, from);
+          const fill = r === b.r1 || r === b.r2 ? dashedH : ' ';
+          for (let c = Math.min(from, to); c <= Math.max(from, to); c++) g[r][c] = fill;
+          g[r][to] = wall;
+        }
+      };
+      const moveWallRow = (b, from, to) => {
+        for (let c = b.c1; c <= b.c2; c++) {
+          const wall = at(from, c);
+          const fill = c === b.c1 || c === b.c2 ? dashedV : ' ';
+          for (let r = Math.min(from, to); r <= Math.max(from, to); r++) g[r][c] = fill;
+          g[to][c] = wall;
+        }
+      };
+      const shrinkable = (cells) => cells.every(([r, c, wallRow]) => (wallRow ? '-='.includes(at(r, c)) : at(r, c) === ' '));
+      let b = { ...box };
+      const diamond = box.shape === 'choice';
+      if (dw > 0) {
+        if (diamond) {
+          if (!insideOuter(b.r1, b.c1 - 1, b.r2, b.c2 + 1) || !blank(b.r1, b.c1 - 1, b.r2, b.c1 - 1) || !blank(b.r1, b.c2 + 1, b.r2, b.c2 + 1)) return noRoom;
+          moveWallCol(b, b.c2, b.c2 + 1);
+          moveWallCol(b, b.c1, b.c1 - 1);
+          b = { ...b, c1: b.c1 - 1, c2: b.c2 + 1 };
+        } else {
+          if (!insideOuter(b.r1, b.c2 + 1, b.r2, b.c2 + dw) || !blank(b.r1, b.c2 + 1, b.r2, b.c2 + dw)) return noRoom;
+          moveWallCol(b, b.c2, b.c2 + dw);
+          b = { ...b, c2: b.c2 + dw };
+        }
+      } else if (dw < 0) {
+        const k = -dw;
+        const cols = diamond ? [b.c1 + 1, b.c2 - 1] : Array.from({ length: k }, (_, i) => b.c2 - 1 - i);
+        const cells = [];
+        for (const c of cols) for (let r = b.r1; r <= b.r2; r++) cells.push([r, c, r === b.r1 || r === b.r2]);
+        if (!shrinkable(cells)) return { error: 'Cannot narrow: text is in the way' };
+        if (diamond) {
+          moveWallCol(b, b.c1, b.c1 + 1);
+          for (let r = b.r1; r <= b.r2; r++) g[r][b.c1] = ' ';
+          moveWallCol(b, b.c2, b.c2 - 1);
+          for (let r = b.r1; r <= b.r2; r++) g[r][b.c2] = ' ';
+          b = { ...b, c1: b.c1 + 1, c2: b.c2 - 1 };
+        } else {
+          moveWallCol(b, b.c2, b.c2 - k);
+          for (let r = b.r1; r <= b.r2; r++) for (let c = b.c2 - k + 1; c <= b.c2; c++) g[r][c] = ' ';
+          b = { ...b, c2: b.c2 - k };
+        }
+      }
+      if (dh > 0) {
+        if (diamond) {
+          if (!insideOuter(b.r1 - 1, b.c1, b.r2 + 1, b.c2) || !blank(b.r1 - 1, b.c1, b.r1 - 1, b.c2) || !blank(b.r2 + 1, b.c1, b.r2 + 1, b.c2)) return noRoom;
+          moveWallRow(b, b.r2, b.r2 + 1);
+          moveWallRow(b, b.r1, b.r1 - 1);
+          b = { ...b, r1: b.r1 - 1, r2: b.r2 + 1 };
+        } else {
+          if (!insideOuter(b.r2 + 1, b.c1, b.r2 + dh, b.c2) || !blank(b.r2 + 1, b.c1, b.r2 + dh, b.c2)) return noRoom;
+          moveWallRow(b, b.r2, b.r2 + dh);
+          b = { ...b, r2: b.r2 + dh };
+        }
+      } else if (dh < 0 && diamond) {
+        const cells = [];
+        for (const r of [b.r1 + 1, b.r2 - 1]) for (let c = b.c1; c <= b.c2; c++) cells.push([r, c, false]);
+        if (!cells.every(([r, c]) => (c === b.c1 || c === b.c2 ? '|:'.includes(at(r, c)) : at(r, c) === ' '))) {
+          return { error: 'Cannot shorten: text is in the way' };
+        }
+        moveWallRow(b, b.r1, b.r1 + 1);
+        for (let c = b.c1; c <= b.c2; c++) g[b.r1][c] = ' ';
+        moveWallRow(b, b.r2, b.r2 - 1);
+        for (let c = b.c1; c <= b.c2; c++) g[b.r2][c] = ' ';
+        b = { ...b, r1: b.r1 + 1, r2: b.r2 - 1 };
+      }
+      return { text: this.fromGridState(state), cursorR: Math.floor((b.r1 + b.r2) / 2), cursorC: Math.floor((b.c1 + b.c2) / 2), box: b };
+    }
+
     static resizeBoxUnchecked(rawText, box, dw, dh, fullRows = false) {
       if (!box) return null;
+      // A box inside another box grows into the empty space inside it; the outer box never
+      // changes (the user makes it bigger first if needed). Shortening a rectangle is already
+      // local (its bottom wall moves up), so it keeps the generic path.
+      const outer = this.enclosingBox(new DitaaParser().parse(rawText).boxes, box);
+      if (outer && !(box.shape !== 'choice' && dh < 0 && dw === 0)) {
+        const diamond = box.shape === 'choice';
+        const min = diamond ? 4 : 3;
+        if (box.c2 - box.c1 + (diamond ? Math.sign(dw) * 2 : dw) < min || box.r2 - box.r1 + (diamond ? Math.sign(dh) * 2 : dh) < 2) {
+          return { error: 'Box is already at its minimum size' };
+        }
+        return this.resizeInside(rawText, box, outer, diamond ? Math.sign(dw) * 2 : dw, diamond ? Math.sign(dh) * 2 : dh);
+      }
       if (box.shape === 'choice') return this.resizeDiamond(rawText, box, Math.sign(dw) * 2, Math.sign(dh) * 2, fullRows);
       const curW = box.c2 - box.c1;
       const curH = box.r2 - box.r1;
@@ -1973,8 +1939,6 @@
           if (err) return err;
         }
       }
-      const routed = this.routeError(state, dw > 0 ? 'widen' : 'narrow');
-      if (routed) return routed;
       if (dh < 0) {
         const targetR = box.r2 - 1;
         for (let c = box.c1 + 1; c < box.c2; c++) {
@@ -2078,7 +2042,8 @@
       // fallback to plain text editing (which would push the box's wall out of line).
       let res = this.typeInBoxInner(rawText, boxes, box, caret, sel, op, false);
       const addsLines = op.type === 'newline' || (op.type === 'insert' && /[\r\n]/.test(op.text));
-      if (addsLines && (!res || res.error)) {
+      if (addsLines && (!res || res.error) && !this.enclosingBox(boxes, box)) {
+        // (Not for a box inside another box: the outer box never grows on its own.)
         // Growing only this box didn't work out: grow it with full-width lines instead
         // (boxes beside it get taller too, but nothing is broken)
         const full = this.typeInBoxInner(rawText, boxes, box, caret, sel, op, true);
@@ -2159,6 +2124,15 @@
         const missing = needed(ctx, cur) + 1 - (run.end - run.c0);
         if (missing > 2000) return { error: 'Cannot fit that much text: the box would grow too large' };
         if (missing <= 0) return { text, cur };
+        // Inside another box: grow into the empty space there; the outer box never changes
+        const outer = this.enclosingBox(ctx.boxes, box);
+        if (outer) {
+          const grown = this.resizeInside(text, box, outer, box.shape === 'choice' ? 2 : missing, 0);
+          if (grown.error) return grown;
+          if (box.shape === 'choice') cur = { r: cur.r, c: cur.c }; // grows on both sides around a fixed centre
+          text = grown.text;
+          continue;
+        }
         // Grow only on the box's own lines, like typing on them: what is beside it moves
         // over, lines above and below stay put. A diamond grows around its centre.
         if (box.shape === 'choice') {
@@ -2168,8 +2142,6 @@
           const cols = this.insertColumns(state, Array(missing).fill(run.end), box.r1, box.r2);
           cur = { r: cur.r, c: cur.c + cols.filter((x) => x < cur.c).length };
         }
-        const routed = this.routeError(state, 'grow the box');
-        if (routed) return routed;
         text = this.fromGridState(state);
       }
       return { error: 'Cannot fit that much text: the box would grow too large' };
@@ -2242,6 +2214,43 @@
       const lead = line.slice(0, k).search(/\S/);
       const indent = lead === -1 ? k : lead; // keep the line's indentation
       const tail = line.slice(k).trim(); // the new line gets the indentation, not the gap after the caret
+
+      // Inside another box: take the new line from the empty space inside it (the outer box
+      // never changes); the lines of this box below the caret move down by one.
+      const outer = !fullRows && this.enclosingBox(ctx.boxes, box);
+      if (outer) {
+        const diamond = box.shape === 'choice';
+        const grown = this.resizeInside(text, box, outer, 0, diamond ? 2 : 1);
+        if (grown.error) return grown;
+        const st = this.toGridState(grown.text);
+        const b = grown.box;
+        const copyRow = (from, to) => { for (let c = b.c1; c <= b.c2; c++) st.grid[to][c] = st.grid[from][c]; };
+        const blankRow = (r) => { for (let c = b.c1 + 1; c < b.c2; c++) st.grid[r][c] = ' '; };
+        let oldR = cur.r, newR;
+        const mid = (b.r1 + b.r2) / 2;
+        if (diamond && cur.r < mid) {
+          // a diamond grew a line on each side: lines above the caret move up into the top one
+          for (let r = b.r1 + 1; r < cur.r; r++) copyRow(r + 1, r);
+          oldR = cur.r - 1;
+          copyRow(cur.r, oldR);
+          newR = cur.r;
+        } else {
+          // lines below the caret move down into the new bottom line
+          for (let r = b.r2 - 1; r > cur.r + 1; r--) copyRow(r - 1, r);
+          newR = cur.r + 1;
+        }
+        blankRow(newR);
+        const r0 = { c0: b.c1 + 1, end: b.c2 };
+        if (diamond) {
+          this.placeCentred(st, oldR, r0, line.slice(0, k), 0);
+          const c = this.placeCentred(st, newR, r0, tail, tail.search(/\S/));
+          return { text: this.fromGridState(st), cursorR: newR, cursorC: c };
+        }
+        const run2 = { c0: run.c0, end: run.end };
+        this.writeRun(st, oldR, run2, line.slice(0, k));
+        this.writeRun(st, newR, run2, ' '.repeat(indent) + tail);
+        return { text: this.fromGridState(st), cursorR: newR, cursorC: run.c0 + indent };
+      }
 
       // The box grows on its own; boxes beside it keep their size. A diamond gets a mirror
       // row on the other side of its centre so it stays symmetric.
@@ -2511,8 +2520,6 @@
             const need = encl.c1 + 2 - Math.min(...cellsOf(L).map(([, c]) => c));
             if (need > 0) {
               this.insertColumns(state, Array(need).fill(b.c1), encl.r1, encl.r2);
-              const routed = this.routeError(state, 'insert here');
-              if (routed) return routed;
               b = { ...b, c1: b.c1 + need, c2: b.c2 + need };
             }
           } else {
@@ -2553,8 +2560,6 @@
         if (side === 'right') {
           const lo = Math.min(b.r1, L.shape ? L.shape.r0 : b.r1), hi = Math.max(b.r2, L.shape ? L.shape.r0 + h - 1 : b.r2);
           this.insertColumns(state, Array(GAP + w + (tpl ? 1 : 0)).fill(b.c2 + 1), Math.max(0, lo), hi);
-          const routed = this.routeError(state, 'insert here');
-          if (routed) return routed;
         } else {
           this.insertRowsMovingBoxes(state, b.r2 + 1, GAP + h, b);
         }
@@ -2618,6 +2623,186 @@
       const lc = c + tpl.lines[li].indexOf(tpl.label);
       const res = { text: this.fromGridState(state), cursorR: r + li, cursorC: lc + tpl.label.length, selC1: lc, selC2: lc + tpl.label.length };
       return this.guardOtherBoxes(rawText, res, 'insert here', null, 1);
+    }
+
+    /*************************************************************************
+     * PLAIN TEXT BLOCKS: overwrite typing and rectangular (block) selections.
+     * These are text operations on lines and columns, with no box logic at all.
+     *************************************************************************/
+
+    static textLines(rawText) {
+      return rawText.replace(/\r\n?/g, '\n').split('\n');
+    }
+
+    /** A block's lines, all padded to the same width (a ragged paste is still a rectangle). */
+    static blockLines(block) {
+      const lines = this.textLines(block);
+      const w = Math.max(...lines.map((l) => l.length));
+      return lines.map((l) => l.padEnd(w));
+    }
+
+    /** The text of the rectangle rows r1..r2, columns c1..c2 (inclusive), padded with spaces. */
+    static blockText(rawText, b) {
+      const lines = this.textLines(rawText);
+      const out = [];
+      for (let r = b.r1; r <= b.r2; r++) out.push((lines[r] || '').padEnd(b.c2 + 1).slice(b.c1, b.c2 + 1));
+      return out.join('\n');
+    }
+
+    /**
+     * Writes `block` over the text with its top-left at (r, c), replacing what was there
+     * (overwrite typing and paste). Lines and columns are added as needed. The caret ends
+     * after the last character written.
+     */
+    static overwriteBlock(rawText, r, c, block) {
+      r = Math.max(0, r); c = Math.max(0, c);
+      const lines = this.textLines(rawText);
+      const bl = this.blockLines(block);
+      bl.forEach((s, i) => {
+        while (lines.length <= r + i) lines.push('');
+        const l = lines[r + i].padEnd(c + s.length);
+        lines[r + i] = (l.slice(0, c) + s + l.slice(c + s.length)).replace(/\s+$/, '');
+      });
+      return { text: lines.join('\n'), cursorR: r + bl.length - 1, cursorC: c + bl[bl.length - 1].length };
+    }
+
+    /** Inserts `block` as columns at (r, c) on consecutive lines: text to its right moves over. */
+    static insertBlock(rawText, r, c, block) {
+      r = Math.max(0, r); c = Math.max(0, c);
+      const lines = this.textLines(rawText);
+      const bl = this.blockLines(block);
+      bl.forEach((s, i) => {
+        while (lines.length <= r + i) lines.push('');
+        const l = lines[r + i].padEnd(c);
+        lines[r + i] = (l.slice(0, c) + s + l.slice(c)).replace(/\s+$/, '');
+      });
+      return { text: lines.join('\n'), cursorR: r + bl.length - 1, cursorC: c + bl[bl.length - 1].length };
+    }
+
+    /** Number of diagram lines: the text without the trailing legend / comment block. */
+    static diagramLineCount(rawText) {
+      const lines = this.textLines(rawText);
+      let k = lines.length;
+      while (k > 0 && (lines[k - 1].trim() === '' || DitaaParser.isLegendOrCommentLine(lines[k - 1]))) k--;
+      return k;
+    }
+
+    /**
+     * What a block selection is: 'rows' when it spans the diagram's full width (whole lines),
+     * 'cols' when it spans its full height (whole columns), else 'rect'.
+     */
+    static blockKind(rawText, b) {
+      const n = this.diagramLineCount(rawText);
+      const width = Math.max(1, ...this.textLines(rawText).slice(0, n).map((l) => l.length));
+      if (b.c1 === 0 && b.c2 >= width - 1) return 'rows';
+      if (b.r1 === 0 && b.r2 >= n - 1 && n > 0) return 'cols';
+      return 'rect';
+    }
+
+    /** The rectangle to copy for a block: whole lines for rows, the diagram's lines for columns. */
+    static blockCopy(rawText, b) {
+      const kind = this.blockKind(rawText, b);
+      let text;
+      if (kind === 'rows') {
+        text = this.textLines(rawText).slice(b.r1, b.r2 + 1).map((l) => l.replace(/\s+$/, '')).join('\n');
+      } else if (kind === 'cols') {
+        text = this.blockText(rawText, { ...b, r2: Math.min(b.r2, this.diagramLineCount(rawText) - 1) });
+      } else {
+        text = this.blockText(rawText, b);
+      }
+      return { text, kind };
+    }
+
+    /**
+     * Inserts whole lines before line r: everything from line r down moves down, so vertical
+     * lines in a copied row carry straight on. The caret goes to the first line inserted.
+     */
+    static insertTextRows(rawText, r, block, c = 0) {
+      const lines = this.textLines(rawText);
+      const add = this.textLines(block).map((l) => l.replace(/\s+$/, ''));
+      while (lines.length < r) lines.push('');
+      lines.splice(r, 0, ...add);
+      return { text: lines.join('\n'), cursorR: r, cursorC: c };
+    }
+
+    /** Removes lines r1..r2: everything below moves up. */
+    static deleteTextRows(rawText, r1, r2) {
+      const lines = this.textLines(rawText);
+      lines.splice(r1, r2 - r1 + 1);
+      if (!lines.length) lines.push(''); // an empty text still has a line for the caret
+      return { text: lines.join('\n'), cursorR: Math.max(0, Math.min(r1, lines.length - 1)), cursorC: 0 };
+    }
+
+    /**
+     * Pastes a copied block in insert mode: rows go in as whole lines before line r, columns
+     * as whole columns at column c on every diagram line (so horizontal lines through them
+     * carry straight on), and a rectangle as columns at (r, c) on consecutive lines.
+     */
+    static pasteBlockInsert(rawText, r, c, block, kind) {
+      if (kind === 'rows') return this.insertTextRows(rawText, r, block, c);
+      if (kind === 'cols') {
+        const fit = this.fitColumnsToDiagram(rawText, block, true);
+        return { ...this.insertBlock(fit.text, 0, c, fit.block), cursorR: r, cursorC: c };
+      }
+      return this.insertBlock(rawText, r, c, block);
+    }
+
+    /** Pastes a copied block in overwrite mode: rows over whole lines from line r, columns from the top. */
+    static pasteBlockOverwrite(rawText, r, c, block, kind) {
+      if (kind === 'rows') return { ...this.overwriteBlock(rawText, r, 0, block), cursorR: r, cursorC: c };
+      if (kind === 'cols') {
+        const fit = this.fitColumnsToDiagram(rawText, block, false);
+        return { ...this.overwriteBlock(fit.text, 0, c, fit.block), cursorR: r, cursorC: c };
+      }
+      return this.overwriteBlock(rawText, r, c, block);
+    }
+
+    /**
+     * Whole columns go into the destination's diagram lines only, never its legend / comment
+     * lines: a taller block uses the blank lines below the diagram, then gets more blank
+     * lines added above that footer. With `pad`
+     * (insert mode) a shorter block is padded with blanks so every diagram line shifts
+     * together and stays aligned.
+     */
+    static fitColumnsToDiagram(rawText, block, pad) {
+      const lines = this.textLines(rawText);
+      const n = this.diagramLineCount(rawText);
+      const bl = this.blockLines(block);
+      if (bl.length > n) {
+        // Blank lines right below the diagram (e.g. the rows a cut column left empty) are
+        // reused first, so cutting columns and pasting them back gives back the same text
+        let blank = 0;
+        while (n + blank < lines.length && lines[n + blank].trim() === '') blank++;
+        const add = bl.length - n - Math.min(blank, bl.length - n);
+        if (add > 0) lines.splice(n + blank, 0, ...Array(add).fill(''));
+      }
+      if (pad) while (bl.length < n) bl.push(' '.repeat(bl[0].length));
+      return { text: lines.join('\n'), block: bl.join('\n') };
+    }
+
+    /** Cut / Delete of a block: insert mode removes the room it took (lines, columns), overwrite mode blanks it. */
+    static removeBlock(rawText, b, overwrite) {
+      if (overwrite) return this.clearBlock(rawText, b);
+      const kind = this.blockKind(rawText, b);
+      if (kind === 'rows') return this.deleteTextRows(rawText, b.r1, Math.min(b.r2, this.textLines(rawText).length - 1));
+      if (kind === 'cols') return this.deleteBlock(rawText, { ...b, r2: Math.min(b.r2, this.diagramLineCount(rawText) - 1) });
+      return this.deleteBlock(rawText, b);
+    }
+
+    /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */
+    static clearBlock(rawText, b) {
+      const blank = Array(b.r2 - b.r1 + 1).fill(' '.repeat(b.c2 - b.c1 + 1)).join('\n');
+      return { ...this.overwriteBlock(rawText, b.r1, b.c1, blank), cursorR: b.r1, cursorC: b.c1 };
+    }
+
+    /** Removes the rectangle's columns from its lines (insert mode cut / delete): text to its right moves left. */
+    static deleteBlock(rawText, b) {
+      const lines = this.textLines(rawText);
+      for (let r = b.r1; r <= b.r2 && r < lines.length; r++) {
+        const l = lines[r];
+        lines[r] = (l.slice(0, b.c1) + l.slice(b.c2 + 1)).replace(/\s+$/, '');
+      }
+      return { text: lines.join('\n'), cursorR: b.r1, cursorC: b.c1 };
     }
 
     /*************************************************************************
@@ -2687,6 +2872,44 @@
       return firstError || { error: 'Put the end point on a straight part of a box wall' };
     }
 
+    /**
+     * Where a click near (r, c) puts a connection end: on a box wall when the click is on a
+     * wall, right next to one, or inside a (non-container) box; otherwise on the line or the
+     * empty cell clicked. Returns { kind: 'wall', hit } | { kind: 'wire' | 'free' } | null.
+     */
+    static connectionTarget(rawText, r, c) {
+      const ast = new DitaaParser().parse(rawText);
+      const g = this.toGridState(rawText, r + 1, c + 1).grid;
+      const kind = this.endpointKind(ast, g, { r, c });
+      if (kind === 'wire') return { kind };
+      const hit = this.hitBoxSides(rawText, r, c);
+      if (hit) {
+        const w = this.nearestWallCell(hit.box, hit.sides, r, c);
+        const inLeaf = !hit.box.isContainer && r > hit.box.r1 && r < hit.box.r2 && c > hit.box.c1 && c < hit.box.c2;
+        if (w && (inLeaf || Math.abs(w.r - r) + Math.abs(w.c - c) <= 1)) return { kind: 'wall', hit };
+      }
+      return kind === 'free' ? { kind } : null;
+    }
+
+    /**
+     * "Start connection here": on a wall a '+' port is placed; on a line or empty space
+     * nothing changes yet. Returns { text, cursorR, cursorC, port } or { error }.
+     */
+    static startConnection(rawText, r, c) {
+      const t = this.connectionTarget(rawText, r, c);
+      if (!t) return { error: 'Start a connection on a box wall, a line or empty space (not on text)' };
+      if (t.kind === 'wall') return this.placePort(rawText, t.hit, r, c);
+      return { text: rawText, cursorR: r, cursorC: c, port: { r, c } };
+    }
+
+    /** "Connect to here": finishes a connection from `a` at the place clicked. */
+    static connectTo(rawText, a, r, c, opts = {}) {
+      const t = this.connectionTarget(rawText, r, c);
+      if (!t) return { error: 'End the connection on a box wall, a line or empty space (not on text)' };
+      if (t.kind === 'wall') return this.connectToWall(rawText, a, t.hit, r, c, opts);
+      return this.connectPorts(rawText, a, { r, c }, opts);
+    }
+
     /** Directions a line can leave a wall point in: outward, and inward for a container. */
     static portDirections(boxes, r, c) {
       const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]]; // up right down left
@@ -2707,27 +2930,48 @@
     }
 
     /**
-     * Draws a connection from the point at `a` to `b` (both { r, c } wall cells; b gets a '+'
-     * if it doesn't have one). The line is routed with horizontal and vertical segments,
-     * leaving and entering the walls at right angles, around boxes and text. It may cross a
-     * container's wall (that cell becomes '+') or, when there is no other way, another line
-     * (the crossing becomes '+'); both cost extra, as do turns, so it prefers clean routes.
+     * What a connection endpoint at p is: 'wall' (a straight part of a box wall), 'wire' (a
+     * cell of an existing line, which the new line joins), 'free' (an empty cell: the line
+     * starts or ends right there) or null (text, or a box corner).
+     */
+    static endpointKind(ast, grid, p) {
+      const ro = (ast.cellRole[p.r] && ast.cellRole[p.r][p.c]) || 'empty';
+      const ch = (grid[p.r] && grid[p.r][p.c]) || ' ';
+      if (ro === 'box-border') return this.portDirections(ast.boxes, p.r, p.c).length && '-=|:+'.includes(ch) ? 'wall' : null;
+      if (ro.startsWith('wire-')) return 'wire';
+      return ch === ' ' ? 'free' : null;
+    }
+
+    /**
+     * Draws a connection from `a` to `b` ({ r, c } cells). Each end can be on a box wall
+     * (it becomes a '+' port), on an existing line (the new line joins it: a '+' where it
+     * meets the line from the side, or it just continues a line end) or in empty space (the
+     * line starts / ends right there). The line is routed with horizontal and vertical
+     * segments, leaving and entering walls at right angles, around boxes and text. It may
+     * cross a container's wall (that cell becomes '+') or, when there is no other way,
+     * another line (the crossing becomes '+'); both cost extra, as do turns, so it prefers
+     * clean routes. The arrowhead (opts.arrow) goes on the end unless it joins a line.
      * opts: { dashed, arrow }. Returns { text, cursorR, cursorC } or { error }.
      */
     static connectPorts(rawText, a, b, opts = {}) {
       const parser = new DitaaParser();
       const ast0 = parser.parse(rawText);
-      const startDirs = this.portDirections(ast0.boxes, a.r, a.c);
-      const endDirs = this.portDirections(ast0.boxes, b.r, b.c);
-      if (!startDirs.length) return { error: 'The start point is no longer on a box wall: start the connection again' };
-      if (!endDirs.length) return { error: 'Put the end point on a straight part of a box wall' };
+      const g0 = this.toGridState(rawText).grid;
+      const kindA = this.endpointKind(ast0, g0, a);
+      const kindB = this.endpointKind(ast0, g0, b);
+      if (!kindA) return { error: 'The start point is no longer on a wall, a line or empty space: start the connection again' };
+      if (!kindB) return { error: 'End the connection on a box wall, a line or empty space (not on text or a corner)' };
       if (a.r === b.r && a.c === b.c) return { error: 'Pick a different point to connect to' };
+      const ALL = [0, 1, 2, 3].map((d) => ({ d, delta: [[-1, 0], [0, 1], [1, 0], [0, -1]][d] }));
+      const startDirs = kindA === 'wall' ? this.portDirections(ast0.boxes, a.r, a.c) : ALL;
+      const endDirs = kindB === 'wall' ? this.portDirections(ast0.boxes, b.r, b.c) : ALL;
 
-      const R = ast0.numRows + 8, C = ast0.numCols + 40;
+      // The search grid must hold both ends (a free end can be past the text), or cell keys alias
+      const R = Math.max(ast0.numRows, a.r + 1, b.r + 1) + 8;
+      const C = Math.max(ast0.numCols, a.c + 1, b.c + 1) + 40;
       const state = this.toGridState(rawText, R, C);
       const g = state.grid;
-      if (!'-=|:+'.includes(g[b.r][b.c]) || g[b.r][b.c] === ' ') return { error: 'Put the end point on a straight part of a box wall' };
-      g[b.r][b.c] = '+';
+      if (kindB === 'wall') g[b.r][b.c] = '+';
       const ast = parser.parse(this.fromGridState(state));
       const role = (r, c) => (ast.cellRole[r] && ast.cellRole[r][c]) || 'empty';
       const owners = new Map();
@@ -2741,7 +2985,8 @@
       }
       const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]];
       const horiz = (d) => d === 1 || d === 3;
-      const isEnd = (r, c) => (r === a.r && c === a.c) || (r === b.r && c === b.c);
+      // Wall and line ends are entered from beside them; a free end is part of the route
+      const isEnd = (r, c) => (r === a.r && c === a.c) || (kindB !== 'free' && r === b.r && c === b.c);
       // cost of entering (r, c) moving in direction d; crossing cells can't be turned on
       const enter = (r, c, d) => {
         if (r < 0 || c < 0 || r >= R || c >= C || isEnd(r, c)) return null;
@@ -2811,7 +3056,15 @@
         }
         return top;
       };
-      for (const { d } of startDirs) {
+      if (kindA === 'free') {
+        for (const { d } of startDirs) {
+          const k = key(a.r, a.c, d);
+          dist.set(k, 0);
+          prev.set(k, null);
+          push(0, a.r, a.c, d);
+        }
+      }
+      for (const { d } of kindA === 'free' ? [] : startDirs) {
         const r = a.r + DIRS[d][0], c = a.c + DIRS[d][1];
         const e = enter(r, c, d);
         if (!e || e.cross) continue;
@@ -2822,6 +3075,7 @@
       }
       const goals = new Map(); // key -> true when arriving there moving into b
       for (const { d } of endDirs) {
+        if (kindB === 'free') { goals.set(key(b.r, b.c, d), true); continue; }
         const r = b.r + DIRS[d][0], c = b.c + DIRS[d][1];
         goals.set(key(r, c, (d + 2) % 4), true);
       }
@@ -2857,12 +3111,23 @@
         const d = k % 4, rc = (k - d) / 4;
         cells.unshift({ r: Math.floor(rc / C), c: rc % C, d });
       }
-      const endD = (endDirs.find(({ d }) => {
-        const last = cells[cells.length - 1];
-        return last.r === b.r + DIRS[d][0] && last.c === b.c + DIRS[d][1];
-      }) || endDirs[0]).d;
-      const intoB = (endD + 2) % 4;
+      const lastCell = cells[cells.length - 1];
+      const intoB = kindB === 'free' ? lastCell.d : (endDirs.find(({ d }) =>
+        lastCell.r === b.r + DIRS[d][0] && lastCell.c === b.c + DIRS[d][1]) || endDirs[0]).d ^ 2;
       const HEAD = ['^', '>', 'v', '<'];
+      const straight = (d) => (horiz(d) ? (opts.dashed ? '=' : '-') : (opts.dashed ? ':' : '|'));
+      // A line end the new line meets: continuing it keeps it straight, from the side it's a '+'
+      // (an arrowhead it continues becomes line, in the style of the line behind it)
+      const join = (p, d) => {
+        const ch = g[p.r][p.c];
+        const along = (chars) => [[0, -1], [0, 1], [-1, 0], [1, 0]]
+          .map(([dr, dc]) => (g[p.r + dr] || [])[p.c + dc]).find((x) => x && chars.includes(x));
+        if ('-='.includes(ch)) return horiz(d) ? ch : '+';
+        if ('|:'.includes(ch)) return horiz(d) ? '+' : ch;
+        if ('<>'.includes(ch)) return horiz(d) ? along('-=') || straight(d) : '+';
+        if ('^v'.includes(ch)) return horiz(d) ? '+' : along('|:') || straight(d);
+        return '+';
+      };
       cells.forEach((cell, i) => {
         const inD = cell.d;
         const outD = i < cells.length - 1 ? cells[i + 1].d : intoB;
@@ -2871,15 +3136,18 @@
         if (crossing || inD !== outD) ch = '+';
         else if (horiz(inD)) ch = opts.dashed ? '=' : '-';
         else ch = opts.dashed ? ':' : '|';
-        if (i === cells.length - 1 && opts.arrow !== false) ch = HEAD[intoB];
+        if (i === cells.length - 1 && opts.arrow !== false && kindB !== 'wire') ch = HEAD[intoB];
         g[cell.r][cell.c] = ch;
       });
+      if (kindA === 'wire') g[a.r][a.c] = join(a, cells[0].d);
+      if (kindB === 'wire') g[b.r][b.c] = join(b, intoB);
       this.normalizeWidth(state);
-      const last = cells[cells.length - 1];
-      const res = { text: this.fromGridState(state), cursorR: last.r, cursorC: last.c };
+      const res = { text: this.fromGridState(state), cursorR: lastCell.r, cursorC: lastCell.c };
       // Boxes must all survive (a container wall crossing becomes '+', still a wall); the
-      // wiring changes by design, so only boxes are checked.
-      return this.guardOtherBoxes(rawText, res, 'connect', null, 0, false);
+      // wiring changes by design, so only boxes are checked. Joining lines may close a
+      // shape on purpose (e.g. mending a box's wall), so new boxes are allowed then.
+      const mending = kindA !== 'wall' || kindB !== 'wall';
+      return this.guardOtherBoxes(rawText, res, 'connect', null, mending ? Infinity : 0, false);
     }
   }
 

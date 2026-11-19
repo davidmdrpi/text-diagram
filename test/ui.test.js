@@ -195,7 +195,7 @@ test('typing a border character back into a box is never blocked', { skip }, asy
     // Status line: one line, shows position and selection
     assert.match(await page.textContent('#cursor-pos'), /^Ln \d+, Col \d+$/);
     await page.keyboard.press('Shift+ArrowLeft');
-    assert.match(await page.textContent('#cursor-pos'), /· 1 selected/);
+    assert.match(await page.textContent('#cursor-pos'), /· 1×1 block/, 'block selection is on by default');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
@@ -266,21 +266,35 @@ test('connection: right-click start, then click or right-click a wall to connect
     const lines = (await text()).split('\n');
     assert.equal(lines[3][3], ':');
     assert.equal(lines[4][3], ':', 'dashed vertical, no arrowhead');
-    // 4. off any wall, the pending menu offers only Cancel; a left click there just moves the caret
+    // 4. off any wall: a connection can end in empty space (and start on a line)
     await rc(6, 8);
     await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
-    const before = await text();
-    const near = await at(4, 22); // two lines below B's wall: near, but not on it
-    await page.mouse.click(near.x, near.y);
-    assert.equal(await text(), before, 'a click that is not on a wall draws nothing');
-    assert.match(await page.textContent('#conn-status'), /Connecting from/, 'still pending');
     await rc(4, 14); // empty space between the boxes
-    assert.deepEqual(await menuItems(), ['✕ Cancel connection']);
+    assert.deepEqual(await menuItems(), ['→ Connect to here (dashed)', '✕ Cancel connection']);
     await page.keyboard.press('Escape');
-    await rc(4, 14);
-    assert.deepEqual(await menuItems(), ['✕ Cancel connection']);
-    await page.locator('#ctx-menu button', { hasText: 'Cancel connection' }).click();
+    const free = await at(4, 22);
+    await page.mouse.click(free.x, free.y);
     assert.equal(await page.textContent('#conn-status'), '');
+    let ls = (await text()).split('\n');
+    assert.equal(ls[6].slice(8, 12), '+===', 'starts on C\'s wall');
+    assert.match(ls[4][22], /[=:+]/, 'ends right on the empty cell clicked');
+    // ...a start in empty space, then a click on plain text: cancelled, with a message
+    await page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      const ls = ed.value.split('\n');
+      ls[3] = ls[3].padEnd(13) + 'note';
+      ed.value = ls.join('\n');
+      ed.dispatchEvent(new Event('input'));
+    });
+    await rc(4, 14);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    assert.match(await page.textContent('#conn-status'), /Connecting from Ln 5, Col 15/);
+    const before = await text();
+    const onText = await at(3, 14);
+    await page.mouse.click(onText.x, onText.y);
+    assert.equal(await text(), before, 'nothing drawn');
+    assert.equal(await page.textContent('#conn-status'), '');
+    assert.match(await page.textContent('#error-banner'), /not on text.*connection cancelled/);
     // 5. Esc cancels a pending start
     await rc(6, 8);
     await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
@@ -317,6 +331,202 @@ test('regression (PR #9 review): a pending connection is cancelled when the diag
     await page.keyboard.press('End');
     await page.keyboard.type('x');
     assert.equal(await page.textContent('#conn-status'), '', 'cancelled by an edit');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('insert / overwrite: the toggle and the Insert key; typing, Backspace and paste overwrite', { skip }, async () => {
+  const { browser, page, errors, setClipboard } = await openPage();
+  try {
+    await page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      ed.value = ['+-----+   +-----+', '| A   +-->+ B   |', '+-----+   +-----+'].join('\n');
+      ed.dispatchEvent(new Event('input'));
+    });
+    const text = () => page.inputValue('#ascii-editor');
+    const click = async (r, c) => { const p = await cellXY(page, r, c); await page.mouse.click(p.x, p.y); };
+    assert.equal(await page.textContent('#toggle-overwrite'), 'INS');
+    await click(1, 7);
+    await page.keyboard.press('Insert');
+    assert.equal(await page.textContent('#toggle-overwrite'), 'OVR');
+    assert.equal(await page.locator('#editor-overlay .ovr-caret').count(), 1, 'a block caret shows the cell typed over');
+    // Typing replaces the arrow's characters; the rest of the line stays where it was
+    await page.keyboard.type('==');
+    assert.equal((await text()).split('\n')[1], '| A   +==>+ B   |');
+    await page.keyboard.press('Backspace');
+    assert.equal((await text()).split('\n')[1], '| A   += >+ B   |', 'Backspace blanks');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Delete');
+    assert.equal((await text()).split('\n')[1], '| A   +=  + B   |', 'Delete blanks the character under the caret');
+    // Typing inside a box overwrites too (no auto-fit)
+    await click(1, 2);
+    await page.keyboard.type('XYZ');
+    assert.equal((await text()).split('\n')[1], '| XYZ +=  + B   |');
+    // A click past the end of a line puts the caret there; typing goes right there
+    await click(2, 20);
+    await page.keyboard.type('n');
+    assert.equal((await text()).split('\n')[2], '+-----+   +-----+   n');
+    // Paste writes over the text at the caret
+    setClipboard('##\n##');
+    await click(0, 1);
+    await page.mouse.click(...Object.values(await cellXY(page, 0, 1)).slice(0, 2), { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: 'Paste' }).click();
+    assert.deepEqual((await text()).split('\n').slice(0, 2), ['+##---+   +-----+', '|##YZ +=  + B   |']);
+    // The button switches back to insert
+    await page.click('#toggle-overwrite');
+    assert.equal(await page.textContent('#toggle-overwrite'), 'INS');
+    assert.equal(await page.locator('#editor-overlay .ovr-caret').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('block selection (on by default): rectangles, whole rows and whole columns; copy, cut, paste', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    const start = [
+      '+---+    +---+',
+      '| A +--->+ B |',
+      '+-+-+    +-+-+',
+      '  |        |',
+      '  v        v',
+      '+---+    +---+',
+      '| C |    | D |',
+      '+---+    +---+'
+    ];
+    await page.evaluate((lines) => {
+      const ed = document.getElementById('ascii-editor');
+      ed.value = lines.join('\n');
+      ed.dispatchEvent(new Event('input'));
+      // A stand-in for the system clipboard: remember what copy put there, give it to paste
+      let clip = '';
+      document.addEventListener('copy', (e) => { clip = e.clipboardData.getData('text/plain'); });
+      window.__pasteClip = () => {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', clip);
+        ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      };
+    }, start);
+    const text = () => page.inputValue('#ascii-editor').then((v) => v.split('\n'));
+    const at = (r, c) => cellXY(page, r, c);
+    const click = async (r, c, opts) => { const p = await at(r, c); await page.mouse.click(p.x, p.y, opts); };
+    // (whole pixels: headless Chromium's own drag-selection misbehaves at fractional ones with this font)
+    const drag = async (a, b, alt) => {
+      const p = await at(...a), q = await at(...b);
+      if (alt) await page.keyboard.down('Alt');
+      await page.mouse.move(Math.round(p.x), Math.round(p.y));
+      await page.mouse.down();
+      await page.mouse.move(Math.round(q.x), Math.round(q.y), { steps: 4 });
+      await page.mouse.up();
+      if (alt) await page.keyboard.up('Alt');
+    };
+    const status = () => page.textContent('#cursor-pos');
+    assert.equal(await page.getAttribute('#toggle-block', 'aria-pressed'), 'true', 'on by default');
+
+    // 1. A plain drag selects a rectangle (box A); Alt+drag selects lines as usual
+    await drag([0, 0], [2, 4]);
+    assert.equal(await page.locator('#editor-overlay .block-sel').count(), 1);
+    assert.match(await status(), /· 3×5 block/);
+    await drag([1, 1], [2, 3], true);
+    assert.equal(await page.locator('#editor-overlay .block-sel').count(), 0);
+    assert.match(await status(), /· \d+ selected/);
+
+    // 2. A row: right-click → Select row, copy, paste on the same line: it goes in above,
+    //    everything below moves down and the vertical arrows are one line longer
+    await click(3, 5, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: 'Select row' }).click();
+    assert.match(await status(), /· 1 row/);
+    await page.keyboard.press('Control+C');
+    await click(3, 0);
+    await page.evaluate(() => window.__pasteClip());
+    assert.deepEqual((await text()).slice(2, 7), ['+-+-+    +-+-+', '  |        |', '  |        |', '  v        v', '+---+    +---+']);
+
+    // 3. A column with the keyboard: Shift+Down from the top selects the column; pasting it
+    //    widens the gap between A and B, and the arrow between them stretches
+    await page.keyboard.press('Control+Z');
+    await click(0, 6);
+    for (let i = 0; i < 7; i++) await page.keyboard.press('Shift+ArrowDown');
+    assert.match(await status(), /· 1 column/);
+    await page.keyboard.press('Control+C');
+    await click(1, 6); // anywhere in that column: it goes in before it, on every line
+    await page.evaluate(() => window.__pasteClip());
+    assert.deepEqual(await text(), [
+      '+---+     +---+',
+      '| A +---->+ B |',
+      '+-+-+     +-+-+',
+      '  |         |',
+      '  v         v',
+      '+---+     +---+',
+      '| C |     | D |',
+      '+---+     +---+'
+    ]);
+
+    // 4. Cut of whole rows in insert mode removes the lines
+    await page.keyboard.press('Control+Z');
+    await drag([3, 0], [4, 20]);
+    assert.match(await status(), /· 2 rows/);
+    await page.keyboard.press('Control+X');
+    assert.deepEqual(await text(), [start[0], start[1], start[2], start[5], start[6], start[7]]);
+
+    // 5. Overwrite mode: a copied rectangle is written over the text; Delete blanks a block
+    await page.keyboard.press('Control+Z');
+    await page.click('#toggle-overwrite');
+    await drag([5, 0], [7, 4]); // box C
+    await page.keyboard.press('Control+C');
+    await click(5, 9);
+    await page.evaluate(() => window.__pasteClip());
+    assert.deepEqual((await text()).slice(5), ['+---+    +---+', '| C |    | C |', '+---+    +---+']);
+    await drag([5, 9], [7, 13]);
+    await page.keyboard.press('Delete');
+    assert.deepEqual((await text()).slice(5), ['+---+', '| C |', '+---+']);
+
+    // 6. With block mode off, Alt+drag selects a rectangle; Escape drops it
+    await page.click('#toggle-block');
+    await drag([0, 0], [2, 4], true);
+    assert.match(await status(), /· 3×5 block/);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#editor-overlay .block-sel').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('regression (PR #10 review): with Fit on, overwrite mode never auto-fits (Enter, typing over a selection)', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    const box = ['+-----+', '| A   |', '+-----+'];
+    const set = (lines) => page.evaluate((v) => {
+      const ed = document.getElementById('ascii-editor');
+      ed.value = v.join('\n');
+      ed.dispatchEvent(new Event('input'));
+    }, lines);
+    await set(box);
+    assert.equal(await page.isChecked('#toggle-autofit'), true, 'Fit is on');
+    await page.click('#toggle-overwrite');
+    const caret = (r, c) => page.evaluate(([r, c]) => {
+      const ed = document.getElementById('ascii-editor');
+      const lines = ed.value.split('\n');
+      let i = c;
+      for (let k = 0; k < r; k++) i += lines[k].length + 1;
+      ed.focus();
+      ed.selectionStart = ed.selectionEnd = i;
+    }, [r, c]);
+    // Enter after "A": a plain line break, not a new bordered row
+    await caret(1, 3);
+    await page.keyboard.press('Enter');
+    assert.equal(await page.inputValue('#ascii-editor'), ['+-----+', '| A', '   |', '+-----+'].join('\n'));
+    // Typing over a selection: the first key replaces it as plain text (the box isn't
+    // refitted), then the rest overwrite what follows, the wall included
+    await set(box);
+    await page.evaluate(() => { const ed = document.getElementById('ascii-editor'); ed.focus(); ed.selectionStart = 10; ed.selectionEnd = 11; });
+    await page.keyboard.type('L');
+    assert.equal(await page.inputValue('#ascii-editor'), ['+-----+', '| L   |', '+-----+'].join('\n'));
+    await page.keyboard.type('ONGER');
+    assert.equal(await page.inputValue('#ascii-editor'), ['+-----+', '| LONGER', '+-----+'].join('\n'));
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

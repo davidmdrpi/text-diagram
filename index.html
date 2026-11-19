@@ -144,6 +144,8 @@
           autocapitalize="off"
           class="w-full h-full bg-slate-950 text-slate-100 font-mono text-[13px] p-4 focus:outline-none resize-none overflow-auto selection:bg-indigo-500/30"
           placeholder="Paste or type any ditaa ASCII diagram here..."></textarea>
+        <!-- Block selection and the overwrite caret, drawn over the text -->
+        <div id="editor-overlay" class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"></div>
       </div>
 
       <!-- Editor status line: position, selection and selected box, on one line -->
@@ -151,6 +153,10 @@
         <span id="cursor-pos" class="text-emerald-400">Ln 1, Col 1</span>
         <span id="active-box-pill" class="text-slate-500 truncate" title="The selected box: click inside a box in the text, or click it in the preview"></span>
         <span id="conn-status" class="text-amber-300 truncate"></span>
+        <span class="ml-auto flex items-center gap-1 shrink-0">
+          <button id="toggle-block" class="text-[10px] leading-3 font-mono px-1 py-px rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700" aria-pressed="false">▭ Block</button>
+          <button id="toggle-overwrite" class="text-[10px] leading-3 font-mono w-8 py-px rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700" aria-pressed="false">INS</button>
+        </span>
       </div>
     </section>
 
