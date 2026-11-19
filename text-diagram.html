@@ -101,10 +101,10 @@
         <button data-tag="cYEL" class="tag-btn w-4 h-4 rounded border border-slate-600 hover:ring-2 hover:ring-white/40 transition" style="background:#eab308" title="Toggle cYEL (yellow) on the selected box" aria-label="Toggle cYEL"></button>
         
         <div class="flex items-center gap-px p-px rounded bg-slate-950/70 border border-slate-800" title="Move the selected box (Alt+Arrow keys)">
-          <button id="shift-left" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box left (Alt+←); attached wires stretch">←</button>
-          <button id="shift-up" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box up (Alt+↑); attached wires stretch">↑</button>
-          <button id="shift-down" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box down (Alt+↓); attached wires stretch">↓</button>
-          <button id="shift-right" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box right (Alt+→); attached wires stretch">→</button>
+          <button id="shift-left" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box left (Alt+←). With a block selected (drag), move everything in it left">←</button>
+          <button id="shift-up" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box up (Alt+↑). With a block selected (drag), move everything in it up">↑</button>
+          <button id="shift-down" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box down (Alt+↓). With a block selected (drag), move everything in it down">↓</button>
+          <button id="shift-right" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white border-slate-700" title="Move the selected box right (Alt+→). With a block selected (drag), move everything in it right">→</button>
         </div>
         <div class="flex items-center gap-px p-px rounded bg-slate-950/70 border border-slate-800" title="Resize the selected box (Alt+Shift+Arrow keys)">
           <button id="resize-wider" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-amber-600 text-slate-200 hover:text-white border-slate-700" title="Make the selected box wider (Alt+Shift+→)">+W</button>
@@ -3187,6 +3187,82 @@
       return { text, cursorR: r1 + 1, cursorC: c1 + 2, box: { r1, c1, r2, c2 } };
     }
 
+    /**
+     * Moves the characters of block b by one cell (dr, dc) together: they are lifted, the
+     * cells they leave become blank, and they are put down one cell over. Nothing else moves,
+     * with two obvious exceptions: a line attached to the block on the side it moves away
+     * from stretches to follow it (an arrowhead moves along), and a line the block moves
+     * into along its length gets one cell shorter (as long as some of it is left).
+     * Anything else in the way: overwrite mode writes over it; insert mode makes room going
+     * right or down (a column / line is made before the block, carrying the lines and walls
+     * through and keeping labels elsewhere intact) and refuses left or up.
+     * Returns { text, cursorR, cursorC, block } or { error }.
+     */
+    static moveBlock(rawText, b, dr, dc, opts = {}) {
+      if (b.r1 + dr < 0) return { error: 'The block is at the top already: move the rest down instead' };
+      if (b.c1 + dc < 0) return { error: 'The block is at the left edge already: move the rest right instead' };
+      const lines = this.textLines(rawText);
+      const get = (r, c) => (r < 0 || c < 0 ? ' ' : (lines[r] || '')[c] || ' ');
+      const inside = (r, c) => r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2;
+      const along = dc ? '-=<>' : '|:^v'; // line characters running the way the block moves
+      const isAlong = (ch) => ch !== ' ' && along.includes(ch);
+      let blocked = false;
+      const heads = []; // arrowheads of lines that get shorter: they step back along their line
+      for (let r = b.r1 + dr; r <= b.r2 + dr && !blocked; r++) {
+        for (let c = b.c1 + dc; c <= b.c2 + dc; c++) {
+          if (inside(r, c)) continue;
+          const ch = get(r, c);
+          if (ch === ' ') continue;
+          if (isAlong(ch) && isAlong(get(r + dr, c + dc))) { // a line that gets shorter
+            if ('<>^v'.includes(ch)) heads.push([r + dr, c + dc, ch]);
+            continue;
+          }
+          blocked = true;
+          break;
+        }
+      }
+      const moved = { r1: b.r1 + dr, c1: b.c1 + dc, r2: b.r2 + dr, c2: b.c2 + dc };
+      const done = (text) => ({ text, cursorR: moved.r1, cursorC: moved.c1, block: moved });
+      if (blocked && !opts.overwrite) {
+        if (dr < 0 || dc < 0) {
+          return { error: `Something is in the way ${dr < 0 ? 'above' : 'on the left'}: move it first, or switch to OVR to move over it` };
+        }
+        const n = Math.max(this.diagramLineCount(rawText), b.r2 + 1);
+        while (lines.length < n) lines.push('');
+        if (dc > 0) this.insertContinuingColumn(lines, b.c1, n, { lo: b.r1, hi: b.r2 });
+        else this.insertContinuingRow(lines, b.r1);
+        return done(lines.map((l) => l.replace(/\s+$/, '')).join('\n'));
+      }
+      const block = this.blockText(rawText, b);
+      const out = this.textLines(this.overwriteBlock(this.clearBlock(rawText, b).text, moved.r1, moved.c1, block).text);
+      const put = (r, c, ch) => {
+        while (out.length <= r) out.push('');
+        const l = out[r].padEnd(c + 1);
+        out[r] = l.slice(0, c) + ch + l.slice(c + 1);
+      };
+      for (const [r, c, ch] of heads) put(r, c, ch);
+      // Lines attached on the side the block moved away from follow it across the gap
+      const edge = (ch) => ch !== ' ' && '|:+-=<>^v/\\'.includes(ch);
+      if (dc) {
+        const outC = dc > 0 ? b.c1 - 1 : b.c2 + 1, gapC = dc > 0 ? b.c1 : b.c2, newC = dc > 0 ? b.c1 + 1 : b.c2 - 1;
+        const head = dc > 0 ? '>' : '<';
+        for (let r = b.r1; r <= b.r2; r++) {
+          const o = get(r, outC), e = (out[r] || '')[newC] || ' ';
+          if (o === head && edge(e)) { put(r, gapC, head); put(r, outC, '-'); }
+          else if ('-='.includes(o) && o !== ' ' && edge(e)) put(r, gapC, o);
+        }
+      } else {
+        const outR = dr > 0 ? b.r1 - 1 : b.r2 + 1, gapR = dr > 0 ? b.r1 : b.r2, newR = dr > 0 ? b.r1 + 1 : b.r2 - 1;
+        const head = dr > 0 ? 'v' : '^';
+        for (let c = b.c1; c <= b.c2; c++) {
+          const o = get(outR, c), e = (out[newR] || '')[c] || ' ';
+          if (o === head && edge(e)) { put(gapR, c, head); put(outR, c, '|'); }
+          else if ('|:'.includes(o) && o !== ' ' && edge(e)) put(gapR, c, o);
+        }
+      }
+      return done(out.map((l) => l.replace(/\s+$/, '')).join('\n'));
+    }
+
     /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */
     static clearBlock(rawText, b) {
       const blank = Array(b.r2 - b.r1 + 1).fill(' '.repeat(b.c2 - b.c1 + 1)).join('\n');
@@ -4138,8 +4214,9 @@
     }
     fn(box);
   };
-  const shift = (dr, dc, label) => requireBox((box) =>
-    applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, dr, dc), label));
+  // With a block selected, the arrows move the block's characters (see moveSelectedBlock)
+  const shift = (dr, dc, label) => () => (blockSel ? moveSelectedBlock(dr, dc) : requireBox((box) =>
+    applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, dr, dc), label))());
   const resize = (dw, dh, label) => requireBox((box) =>
     applyGridOperationResult(Grid2DEditor.resizeBox(editor.value, box, dw, dh), label));
 
@@ -4891,6 +4968,20 @@
     if (!res.error) setBlock(null);
     applyGridOperationResult(res, modes.overwrite ? 'Drew a box on the block\'s edge' : 'Drew a box around the block');
   }
+  /**
+   * Moves the selected block's characters one cell (Alt+Arrows or the ← ↑ ↓ → buttons) and
+   * keeps it selected, so pressing again keeps moving it: e.g. select everything and move it
+   * right and down to make room for a box around it.
+   */
+  function moveSelectedBlock(dr, dc) {
+    const b = blockSel;
+    const res = Grid2DEditor.moveBlock(editor.value, b, dr, dc, { overwrite: modes.overwrite });
+    if (res.error) return showError(res.error);
+    const keepKind = (b.kind === 'rows' && dc === 0) || (b.kind === 'cols' && dr === 0);
+    applyGridOperationResult(res, `Moved the ${blockLabel(b)} ${dr < 0 ? '↑' : dr > 0 ? '↓' : dc < 0 ? '←' : '→'}`);
+    setBlock({ ...res.block, kind: keepKind ? b.kind : 'rect' });
+    revealCell(dr > 0 ? res.block.r2 : res.block.r1, dc > 0 ? res.block.c2 : res.block.c1);
+  }
   let pendingCopy = null;
   editor.addEventListener('copy', (e) => {
     if (pendingCopy === null && blockSel) blockClip = Grid2DEditor.blockCopy(editor.value, blockSel);
@@ -4949,6 +5040,12 @@
     }
     if (extendBlockByKey(e)) return true;
     if (!blockSel) return false;
+    const MOVES = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
+    if (e.altKey && !e.shiftKey && !mod && MOVES[e.key]) {
+      e.preventDefault();
+      moveSelectedBlock(...MOVES[e.key]);
+      return true;
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && !mod && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       const b = blockSel;

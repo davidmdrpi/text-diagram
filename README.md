@@ -16,7 +16,7 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 
 | Action | Buttons | Keys |
 | --- | --- | --- |
-| Move box | ← ↑ ↓ → | `Alt+Arrows` |
+| Move box (or the selected block) | ← ↑ ↓ → | `Alt+Arrows` |
 | Resize box | +W −W +H −H | `Alt+Shift+Arrows` |
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
@@ -79,6 +79,13 @@ them gets a line longer; copy a column that the arrows cross and paste it, and t
 | Ctrl+V of copied columns | inserts them before the caret's column, on every diagram line | writes them over the columns from the caret's column |
 | Ctrl+V of a copied rectangle | inserts it as columns at the caret, on consecutive lines | writes it over the text at the caret |
 | Ctrl+V with a block selected | replaces the block | replaces the block |
+
+**Moving a block:** with a block selected, `Alt+Arrows` (or the ← ↑ ↓ → buttons) move everything
+in it one character at a time, and it stays selected so you can keep going. That's how to make
+room at the top or left edge: select everything, then move it right and down. Nothing outside
+the block moves, except that a line attached to it on the side it moves away from stretches to
+follow it, and a line it moves into gets shorter (its arrowhead steps back). If something else
+is in the way, OVR writes over it; INS makes room going right or down and refuses left or up.
 
 Right-click → *Paste* pastes where you right-clicked, even inside the block selection. Any other
 key or a click drops the block selection. Ordinary text from elsewhere pastes as usual in insert

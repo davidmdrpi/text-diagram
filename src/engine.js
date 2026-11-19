@@ -2950,6 +2950,82 @@
       return { text, cursorR: r1 + 1, cursorC: c1 + 2, box: { r1, c1, r2, c2 } };
     }
 
+    /**
+     * Moves the characters of block b by one cell (dr, dc) together: they are lifted, the
+     * cells they leave become blank, and they are put down one cell over. Nothing else moves,
+     * with two obvious exceptions: a line attached to the block on the side it moves away
+     * from stretches to follow it (an arrowhead moves along), and a line the block moves
+     * into along its length gets one cell shorter (as long as some of it is left).
+     * Anything else in the way: overwrite mode writes over it; insert mode makes room going
+     * right or down (a column / line is made before the block, carrying the lines and walls
+     * through and keeping labels elsewhere intact) and refuses left or up.
+     * Returns { text, cursorR, cursorC, block } or { error }.
+     */
+    static moveBlock(rawText, b, dr, dc, opts = {}) {
+      if (b.r1 + dr < 0) return { error: 'The block is at the top already: move the rest down instead' };
+      if (b.c1 + dc < 0) return { error: 'The block is at the left edge already: move the rest right instead' };
+      const lines = this.textLines(rawText);
+      const get = (r, c) => (r < 0 || c < 0 ? ' ' : (lines[r] || '')[c] || ' ');
+      const inside = (r, c) => r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2;
+      const along = dc ? '-=<>' : '|:^v'; // line characters running the way the block moves
+      const isAlong = (ch) => ch !== ' ' && along.includes(ch);
+      let blocked = false;
+      const heads = []; // arrowheads of lines that get shorter: they step back along their line
+      for (let r = b.r1 + dr; r <= b.r2 + dr && !blocked; r++) {
+        for (let c = b.c1 + dc; c <= b.c2 + dc; c++) {
+          if (inside(r, c)) continue;
+          const ch = get(r, c);
+          if (ch === ' ') continue;
+          if (isAlong(ch) && isAlong(get(r + dr, c + dc))) { // a line that gets shorter
+            if ('<>^v'.includes(ch)) heads.push([r + dr, c + dc, ch]);
+            continue;
+          }
+          blocked = true;
+          break;
+        }
+      }
+      const moved = { r1: b.r1 + dr, c1: b.c1 + dc, r2: b.r2 + dr, c2: b.c2 + dc };
+      const done = (text) => ({ text, cursorR: moved.r1, cursorC: moved.c1, block: moved });
+      if (blocked && !opts.overwrite) {
+        if (dr < 0 || dc < 0) {
+          return { error: `Something is in the way ${dr < 0 ? 'above' : 'on the left'}: move it first, or switch to OVR to move over it` };
+        }
+        const n = Math.max(this.diagramLineCount(rawText), b.r2 + 1);
+        while (lines.length < n) lines.push('');
+        if (dc > 0) this.insertContinuingColumn(lines, b.c1, n, { lo: b.r1, hi: b.r2 });
+        else this.insertContinuingRow(lines, b.r1);
+        return done(lines.map((l) => l.replace(/\s+$/, '')).join('\n'));
+      }
+      const block = this.blockText(rawText, b);
+      const out = this.textLines(this.overwriteBlock(this.clearBlock(rawText, b).text, moved.r1, moved.c1, block).text);
+      const put = (r, c, ch) => {
+        while (out.length <= r) out.push('');
+        const l = out[r].padEnd(c + 1);
+        out[r] = l.slice(0, c) + ch + l.slice(c + 1);
+      };
+      for (const [r, c, ch] of heads) put(r, c, ch);
+      // Lines attached on the side the block moved away from follow it across the gap
+      const edge = (ch) => ch !== ' ' && '|:+-=<>^v/\\'.includes(ch);
+      if (dc) {
+        const outC = dc > 0 ? b.c1 - 1 : b.c2 + 1, gapC = dc > 0 ? b.c1 : b.c2, newC = dc > 0 ? b.c1 + 1 : b.c2 - 1;
+        const head = dc > 0 ? '>' : '<';
+        for (let r = b.r1; r <= b.r2; r++) {
+          const o = get(r, outC), e = (out[r] || '')[newC] || ' ';
+          if (o === head && edge(e)) { put(r, gapC, head); put(r, outC, '-'); }
+          else if ('-='.includes(o) && o !== ' ' && edge(e)) put(r, gapC, o);
+        }
+      } else {
+        const outR = dr > 0 ? b.r1 - 1 : b.r2 + 1, gapR = dr > 0 ? b.r1 : b.r2, newR = dr > 0 ? b.r1 + 1 : b.r2 - 1;
+        const head = dr > 0 ? 'v' : '^';
+        for (let c = b.c1; c <= b.c2; c++) {
+          const o = get(outR, c), e = (out[newR] || '')[c] || ' ';
+          if (o === head && edge(e)) { put(gapR, c, head); put(outR, c, '|'); }
+          else if ('|:'.includes(o) && o !== ' ' && edge(e)) put(gapR, c, o);
+        }
+      }
+      return done(out.map((l) => l.replace(/\s+$/, '')).join('\n'));
+    }
+
     /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */
     static clearBlock(rawText, b) {
       const blank = Array(b.r2 - b.r1 + 1).fill(' '.repeat(b.c2 - b.c1 + 1)).join('\n');

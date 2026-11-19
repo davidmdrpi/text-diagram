@@ -580,8 +580,9 @@
     }
     fn(box);
   };
-  const shift = (dr, dc, label) => requireBox((box) =>
-    applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, dr, dc), label));
+  // With a block selected, the arrows move the block's characters (see moveSelectedBlock)
+  const shift = (dr, dc, label) => () => (blockSel ? moveSelectedBlock(dr, dc) : requireBox((box) =>
+    applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, dr, dc), label))());
   const resize = (dw, dh, label) => requireBox((box) =>
     applyGridOperationResult(Grid2DEditor.resizeBox(editor.value, box, dw, dh), label));
 
@@ -1333,6 +1334,20 @@
     if (!res.error) setBlock(null);
     applyGridOperationResult(res, modes.overwrite ? 'Drew a box on the block\'s edge' : 'Drew a box around the block');
   }
+  /**
+   * Moves the selected block's characters one cell (Alt+Arrows or the ← ↑ ↓ → buttons) and
+   * keeps it selected, so pressing again keeps moving it: e.g. select everything and move it
+   * right and down to make room for a box around it.
+   */
+  function moveSelectedBlock(dr, dc) {
+    const b = blockSel;
+    const res = Grid2DEditor.moveBlock(editor.value, b, dr, dc, { overwrite: modes.overwrite });
+    if (res.error) return showError(res.error);
+    const keepKind = (b.kind === 'rows' && dc === 0) || (b.kind === 'cols' && dr === 0);
+    applyGridOperationResult(res, `Moved the ${blockLabel(b)} ${dr < 0 ? '↑' : dr > 0 ? '↓' : dc < 0 ? '←' : '→'}`);
+    setBlock({ ...res.block, kind: keepKind ? b.kind : 'rect' });
+    revealCell(dr > 0 ? res.block.r2 : res.block.r1, dc > 0 ? res.block.c2 : res.block.c1);
+  }
   let pendingCopy = null;
   editor.addEventListener('copy', (e) => {
     if (pendingCopy === null && blockSel) blockClip = Grid2DEditor.blockCopy(editor.value, blockSel);
@@ -1391,6 +1406,12 @@
     }
     if (extendBlockByKey(e)) return true;
     if (!blockSel) return false;
+    const MOVES = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
+    if (e.altKey && !e.shiftKey && !mod && MOVES[e.key]) {
+      e.preventDefault();
+      moveSelectedBlock(...MOVES[e.key]);
+      return true;
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && !mod && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       const b = blockSel;
