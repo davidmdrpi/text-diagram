@@ -3061,18 +3061,40 @@
 
     /**
      * Inserts a column before column `at` on lines 0..n-1 that carries horizontal lines and
-     * box walls through. On lines outside `keep` ({ lo, hi }) the gap never splits a label:
-     * if `at` falls inside a word or phrase, that line's gap goes right after it instead.
+     * box walls through. On lines outside `keep` ({ lo, hi }) the gap never changes a label:
+     * inside a box whose line holds only text, it goes after that line's text (the label is
+     * kept verbatim and the box's right wall still moves over with the rest of the box); in
+     * free text, after the whole phrase (words, punctuation and single spaces).
      */
     static insertContinuingColumn(lines, at, n, keep = null) {
-      const label = (ch) => !!ch && !/[\s\-=|:+<>^*\/\\]/.test(ch);
+      let roleAt = () => 'empty', boxes = [];
+      if (keep) {
+        const ast = new DitaaParser().parse(lines.join('\n'));
+        roleAt = (r, c) => (ast.cellRole[r] && ast.cellRole[r][c]) || 'empty';
+        boxes = ast.boxes.slice().sort((p, q) => (p.r2 - p.r1) * (p.c2 - p.c1) - (q.r2 - q.r1) * (q.c2 - q.c1));
+      }
+      const plain = (r, c) => { const ro = roleAt(r, c); return ro !== 'box-border' && !ro.startsWith('wire'); };
       for (let r = 0; r < n; r++) {
         const l = (lines[r] || '').padEnd(at);
-        if (keep && (r < keep.lo || r > keep.hi) && label(l[at - 1]) && (label(l[at]) || (l[at] === ' ' && label(l[at + 1])))) {
-          let x = at;
-          while (label(l[x - 1]) && (label(l[x]) || (l[x] === ' ' && label(l[x + 1])))) x++;
-          lines[r] = (l.slice(0, x) + ' ' + l.slice(x)).replace(/\s+$/, '');
-          continue;
+        if (keep && (r < keep.lo || r > keep.hi)) {
+          const gap = (x) => { lines[r] = (l.slice(0, x) + ' ' + l.slice(x)).replace(/\s+$/, ''); };
+          const box = boxes.find((b) => r > b.r1 && r < b.r2 && at > b.c1 && at < b.c2);
+          if (box) {
+            let textOnly = true, last = -1;
+            for (let c = box.c1 + 1; c < box.c2; c++) {
+              if (!plain(r, c)) textOnly = false;
+              if ((l[c] || ' ') !== ' ') last = c;
+            }
+            if (textOnly) { gap(Math.max(at, last + 1)); continue; }
+          } else {
+            const text = (c) => (l[c] || ' ') !== ' ' && plain(r, c);
+            if (text(at - 1) && (text(at) || (l[at] === ' ' && text(at + 1)))) {
+              let x = at;
+              while (text(x) || (l[x] === ' ' && text(x + 1))) x++;
+              gap(x);
+              continue;
+            }
+          }
         }
         const a = l[at - 1] || ' ', b = l[at] || ' ';
         const dashed = a === '=' || b === '=';
@@ -3125,9 +3147,14 @@
           return true;
         };
         const rows = [r1 - top, r2 + bottom], cols = [c1 - left, c2 + right];
-        const localL = free(rows, [c1 - left, c1 - 1], '-=>'), localR = free(rows, [c2 + 1, c2 + right], '-=<');
-        const localT = r1 - top >= 0 && free([r1 - top, r1 - 1], cols, '|:v');
-        const localB = free([r2 + 1, r2 + bottom], cols, '|:^');
+        // ...and a line the border crosses must keep a piece outside it too, or whatever it
+        // came from would end up touching the border instead of the line
+        const outsideH = (c, o) => { for (let r = rows[0]; r <= rows[1]; r++) if (has('-=', ch(r, c)) && !' -='.includes(ch(r, o))) return false; return true; };
+        const outsideV = (r, o) => { for (let c = cols[0]; c <= cols[1]; c++) if (has('|:', ch(r, c)) && !' |:'.includes(ch(o, c))) return false; return true; };
+        const localL = free(rows, [c1 - left, c1 - 1], '-=>') && outsideH(c1 - left, c1 - left - 1);
+        const localR = free(rows, [c2 + 1, c2 + right], '-=<') && outsideH(c2 + right, c2 + right + 1);
+        const localT = r1 - top >= 0 && free([r1 - top, r1 - 1], cols, '|:v') && outsideV(r1 - top, r1 - top - 1);
+        const localB = free([r2 + 1, r2 + bottom], cols, '|:^') && outsideV(r2 + bottom, r2 + bottom + 1);
         const keep = { lo: Math.max(0, r1 - top), hi: r2 + bottom };
         if (!localR) for (let i = 0; i < right; i++) this.insertContinuingColumn(lines, c2 + 1 + i, n, keep);
         if (!localL) for (let i = 0; i < left; i++) this.insertContinuingColumn(lines, c1, n, keep);

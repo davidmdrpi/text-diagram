@@ -1787,3 +1787,40 @@ test('regression (PR #11 review): wrapping a block never rewrites labels outside
     assert.equal(parse(out.text).boxes.find((b) => b.r1 === 0).lines[0], label.slice(1, -1).trim(), out.text);
   }
 });
+
+test('regression (PR #11 re-review): wrapping either box keeps a connector of any length attached at both ends', () => {
+  const G = Grid2DEditor;
+  for (let gap = 1; gap <= 4; gap++) {
+    const sp = ' '.repeat(gap);
+    const horizontal = `+---+${sp}+---+\n| A |${'-'.repeat(gap)}| B |\n+---+${sp}+---+`;
+    const vertical = '+---+\n| A |\n+---+\n' + '  |\n'.repeat(gap) + '+---+\n| B |\n+---+';
+    const ported = `+---+${sp}+---+\n| A +${'-'.repeat(gap)}+ B |\n+---+${sp}+---+`;
+    for (const t of [horizontal, vertical, ported]) {
+      assert.deepEqual(conns(t), ['A–B']);
+      for (const name of ['A', 'B']) {
+        const b = parse(t).boxes.find((x) => x.lines[0] === name);
+        const res = G.drawBoxAround(t, b, { wrap: true });
+        assert.ok(!res.error, res.error);
+        assert.deepEqual(conns(res.text), ['A–container', 'B–container'], `gap ${gap}, wrapping ${name}:\n${res.text}`);
+      }
+    }
+  }
+  // The two-cell case from the review: the border may not take A's last wire cell
+  const t2 = '+---+  +---+\n| A |--| B |\n+---+  +---+';
+  const b2 = parse(t2).boxes.find((x) => x.lines[0] === 'B');
+  assert.equal(G.drawBoxAround(t2, b2, { wrap: true }).text.split('\n')[2], '| A |--+-| B ||');
+});
+
+test('regression (PR #11 re-review): making a column never edits label text elsewhere (punctuation, inner spaces, free text)', () => {
+  const G = Grid2DEditor;
+  for (const label of ['API-Gateway', 'API Gateway', 'a, b. c', 'x  y']) {
+    const w = label.length + 4;
+    const t = `+${'-'.repeat(w - 2)}+\n| ${label} |\n+${'-'.repeat(w - 2)}+\n XYz`;
+    const res = G.drawBoxAround(t, { r1: 3, c1: 1, r2: 3, c2: 2 }, { wrap: true }); // the 'z' forces room to be made
+    const top = parse(res.text).boxes.find((b) => b.r1 === 0);
+    assert.equal(top.lines[0], label, res.text);
+    assert.equal(res.text.split('\n')[1].slice(0, label.length + 2), `| ${label}`, 'not moved or re-spaced');
+  }
+  const free = 'API-Gateway and more\n\n XYz';
+  assert.equal(G.drawBoxAround(free, { r1: 2, c1: 1, r2: 2, c2: 2 }, { wrap: true }).text.split('\n')[0], 'API-Gateway and more');
+});
