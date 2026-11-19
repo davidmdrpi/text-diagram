@@ -2677,6 +2677,86 @@
       return { text: lines.join('\n'), cursorR: r + bl.length - 1, cursorC: c + bl[bl.length - 1].length };
     }
 
+    /** Number of diagram lines: the text without the trailing legend / comment block. */
+    static diagramLineCount(rawText) {
+      const lines = this.textLines(rawText);
+      let k = lines.length;
+      while (k > 0 && (lines[k - 1].trim() === '' || DitaaParser.isLegendOrCommentLine(lines[k - 1]))) k--;
+      return k;
+    }
+
+    /**
+     * What a block selection is: 'rows' when it spans the diagram's full width (whole lines),
+     * 'cols' when it spans its full height (whole columns), else 'rect'.
+     */
+    static blockKind(rawText, b) {
+      const n = this.diagramLineCount(rawText);
+      const width = Math.max(1, ...this.textLines(rawText).slice(0, n).map((l) => l.length));
+      if (b.c1 === 0 && b.c2 >= width - 1) return 'rows';
+      if (b.r1 === 0 && b.r2 >= n - 1 && n > 0) return 'cols';
+      return 'rect';
+    }
+
+    /** The rectangle to copy for a block: whole lines for rows, the diagram's lines for columns. */
+    static blockCopy(rawText, b) {
+      const kind = this.blockKind(rawText, b);
+      let text;
+      if (kind === 'rows') {
+        text = this.textLines(rawText).slice(b.r1, b.r2 + 1).map((l) => l.replace(/\s+$/, '')).join('\n');
+      } else if (kind === 'cols') {
+        text = this.blockText(rawText, { ...b, r2: Math.min(b.r2, this.diagramLineCount(rawText) - 1) });
+      } else {
+        text = this.blockText(rawText, b);
+      }
+      return { text, kind };
+    }
+
+    /**
+     * Inserts whole lines before line r: everything from line r down moves down, so vertical
+     * lines in a copied row carry straight on. The caret goes to the first line inserted.
+     */
+    static insertTextRows(rawText, r, block, c = 0) {
+      const lines = this.textLines(rawText);
+      const add = this.textLines(block).map((l) => l.replace(/\s+$/, ''));
+      while (lines.length < r) lines.push('');
+      lines.splice(r, 0, ...add);
+      return { text: lines.join('\n'), cursorR: r, cursorC: c };
+    }
+
+    /** Removes lines r1..r2: everything below moves up. */
+    static deleteTextRows(rawText, r1, r2) {
+      const lines = this.textLines(rawText);
+      lines.splice(r1, r2 - r1 + 1);
+      return { text: lines.join('\n'), cursorR: Math.min(r1, lines.length - 1), cursorC: 0 };
+    }
+
+    /**
+     * Pastes a copied block in insert mode: rows go in as whole lines before line r, columns
+     * as whole columns at column c on every diagram line (so horizontal lines through them
+     * carry straight on), and a rectangle as columns at (r, c) on consecutive lines.
+     */
+    static pasteBlockInsert(rawText, r, c, block, kind) {
+      if (kind === 'rows') return this.insertTextRows(rawText, r, block, c);
+      if (kind === 'cols') return { ...this.insertBlock(rawText, 0, c, block), cursorR: r, cursorC: c };
+      return this.insertBlock(rawText, r, c, block);
+    }
+
+    /** Pastes a copied block in overwrite mode: rows over whole lines from line r, columns from the top. */
+    static pasteBlockOverwrite(rawText, r, c, block, kind) {
+      if (kind === 'rows') return { ...this.overwriteBlock(rawText, r, 0, block), cursorR: r, cursorC: c };
+      if (kind === 'cols') return { ...this.overwriteBlock(rawText, 0, c, block), cursorR: r, cursorC: c };
+      return this.overwriteBlock(rawText, r, c, block);
+    }
+
+    /** Cut / Delete of a block: insert mode removes the room it took (lines, columns), overwrite mode blanks it. */
+    static removeBlock(rawText, b, overwrite) {
+      if (overwrite) return this.clearBlock(rawText, b);
+      const kind = this.blockKind(rawText, b);
+      if (kind === 'rows') return this.deleteTextRows(rawText, b.r1, Math.min(b.r2, this.textLines(rawText).length - 1));
+      if (kind === 'cols') return this.deleteBlock(rawText, { ...b, r2: Math.min(b.r2, this.diagramLineCount(rawText) - 1) });
+      return this.deleteBlock(rawText, b);
+    }
+
     /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */
     static clearBlock(rawText, b) {
       const blank = Array(b.r2 - b.r1 + 1).fill(' '.repeat(b.c2 - b.c1 + 1)).join('\n');

@@ -54,15 +54,25 @@ Backspace and Delete blank characters instead of pulling text along, a click put
 the cell clicked (even past the end of a line), and paste writes over the text at the caret.
 Nothing is auto-fitted in overwrite mode; Enter works as usual.
 
-**Block selection** (hold Alt while dragging, or turn on `▭ Block` at the bottom right; or
-right-click a box → *Select box*) selects a rectangle instead of whole lines:
+**Block selection** is on by default (`▭ Block` at the bottom right): a drag selects a
+rectangle, not runs of lines. Shift+Arrows grow a rectangle from the caret (Shift+Down from a
+caret selects a column), Shift+Home / Shift+End reach the diagram's left and right edges, and
+Shift+click extends. Alt+drag selects lines the usual way (with block mode off it's the other
+way round). Right-click also offers *Select box*, *Select row* and *Select column*.
+
+A block that spans the diagram's full width is **whole rows**; one that spans its full height
+(the legend lines below don't count) is **whole columns**. That makes room while keeping
+everything joined up: copy a row that vertical lines run through and paste it, and every one of
+them gets a line longer; copy a column that the arrows cross and paste it, and they all stretch.
 
 | | Insert mode | Overwrite mode |
 | --- | --- | --- |
-| Ctrl+C | copies the rectangle | copies the rectangle |
-| Ctrl+X / Delete | removes its columns (text to the right moves left) | blanks it |
-| Ctrl+V of a copied block | inserts it as columns at the caret, on consecutive lines | writes it over the text at the caret |
-| Ctrl+V with a block selected | replaces the block's columns | replaces the block |
+| Ctrl+C | copies the block | copies the block |
+| Ctrl+X / Delete | removes it: rows are deleted, columns and rectangles pull the text to their right over | blanks it |
+| Ctrl+V of copied rows | inserts them above the caret's line | writes them over the lines from the caret's line |
+| Ctrl+V of copied columns | inserts them before the caret's column, on every diagram line | writes them over the columns from the caret's column |
+| Ctrl+V of a copied rectangle | inserts it as columns at the caret, on consecutive lines | writes it over the text at the caret |
+| Ctrl+V with a block selected | replaces the block | replaces the block |
 
 Any other key or a click drops the block selection. Ordinary text from elsewhere pastes as
 usual in insert mode.

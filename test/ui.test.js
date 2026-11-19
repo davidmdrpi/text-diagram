@@ -195,7 +195,7 @@ test('typing a border character back into a box is never blocked', { skip }, asy
     // Status line: one line, shows position and selection
     assert.match(await page.textContent('#cursor-pos'), /^Ln \d+, Col \d+$/);
     await page.keyboard.press('Shift+ArrowLeft');
-    assert.match(await page.textContent('#cursor-pos'), /· 1 selected/);
+    assert.match(await page.textContent('#cursor-pos'), /· 1×1 block/, 'block selection is on by default');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
@@ -384,71 +384,109 @@ test('insert / overwrite: the toggle and the Insert key; typing, Backspace and p
   }
 });
 
-test('block selection: Alt+drag or the toggle selects a rectangle; copy, cut and paste it', { skip }, async () => {
+test('block selection (on by default): rectangles, whole rows and whole columns; copy, cut, paste', { skip }, async () => {
   const { browser, page, errors } = await openPage();
   try {
-    const start = ['+---+    +---+', '| A |    | B |', '+---+    +---+', '', 'xxxxxxxxxxxxxx', 'yyyyyyyyyyyyyy', 'zzzzzzzzzzzzzz'];
+    const start = [
+      '+---+    +---+',
+      '| A +--->+ B |',
+      '+-+-+    +-+-+',
+      '  |        |',
+      '  v        v',
+      '+---+    +---+',
+      '| C |    | D |',
+      '+---+    +---+'
+    ];
     await page.evaluate((lines) => {
       const ed = document.getElementById('ascii-editor');
       ed.value = lines.join('\n');
       ed.dispatchEvent(new Event('input'));
       // A stand-in for the system clipboard: remember what copy put there, give it to paste
       let clip = '';
-      ed.addEventListener('copy', (e) => setTimeout(() => { clip = e.clipboardData.getData('text/plain') || clip; }), true);
+      document.addEventListener('copy', (e) => { clip = e.clipboardData.getData('text/plain'); });
       window.__pasteClip = () => {
         const dt = new DataTransfer();
         dt.setData('text/plain', clip);
         ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
       };
-      document.addEventListener('copy', (e) => { clip = e.clipboardData.getData('text/plain'); });
     }, start);
-    const text = () => page.inputValue('#ascii-editor');
+    const text = () => page.inputValue('#ascii-editor').then((v) => v.split('\n'));
     const at = (r, c) => cellXY(page, r, c);
+    const click = async (r, c, opts) => { const p = await at(r, c); await page.mouse.click(p.x, p.y, opts); };
+    // (whole pixels: headless Chromium's own drag-selection misbehaves at fractional ones with this font)
     const drag = async (a, b, alt) => {
       const p = await at(...a), q = await at(...b);
       if (alt) await page.keyboard.down('Alt');
-      await page.mouse.move(p.x, p.y);
+      await page.mouse.move(Math.round(p.x), Math.round(p.y));
       await page.mouse.down();
-      await page.mouse.move(q.x, q.y, { steps: 4 });
+      await page.mouse.move(Math.round(q.x), Math.round(q.y), { steps: 4 });
       await page.mouse.up();
       if (alt) await page.keyboard.up('Alt');
     };
-    // 1. Alt+drag selects box A as a rectangle
-    await drag([0, 0], [2, 4], true);
+    const status = () => page.textContent('#cursor-pos');
+    assert.equal(await page.getAttribute('#toggle-block', 'aria-pressed'), 'true', 'on by default');
+
+    // 1. A plain drag selects a rectangle (box A); Alt+drag selects lines as usual
+    await drag([0, 0], [2, 4]);
     assert.equal(await page.locator('#editor-overlay .block-sel').count(), 1);
-    assert.match(await page.textContent('#cursor-pos'), /block 3×5/);
+    assert.match(await status(), /· 3×5 block/);
+    await drag([1, 1], [2, 3], true);
+    assert.equal(await page.locator('#editor-overlay .block-sel').count(), 0);
+    assert.match(await status(), /· \d+ selected/);
+
+    // 2. A row: right-click → Select row, copy, paste on the same line: it goes in above,
+    //    everything below moves down and the vertical arrows are one line longer
+    await click(3, 5, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: 'Select row' }).click();
+    assert.match(await status(), /· 1 row/);
     await page.keyboard.press('Control+C');
-    // 2. Insert mode: pasting a copied block inserts its columns on consecutive lines
-    await page.mouse.click((await at(4, 3)).x, (await at(4, 3)).y);
+    await click(3, 0);
     await page.evaluate(() => window.__pasteClip());
-    assert.deepEqual((await text()).split('\n').slice(4), ['xxx+---+xxxxxxxxxxx', 'yyy| A |yyyyyyyyyyy', 'zzz+---+zzzzzzzzzzz']);
-    // 3. Overwrite mode: pasting writes over the text instead
+    assert.deepEqual((await text()).slice(2, 7), ['+-+-+    +-+-+', '  |        |', '  |        |', '  v        v', '+---+    +---+']);
+
+    // 3. A column with the keyboard: Shift+Down from the top selects the column; pasting it
+    //    widens the gap between A and B, and the arrow between them stretches
+    await page.keyboard.press('Control+Z');
+    await click(0, 6);
+    for (let i = 0; i < 7; i++) await page.keyboard.press('Shift+ArrowDown');
+    assert.match(await status(), /· 1 column/);
+    await page.keyboard.press('Control+C');
+    await click(1, 6); // anywhere in that column: it goes in before it, on every line
+    await page.evaluate(() => window.__pasteClip());
+    assert.deepEqual(await text(), [
+      '+---+     +---+',
+      '| A +---->+ B |',
+      '+-+-+     +-+-+',
+      '  |         |',
+      '  v         v',
+      '+---+     +---+',
+      '| C |     | D |',
+      '+---+     +---+'
+    ]);
+
+    // 4. Cut of whole rows in insert mode removes the lines
+    await page.keyboard.press('Control+Z');
+    await drag([3, 0], [4, 20]);
+    assert.match(await status(), /· 2 rows/);
+    await page.keyboard.press('Control+X');
+    assert.deepEqual(await text(), [start[0], start[1], start[2], start[5], start[6], start[7]]);
+
+    // 5. Overwrite mode: a copied rectangle is written over the text; Delete blanks a block
     await page.keyboard.press('Control+Z');
     await page.click('#toggle-overwrite');
-    await page.mouse.click((await at(4, 3)).x, (await at(4, 3)).y);
+    await drag([5, 0], [7, 4]); // box C
+    await page.keyboard.press('Control+C');
+    await click(5, 9);
     await page.evaluate(() => window.__pasteClip());
-    assert.deepEqual((await text()).split('\n').slice(4), ['xxx+---+xxxxxx', 'yyy| A |yyyyyy', 'zzz+---+zzzzzz']);
-    // 4. Block toggle: a plain drag selects; Ctrl+X in overwrite mode blanks the block
-    await page.click('#toggle-block');
-    assert.equal(await page.getAttribute('#toggle-block', 'aria-pressed'), 'true');
-    await drag([4, 3], [6, 7]);
-    await page.keyboard.press('Control+X');
-    assert.deepEqual((await text()).split('\n').slice(4), ['xxx     xxxxxx', 'yyy     yyyyyy', 'zzz     zzzzzz']);
-    // 5. Insert mode: Delete on a block pulls the text to its right over
-    await page.click('#toggle-overwrite');
-    await drag([4, 0], [6, 2]);
+    assert.deepEqual((await text()).slice(5), ['+---+    +---+', '| C |    | C |', '+---+    +---+']);
+    await drag([5, 9], [7, 13]);
     await page.keyboard.press('Delete');
-    assert.deepEqual((await text()).split('\n').slice(4), ['     xxxxxx', '     yyyyyy', '     zzzzzz']);
-    // 6. Right-click → Select box, then cut it in insert mode (the box's columns are removed)
+    assert.deepEqual((await text()).slice(5), ['+---+', '| C |', '+---+']);
+
+    // 6. With block mode off, Alt+drag selects a rectangle; Escape drops it
     await page.click('#toggle-block');
-    const pb = await at(1, 11);
-    await page.mouse.click(pb.x, pb.y, { button: 'right' });
-    await page.locator('#ctx-menu button', { hasText: 'Select box' }).click();
-    assert.match(await page.textContent('#cursor-pos'), /block 3×5/);
-    await page.keyboard.press('Control+X');
-    assert.deepEqual((await text()).split('\n').slice(0, 3), ['+---+', '| A |', '+---+']);
-    // 7. Any other key drops the block; Escape too
-    await drag([4, 5], [5, 7], true);
+    await drag([0, 0], [2, 4], true);
+    assert.match(await status(), /· 3×5 block/);
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#editor-overlay .block-sel').count(), 0);
     assert.deepEqual(errors, []);

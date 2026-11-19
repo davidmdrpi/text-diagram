@@ -1563,3 +1563,52 @@ test('mending a box wall with a connection is allowed (it completes the box)', (
   assert.equal(res.text.split('\n')[2], '+------+');
   assert.equal(parse(res.text).boxes.length, 1);
 });
+
+/* ---------------- Block selection: whole rows, whole columns, rectangles ---------------- */
+
+const ROWCOL = [
+  '+---+    +---+',
+  '| A +--->+ B |',
+  '+-+-+    +-+-+',
+  '  |        |',
+  '  v        v',
+  '+---+    +---+',
+  '| C |    | D |',
+  '+---+    +---+',
+  '',
+  '# [D] = Thing'
+].join('\n');
+
+test('a block is whole rows when it spans the width, whole columns when it spans the diagram (not the legend)', () => {
+  const G = Grid2DEditor;
+  assert.equal(G.diagramLineCount(ROWCOL), 8);
+  assert.equal(G.blockKind(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13 }), 'rows');
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 7, c1: 6, c2: 6 }), 'cols');
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 2, c1: 0, c2: 4 }), 'rect');
+  assert.deepEqual(G.blockCopy(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 20 }), { text: '  |        |', kind: 'rows' });
+  assert.equal(G.blockCopy(ROWCOL, { r1: 0, r2: 9, c1: 6, c2: 6 }).text.split('\n').length, 8, 'stops at the legend');
+});
+
+test('pasting a copied row inserts a line: vertical lines through it get longer', () => {
+  const G = Grid2DEditor;
+  const { text, kind } = G.blockCopy(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13 });
+  const res = G.pasteBlockInsert(ROWCOL, 3, 5, text, kind);
+  assert.deepEqual(res.text.split('\n').slice(2, 6), ['+-+-+    +-+-+', '  |        |', '  |        |', '  v        v']);
+  assert.equal(parse(res.text).boxes.length, 4);
+  // ...and cutting rows in insert mode takes the lines out again
+  assert.equal(G.removeBlock(res.text, { r1: 3, r2: 3, c1: 0, c2: 13 }, false).text, ROWCOL);
+});
+
+test('pasting a copied column inserts it on every diagram line: horizontal lines get longer, the legend is untouched', () => {
+  const G = Grid2DEditor;
+  const { text, kind } = G.blockCopy(ROWCOL, { r1: 0, r2: 7, c1: 6, c2: 6 });
+  const res = G.pasteBlockInsert(ROWCOL, 4, 6, text, kind);
+  const ls = res.text.split('\n');
+  assert.equal(ls[1], '| A +---->+ B |');
+  assert.equal(ls[6], '| C |     | D |');
+  assert.equal(ls[9], '# [D] = Thing');
+  assert.equal(G.removeBlock(res.text, { r1: 0, r2: 7, c1: 6, c2: 6 }, false).text, ROWCOL);
+  // In overwrite mode the same paste writes over the column from the top instead
+  const over = G.pasteBlockOverwrite(ROWCOL, 4, 2, text, kind);
+  assert.equal(over.text.split('\n')[1], '| - +--->+ B |');
+});
