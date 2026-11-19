@@ -1582,32 +1582,39 @@ const ROWCOL = [
 test('a block is whole rows when it spans the width, whole columns when it spans the diagram (not the legend)', () => {
   const G = Grid2DEditor;
   assert.equal(G.diagramLineCount(ROWCOL), 8);
-  assert.equal(G.blockKind(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13 }), 'rows');
-  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 7, c1: 6, c2: 6 }), 'cols');
+  // A drag has to reach past the content to mean whole rows / columns...
+  assert.equal(G.blockKind(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 14 }), 'rows');
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 8, c1: 6, c2: 6 }), 'cols');
   assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 2, c1: 0, c2: 4 }), 'rect');
+  // ...so a box that happens to span the whole diagram is still a rectangle
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 7, c1: 0, c2: 13 }), 'rect');
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 2, c1: 0, c2: 13 }), 'rect');
+  // An explicit choice (Select row / column / box) wins
+  assert.equal(G.blockKind(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13, kind: 'rows' }), 'rows');
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 7, c1: 0, c2: 13, kind: 'rect' }), 'rect');
   assert.deepEqual(G.blockCopy(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 20 }), { text: '  |        |', kind: 'rows' });
   assert.equal(G.blockCopy(ROWCOL, { r1: 0, r2: 9, c1: 6, c2: 6 }).text.split('\n').length, 8, 'stops at the legend');
 });
 
 test('pasting a copied row inserts a line: vertical lines through it get longer', () => {
   const G = Grid2DEditor;
-  const { text, kind } = G.blockCopy(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13 });
+  const { text, kind } = G.blockCopy(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13, kind: 'rows' });
   const res = G.pasteBlockInsert(ROWCOL, 3, 5, text, kind);
   assert.deepEqual(res.text.split('\n').slice(2, 6), ['+-+-+    +-+-+', '  |        |', '  |        |', '  v        v']);
   assert.equal(parse(res.text).boxes.length, 4);
   // ...and cutting rows in insert mode takes the lines out again
-  assert.equal(G.removeBlock(res.text, { r1: 3, r2: 3, c1: 0, c2: 13 }, false).text, ROWCOL);
+  assert.equal(G.removeBlock(res.text, { r1: 3, r2: 3, c1: 0, c2: 13, kind: 'rows' }, false).text, ROWCOL);
 });
 
 test('pasting a copied column inserts it on every diagram line: horizontal lines get longer, the legend is untouched', () => {
   const G = Grid2DEditor;
-  const { text, kind } = G.blockCopy(ROWCOL, { r1: 0, r2: 7, c1: 6, c2: 6 });
+  const { text, kind } = G.blockCopy(ROWCOL, { r1: 0, r2: 7, c1: 6, c2: 6, kind: 'cols' });
   const res = G.pasteBlockInsert(ROWCOL, 4, 6, text, kind);
   const ls = res.text.split('\n');
   assert.equal(ls[1], '| A +---->+ B |');
   assert.equal(ls[6], '| C |     | D |');
   assert.equal(ls[9], '# [D] = Thing');
-  assert.equal(G.removeBlock(res.text, { r1: 0, r2: 7, c1: 6, c2: 6 }, false).text, ROWCOL);
+  assert.equal(G.removeBlock(res.text, { r1: 0, r2: 7, c1: 6, c2: 6, kind: 'cols' }, false).text, ROWCOL);
   // In overwrite mode the same paste writes over the column from the top instead
   const over = G.pasteBlockOverwrite(ROWCOL, 4, 2, text, kind);
   assert.equal(over.text.split('\n')[1], '| - +--->+ B |');
@@ -1632,7 +1639,7 @@ test('regression (PR #10 review): a connection in empty space ends exactly on th
 
 test('regression (PR #10 review): pasting whole columns never writes into the legend or comments', () => {
   const G = Grid2DEditor;
-  const { text, kind } = G.blockCopy('axx\nbxx\ncxx\ndxx', { r1: 0, r2: 3, c1: 0, c2: 0 });
+  const { text, kind } = G.blockCopy('axx\nbxx\ncxx\ndxx', { r1: 0, r2: 3, c1: 0, c2: 0, kind: 'cols' });
   assert.equal(kind, 'cols');
   // Taller than the destination's diagram: blank lines are added above the footer first
   assert.equal(G.pasteBlockInsert('XX\nYY\n# keep', 0, 0, text, kind).text, 'aXX\nbYY\nc\nd\n# keep');
@@ -1659,7 +1666,7 @@ test('regression (PR #10 review): cutting whole columns and pasting them straigh
       for (const c of [0, 1, 2]) {
         let x = t;
         for (let i = 0; i < 3; i++) { // repeating it must not add a line each time either
-          const b = { r1: 0, r2: G.diagramLineCount(x) - 1, c1: c, c2: c };
+          const b = { r1: 0, r2: G.diagramLineCount(x) - 1, c1: c, c2: c, kind: 'cols' };
           const { text, kind } = G.blockCopy(x, b);
           assert.equal(kind, 'cols');
           const cut = G.removeBlock(x, b, overwrite).text;
@@ -1669,4 +1676,183 @@ test('regression (PR #10 review): cutting whole columns and pasting them straigh
       }
     }
   }
+});
+
+/* ---------------- Draw a box around a block; right-click insert in overwrite mode ---------------- */
+
+test('a box drawn around a block: insert mode makes room and lines crossing it join with +', () => {
+  const G = Grid2DEditor;
+  const res = G.drawBoxAround(ROWCOL, { r1: 0, c1: 0, r2: 2, c2: 13 }, { wrap: true });
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(res.text.split('\n').slice(0, 8), [
+    '+--------------+',
+    '|+---+    +---+|',
+    '|| A +--->+ B ||',
+    '|+-+-+    +-+-+|',
+    '|  |        |  |', // the lines leaving A and B keep a piece inside the new box
+    '+--+--------+--+',
+    '   |        |',
+    '   v        v'
+  ]);
+  assert.equal(parse(res.text).boxes.length, 5, 'one more box; the arrows below still reach C and D');
+  assert.ok(res.text.endsWith('# [D] = Thing'), 'the legend is untouched');
+  // An arrow pointing into the block still touches what it pointed at (one more line or
+  // column on that side makes room for its arrowhead inside the new box)
+  const wrap = (t, b) => G.drawBoxAround(t, b, { wrap: true }).text.split('\n');
+  assert.deepEqual(wrap('  |\n  v\n+---+\n| C |\n+---+', { r1: 2, c1: 0, r2: 4, c2: 4 }),
+    ['   |', '   |', '+--+--+', '|  v  |', '|+---+|', '|| C ||', '|+---+|', '+-----+']);
+  assert.deepEqual(wrap('+---+\n| C |\n+---+\n  ^\n  |', { r1: 0, c1: 0, r2: 2, c2: 4 }),
+    ['+-----+', '|+---+|', '|| C ||', '|+---+|', '|  ^  |', '+--+--+', '   |', '   |']);
+  assert.equal(wrap('    +---+\n--->| C |\n    +---+', { r1: 0, c1: 4, r2: 2, c2: 8 })[2], '--+>| C ||', 'uses the space already there');
+  assert.equal(wrap('+---+\n| C |<---\n+---+', { r1: 0, c1: 0, r2: 2, c2: 4 })[2], '|| C |<+--');
+});
+
+test('a box drawn around a block in overwrite mode goes on the block\'s edge; rounded corners', () => {
+  const G = Grid2DEditor;
+  const t = ['       ', '  ab   ', '  cd   ', '       '].join('\n');
+  assert.equal(G.drawBoxAround(t, { r1: 0, c1: 0, r2: 3, c2: 6 }, {}).text, ['+-----+', '| ab  |', '| cd  |', '+-----+'].join('\n'));
+  assert.equal(G.drawBoxAround(t, { r1: 0, c1: 0, r2: 3, c2: 6 }, { rounded: true }).text, ['/-----\\', '| ab  |', '| cd  |', '\\-----/'].join('\n'));
+  assert.match(G.drawBoxAround(t, { r1: 1, c1: 1, r2: 1, c2: 5 }, {}).error, /at least 2×2/);
+});
+
+test('right-click insert in overwrite mode draws over a container wall instead of growing the container', () => {
+  const G = Grid2DEditor;
+  const t = [
+    '+--------------------+',
+    '|  +-----+           |',
+    '|  |  A  |           |',
+    '|  +-----+           |',
+    '+--------------------+'
+  ].join('\n');
+  const a = parse(t).boxes.find((b) => b.lines[0] === 'A');
+  const ins = G.insertConnected(t, a, 'right', 'box');
+  assert.ok(!ins.error, ins.error);
+  const over = G.insertConnected(t, a, 'right', 'box', { overwrite: true });
+  assert.ok(!over.error, over.error);
+  assert.equal(over.text.split('\n')[0], '+--------------------+', 'the container keeps its size');
+  assert.match(over.text.split('\n')[2], /\|  \|  A  \+--->\|  Component  \|/);
+  assert.ok(ins.text.split('\n')[0].length > 22, 'insert mode makes room (the container grows)');
+});
+
+/* ---------------- PR #11 review ---------------- */
+
+const conns = (t) => {
+  const p = new DitaaParser();
+  const ast = p.parse(t);
+  return p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].lines[0] || 'container').sort().join('–')).sort();
+};
+
+test('regression (PR #11 review): wrapping a box keeps plain lines attached to it (walls and ports, both ways)', () => {
+  const G = Grid2DEditor;
+  const cases = [
+    // [text, the box to wrap, the row to check, what it should read]
+    ['+---+   +---+\n| A |---| B |\n+---+   +---+', 'B', 2, '| A |-+-| B ||'], // the border goes in the gap that is there
+    ['+---+   +---+\n| A +---+ B |\n+---+   +---+', 'B', 2, '| A +-+-+ B ||'],
+    ['+---+   +---+\n| A |---| B |\n+---+   +---+', 'A', 2, '|| A |-+-| B |'],
+    ['+---+\n| A |\n+-+-+\n  |\n  |\n+-+-+\n| B |\n+---+', 'B', 6, '|  |  |'],
+    ['+---+\n| A |\n+---+\n  |\n  |\n+---+\n| B |\n+---+', 'B', 6, '|  |  |'],
+    ['+---+\n| A |\n+-+-+\n  |\n  |\n+-+-+\n| B |\n+---+', 'A', 4, '|  |  |']
+  ];
+  for (const [t, name, row, line] of cases) {
+    const b = parse(t).boxes.find((x) => x.lines[0] === name);
+    const res = G.drawBoxAround(t, b, { wrap: true });
+    assert.ok(!res.error, res.error);
+    assert.equal(res.text.split('\n')[row], line, `${name} in ${JSON.stringify(t)}:\n${res.text}`);
+    const after = conns(res.text);
+    assert.ok(after.includes(`${name}–container`), `${name} is still wired: ${after}`);
+    const other = name === 'A' ? 'B' : 'A';
+    assert.ok(after.includes(`${other}–container`), `${other} is still wired: ${after}`);
+    assert.equal(parse(res.text).boxes.length, 3);
+  }
+});
+
+test('regression (PR #11 review): wrapping a block never rewrites labels outside it; empty space is used as it is', () => {
+  const G = Grid2DEditor;
+  const t = '+----------+\n| HEADLINE |\n+----------+\n\n  XY';
+  const res = G.drawBoxAround(t, { r1: 4, c1: 2, r2: 4, c2: 3 }, { wrap: true });
+  assert.equal(res.text, '+----------+\n| HEADLINE |\n+----------+\n +--+\n |XY|\n +--+');
+  assert.deepEqual(parse(res.text).boxes.map((b) => b.lines[0]), ['HEADLINE', 'XY']);
+  // When columns must be made, a label above or below gets its gap after the label
+  const tight = '+----------+\n| HEADLINE |\n+----------+\nXY';
+  const r2 = G.drawBoxAround(tight, { r1: 3, c1: 0, r2: 3, c2: 1 }, { wrap: true });
+  assert.ok(parse(r2.text).boxes.some((b) => b.lines[0] === 'HEADLINE'), r2.text);
+  const labels = [
+    ['| Big Label  |', 'XY'],
+    ['|  App Service  |', 'AB']
+  ];
+  for (const [label, sel] of labels) {
+    const w = label.length;
+    const src = ['+' + '-'.repeat(w - 2) + '+', label, '+' + '-'.repeat(w - 2) + '+', ' '.repeat(3) + sel + ' ' + 'z'].join('\n');
+    const out = G.drawBoxAround(src, { r1: 3, c1: 3, r2: 3, c2: 4 }, { wrap: true });
+    assert.equal(parse(out.text).boxes.find((b) => b.r1 === 0).lines[0], label.slice(1, -1).trim(), out.text);
+  }
+});
+
+test('regression (PR #11 re-review): wrapping either box keeps a connector of any length attached at both ends', () => {
+  const G = Grid2DEditor;
+  for (let gap = 1; gap <= 4; gap++) {
+    const sp = ' '.repeat(gap);
+    const horizontal = `+---+${sp}+---+\n| A |${'-'.repeat(gap)}| B |\n+---+${sp}+---+`;
+    const vertical = '+---+\n| A |\n+---+\n' + '  |\n'.repeat(gap) + '+---+\n| B |\n+---+';
+    const ported = `+---+${sp}+---+\n| A +${'-'.repeat(gap)}+ B |\n+---+${sp}+---+`;
+    for (const t of [horizontal, vertical, ported]) {
+      assert.deepEqual(conns(t), ['A–B']);
+      for (const name of ['A', 'B']) {
+        const b = parse(t).boxes.find((x) => x.lines[0] === name);
+        const res = G.drawBoxAround(t, b, { wrap: true });
+        assert.ok(!res.error, res.error);
+        assert.deepEqual(conns(res.text), ['A–container', 'B–container'], `gap ${gap}, wrapping ${name}:\n${res.text}`);
+      }
+    }
+  }
+  // The two-cell case from the review: the border may not take A's last wire cell
+  const t2 = '+---+  +---+\n| A |--| B |\n+---+  +---+';
+  const b2 = parse(t2).boxes.find((x) => x.lines[0] === 'B');
+  assert.equal(G.drawBoxAround(t2, b2, { wrap: true }).text.split('\n')[2], '| A |--+-| B ||');
+});
+
+test('regression (PR #11 re-review): making a column never edits label text elsewhere (punctuation, inner spaces, free text)', () => {
+  const G = Grid2DEditor;
+  for (const label of ['API-Gateway', 'API Gateway', 'a, b. c', 'x  y']) {
+    const w = label.length + 4;
+    const t = `+${'-'.repeat(w - 2)}+\n| ${label} |\n+${'-'.repeat(w - 2)}+\n XYz`;
+    const res = G.drawBoxAround(t, { r1: 3, c1: 1, r2: 3, c2: 2 }, { wrap: true }); // the 'z' forces room to be made
+    const top = parse(res.text).boxes.find((b) => b.r1 === 0);
+    assert.equal(top.lines[0], label, res.text);
+    assert.equal(res.text.split('\n')[1].slice(0, label.length + 2), `| ${label}`, 'not moved or re-spaced');
+  }
+  const free = 'API-Gateway and more\n\n XYz';
+  assert.equal(G.drawBoxAround(free, { r1: 2, c1: 1, r2: 2, c2: 2 }, { wrap: true }).text.split('\n')[0], 'API-Gateway and more');
+});
+
+test('regression (PR #11 review 3): a one-cell arrow stays attached at both ends, pointing the same way, whichever box is wrapped', () => {
+  const G = Grid2DEditor;
+  const cases = [
+    ['+---+ +---+\n| A |>| B |\n+---+ +---+', '>', 'right'],
+    ['+---+ +---+\n| A |<| B |\n+---+ +---+', '<', 'left'],
+    ['+---+\n| A |\n+---+\n  v\n+---+\n| B |\n+---+', 'v', 'down'],
+    ['+---+\n| A |\n+---+\n  ^\n+---+\n| B |\n+---+', '^', 'up']
+  ];
+  for (const [t, head] of cases) {
+    assert.deepEqual(conns(t), ['A–B']);
+    for (const name of ['A', 'B']) {
+      const b = parse(t).boxes.find((x) => x.lines[0] === name);
+      const res = G.drawBoxAround(t, b, { wrap: true });
+      assert.deepEqual(conns(res.text), ['A–container', 'B–container'], `wrapping ${name}:\n${res.text}`);
+      const heads = [...res.text].filter((ch) => '<>^v'.includes(ch));
+      assert.deepEqual(heads, [head], `one arrowhead, still pointing the same way:\n${res.text}`);
+    }
+  }
+  const one = '+---+ +---+\n| A |>| B |\n+---+ +---+';
+  assert.equal(G.drawBoxAround(one, parse(one).boxes.find((x) => x.lines[0] === 'A'), { wrap: true }).text.split('\n')[2], '|| A |-+>| B |');
+});
+
+test('regression (PR #11 review 3): free text right above or below the block is kept verbatim', () => {
+  const G = Grid2DEditor;
+  assert.equal(G.drawBoxAround('API-Gateway\n XYz', { r1: 1, c1: 1, r2: 1, c2: 2 }, { wrap: true }).text,
+    'API-Gateway\n +--+\n |XY|z\n +--+');
+  const below = G.drawBoxAround(' XYz\nAPI Gateway, v2', { r1: 0, c1: 1, r2: 0, c2: 2 }, { wrap: true }).text.split('\n');
+  assert.equal(below[below.length - 1], 'API Gateway, v2');
+  const boxed = G.drawBoxAround('+-------------+\n| API-Gateway |\n+-------------+\n XYz', { r1: 3, c1: 1, r2: 3, c2: 2 }, { wrap: true });
+  assert.equal(parse(boxed.text).boxes.find((b) => b.r1 === 0).lines[0], 'API-Gateway');
 });

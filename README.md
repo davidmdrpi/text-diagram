@@ -56,13 +56,18 @@ Nothing is auto-fitted in overwrite mode, even with *Fit* on: Enter is a plain l
 typing over a selection is plain replacement.
 
 **Block selection** is on by default (`▭ Block` at the bottom right): a drag selects a
-rectangle, not runs of lines. Shift+Arrows grow a rectangle from the caret (Shift+Down from a
-caret selects a column), Shift+Home / Shift+End reach the diagram's left and right edges, and
-Shift+click extends. Alt+drag selects lines the usual way (with block mode off it's the other
+rectangle, not runs of lines. Shift+Arrows grow a rectangle from the caret, Shift+Home / Shift+End
+reach the diagram's left edge / past its right edge, and Shift+click extends. Dragging past an edge
+of the editor scrolls it (faster the further out you go), and Shift+Arrows keep the moving corner
+in view, so a block can reach parts of the diagram that didn't fit. Alt+drag selects lines the usual way (with block mode off it's the other
 way round). Right-click also offers *Select box*, *Select row* and *Select column*.
 
-A block that spans the diagram's full width is **whole rows**; one that spans its full height
-(the legend lines below don't count) is **whole columns**. That makes room while keeping
+A block that reaches past the end of the diagram's longest line from its left edge (Shift+End,
+or drag past the text) is **whole rows**; one that reaches past the diagram's last line from its
+top (the legend lines below don't count) is **whole columns**; *Select row* / *Select column*
+pick those directly. Anything else, including *Select box* on a box that happens to span the
+whole diagram, is a rectangle. The status bar says which (`2 rows`, `1 column`, `13×49 block`).
+Rows and columns make room while keeping
 everything joined up: copy a row that vertical lines run through and paste it, and every one of
 them gets a line longer; copy a column that the arrows cross and paste it, and they all stretch.
 
@@ -75,8 +80,21 @@ them gets a line longer; copy a column that the arrows cross and paste it, and t
 | Ctrl+V of a copied rectangle | inserts it as columns at the caret, on consecutive lines | writes it over the text at the caret |
 | Ctrl+V with a block selected | replaces the block | replaces the block |
 
-Any other key or a click drops the block selection. Ordinary text from elsewhere pastes as
-usual in insert mode.
+Right-click → *Paste* pastes where you right-clicked, even inside the block selection. Any other
+key or a click drops the block selection. Ordinary text from elsewhere pastes as usual in insert
+mode. For example, to put a copy of a box beside it: right-click the box → *Select box*,
+Ctrl+C, click just right of its top-right corner, Ctrl+V.
+
+**Draw a box around a block:** select a block, then `+Box+` (or `/Rnd\` for rounded corners, or
+right-click → *Draw box around block*). This is how to add a container around boxes and lines
+that already exist. In insert mode the box goes around the block without covering anything:
+empty space next to the block is used as it is, and only a side with no room gets a new line
+(or column) made for it, with the lines and walls crossing it carried through. Labels elsewhere
+are never split: a column made through another box's text goes in after the words instead.
+Where a line runs into the block (an arrow, or a plain line ending on a wall or `+`), that side
+gets one more line or column, so the line still reaches what it reached inside the new box. In
+overwrite mode the border is drawn on the block's own edge, over what is there.
+Either way, lines crossing the border join it with a `+`.
 
 **Right-click** in the editor for connected shapes:
 
@@ -90,6 +108,8 @@ usual in insert mode.
 - Left and above only use empty space (at the top/left edge of the diagram, blank rows/columns are
   added). If something is in the way you'll be told how to make room: press Enter above the box,
   or type spaces before it.
+- In overwrite mode (`OVR`) none of this room-making happens: the arrow and shape are drawn over
+  whatever is there (e.g. over the wall of the box around it, which doesn't grow).
 - On empty space: insert a shape right there.
 - Cut / Copy / Paste are in the menu too; Shift+right-click opens the browser's own menu.
 
@@ -112,7 +132,8 @@ crossing becomes a `+`. If the exact end cell can't be reached cleanly, the near
 same wall that can is used. Two toolbar toggles set the style for every connection: solid `──` or
 dashed `┄┄`, and arrowhead `─▸` or plain line.
 
-Every toolbar button explains itself on hover. Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
+Every toolbar button explains itself on hover (nothing pops up over the drawing: errors show
+in red in the status line under the editor, other messages in the status line under the preview). Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 
 Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax
 below into plain ditaa that the Java renderer accepts.
