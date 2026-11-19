@@ -601,9 +601,11 @@ test('nested example: copy the whole outer box and paste it beside itself; right
     await page.mouse.up();
     await page.click('#stamp-box');
     ls = await text();
-    assert.equal(ls.length, original.length + 2);
-    assert.equal(ls[3].slice(3, 47), '+' + '-'.repeat(42) + '+');
-    assert.equal(ls[5].slice(0, 9), '|  | |  I', 'the inner boxes moved in, untouched');
+    // The empty space around them is used: only the bottom needs a new line (the
+    // container's wall was right below), and the inner boxes stay exactly where they were
+    assert.equal(ls.length, original.length + 1);
+    assert.equal(ls[2].slice(2, 46), '+' + '-'.repeat(42) + '+');
+    for (let r = 3; r <= 11; r++) assert.equal(ls[r].slice(4, 43), original[r].slice(4, 43), `line ${r + 1}`);
     const n = await page.evaluate(() => new window.DitaaEngine.DitaaParser().parse(document.getElementById('ascii-editor').value).boxes.length);
     assert.equal(n, 5, 'one more box (4 + 1)');
     assert.deepEqual(errors, []);

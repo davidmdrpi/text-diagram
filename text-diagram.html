@@ -3050,17 +3050,30 @@
         if (b === '^' && '-=+'.includes(a) && a !== ' ') { row.push('^'); down[c] = dashed ? ':' : '|'; continue; }
         const vertA = '|:+*v^'.includes(a) && a !== ' ', vertB = '|:+*v^'.includes(b) && b !== ' ';
         const line = '|:'.includes(a) || '|:'.includes(b);
-        row.push(vertA && vertB && line && a !== 'v' && b !== '^' ? (dashed ? ':' : '|') : ' ');
+        // a vertical line that ends on a horizontal wall (or leaves one) stays on it
+        const meets = (('|:'.includes(a) && '-='.includes(b)) || ('-='.includes(a) && '|:'.includes(b))) && a !== ' ' && b !== ' ';
+        row.push((vertA && vertB && line && a !== 'v' && b !== '^') || meets ? (dashed ? ':' : '|') : ' ');
       }
       if (at > 0) lines[at - 1] = up.join('');
       if (at < lines.length) lines[at] = down.join('');
       lines.splice(at, 0, row.join('').replace(/\s+$/, ''));
     }
 
-    /** Inserts a column before column `at` on lines 0..n-1 that carries horizontal lines and box walls through. */
-    static insertContinuingColumn(lines, at, n) {
+    /**
+     * Inserts a column before column `at` on lines 0..n-1 that carries horizontal lines and
+     * box walls through. On lines outside `keep` ({ lo, hi }) the gap never splits a label:
+     * if `at` falls inside a word or phrase, that line's gap goes right after it instead.
+     */
+    static insertContinuingColumn(lines, at, n, keep = null) {
+      const label = (ch) => !!ch && !/[\s\-=|:+<>^*\/\\]/.test(ch);
       for (let r = 0; r < n; r++) {
         const l = (lines[r] || '').padEnd(at);
+        if (keep && (r < keep.lo || r > keep.hi) && label(l[at - 1]) && (label(l[at]) || (l[at] === ' ' && label(l[at + 1])))) {
+          let x = at;
+          while (label(l[x - 1]) && (label(l[x]) || (l[x] === ' ' && label(l[x + 1])))) x++;
+          lines[r] = (l.slice(0, x) + ' ' + l.slice(x)).replace(/\s+$/, '');
+          continue;
+        }
         const a = l[at - 1] || ' ', b = l[at] || ' ';
         const dashed = a === '=' || b === '=';
         let ch = ' ', left = l.slice(0, at), right = l.slice(at);
@@ -3068,7 +3081,9 @@
         else if (b === '<' && '|:+'.includes(a) && a !== ' ') { ch = '<'; right = (dashed ? '=' : '-') + right.slice(1); }
         else {
           const hA = '-=+*<>'.includes(a) && a !== ' ', hB = '-=+*<>'.includes(b) && b !== ' ';
-          if (hA && hB && ('-='.includes(a) || '-='.includes(b)) && a !== '>' && b !== '<') ch = dashed ? '=' : '-';
+          // a horizontal line that ends on a vertical wall (or leaves one) stays on it
+          const meets = (('-='.includes(a) && '|:'.includes(b)) || ('|:'.includes(a) && '-='.includes(b))) && a !== ' ' && b !== ' ';
+          if ((hA && hB && ('-='.includes(a) || '-='.includes(b)) && a !== '>' && b !== '<') || meets) ch = dashed ? '=' : '-';
         }
         lines[r] = (left + ch + right).replace(/\s+$/, '');
       }
@@ -3089,16 +3104,38 @@
       if (opts.wrap) {
         const n = Math.max(this.diagramLineCount(rawText), r2 + 1);
         while (lines.length < n) lines.push('');
-        const ch = (r, c) => (lines[r] || '')[c] || ' ';
-        const anyR = (r, head) => { for (let c = c1; c <= c2; c++) if (ch(r, c) === head) return 1; return 0; };
-        const anyC = (c, head) => { for (let r = r1; r <= r2; r++) if (ch(r, c) === head) return 1; return 0; };
-        const top = 1 + anyR(r1 - 1, 'v'), bottom = 1 + anyR(r2 + 1, '^');
-        const left = 1 + (c1 > 0 ? anyC(c1 - 1, '>') : 0), right = 1 + anyC(c2 + 1, '<');
-        for (let i = 0; i < right; i++) this.insertContinuingColumn(lines, c2 + 1 + i, n);
-        for (let i = 0; i < left; i++) this.insertContinuingColumn(lines, c1, n);
-        for (let i = 0; i < bottom; i++) this.insertContinuingRow(lines, r2 + 1 + i);
-        for (let i = 0; i < top; i++) this.insertContinuingRow(lines, r1);
-        r2 += top + bottom; c2 += left + right;
+        const ch = (r, c) => (c < 0 ? '#' : r < 0 ? ' ' : (lines[r] || '')[c] || ' ');
+        const has = (s, x) => x !== ' ' && s.includes(x);
+        // A side needs one more line / column where a line points in at something on the
+        // block's edge (an arrowhead, or a plain line ending on a wall or '+'), so the border
+        // can cross it with a '+' and a piece of the line still reaches what it reached.
+        let top = 1, bottom = 1, left = 1, right = 1;
+        for (let c = c1; c <= c2; c++) {
+          if (ch(r1 - 1, c) === 'v' || (has('|:', ch(r1 - 1, c)) && has('-=+', ch(r1, c)))) top = 2;
+          if (ch(r2 + 1, c) === '^' || (has('|:', ch(r2 + 1, c)) && has('-=+', ch(r2, c)))) bottom = 2;
+        }
+        for (let r = r1; r <= r2; r++) {
+          if (ch(r, c1 - 1) === '>' || (has('-=', ch(r, c1 - 1)) && has('|:+', ch(r, c1)))) left = 2;
+          if (ch(r, c2 + 1) === '<' || (has('-=', ch(r, c2 + 1)) && has('|:+', ch(r, c2)))) right = 2;
+        }
+        // Empty space already there is used as it is: a side only gets new lines / columns
+        // when its border would land on something other than space or a line it can cross
+        const free = (rs, cs, ok) => {
+          for (let r = rs[0]; r <= rs[1]; r++) for (let c = cs[0]; c <= cs[1]; c++) if (!' '.concat(ok).includes(ch(r, c))) return false;
+          return true;
+        };
+        const rows = [r1 - top, r2 + bottom], cols = [c1 - left, c2 + right];
+        const localL = free(rows, [c1 - left, c1 - 1], '-=>'), localR = free(rows, [c2 + 1, c2 + right], '-=<');
+        const localT = r1 - top >= 0 && free([r1 - top, r1 - 1], cols, '|:v');
+        const localB = free([r2 + 1, r2 + bottom], cols, '|:^');
+        const keep = { lo: Math.max(0, r1 - top), hi: r2 + bottom };
+        if (!localR) for (let i = 0; i < right; i++) this.insertContinuingColumn(lines, c2 + 1 + i, n, keep);
+        if (!localL) for (let i = 0; i < left; i++) this.insertContinuingColumn(lines, c1, n, keep);
+        const L = localL ? 0 : left;
+        if (!localB) for (let i = 0; i < bottom; i++) this.insertContinuingRow(lines, r2 + 1 + i);
+        if (!localT) for (let i = 0; i < top; i++) this.insertContinuingRow(lines, r1);
+        const T = localT ? 0 : top;
+        r1 += T - top; r2 += T + bottom; c1 += L - left; c2 += L + right;
       }
       if (r2 - r1 < 1 || c2 - c1 < 1) return { error: 'Select at least 2×2 characters to draw a box' };
       const get = (r, c) => (lines[r] || '')[c] || ' ';

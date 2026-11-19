@@ -1684,11 +1684,12 @@ test('a box drawn around a block: insert mode makes room and lines crossing it j
   const G = Grid2DEditor;
   const res = G.drawBoxAround(ROWCOL, { r1: 0, c1: 0, r2: 2, c2: 13 }, { wrap: true });
   assert.ok(!res.error, res.error);
-  assert.deepEqual(res.text.split('\n').slice(0, 7), [
+  assert.deepEqual(res.text.split('\n').slice(0, 8), [
     '+--------------+',
     '|+---+    +---+|',
     '|| A +--->+ B ||',
     '|+-+-+    +-+-+|',
+    '|  |        |  |', // the lines leaving A and B keep a piece inside the new box
     '+--+--------+--+',
     '   |        |',
     '   v        v'
@@ -1702,8 +1703,8 @@ test('a box drawn around a block: insert mode makes room and lines crossing it j
     ['   |', '   |', '+--+--+', '|  v  |', '|+---+|', '|| C ||', '|+---+|', '+-----+']);
   assert.deepEqual(wrap('+---+\n| C |\n+---+\n  ^\n  |', { r1: 0, c1: 0, r2: 2, c2: 4 }),
     ['+-----+', '|+---+|', '|| C ||', '|+---+|', '|  ^  |', '+--+--+', '   |', '   |']);
-  assert.equal(wrap('    +---+\n--->| C |\n    +---+', { r1: 0, c1: 4, r2: 2, c2: 8 })[2], '----+>| C ||');
-  assert.equal(wrap('+---+\n| C |<---\n+---+', { r1: 0, c1: 0, r2: 2, c2: 4 })[2], '|| C |<+----');
+  assert.equal(wrap('    +---+\n--->| C |\n    +---+', { r1: 0, c1: 4, r2: 2, c2: 8 })[2], '--+>| C ||', 'uses the space already there');
+  assert.equal(wrap('+---+\n| C |<---\n+---+', { r1: 0, c1: 0, r2: 2, c2: 4 })[2], '|| C |<+--');
 });
 
 test('a box drawn around a block in overwrite mode goes on the block\'s edge; rounded corners', () => {
@@ -1731,4 +1732,58 @@ test('right-click insert in overwrite mode draws over a container wall instead o
   assert.equal(over.text.split('\n')[0], '+--------------------+', 'the container keeps its size');
   assert.match(over.text.split('\n')[2], /\|  \|  A  \+--->\|  Component  \|/);
   assert.ok(ins.text.split('\n')[0].length > 22, 'insert mode makes room (the container grows)');
+});
+
+/* ---------------- PR #11 review ---------------- */
+
+const conns = (t) => {
+  const p = new DitaaParser();
+  const ast = p.parse(t);
+  return p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].lines[0] || 'container').sort().join('–')).sort();
+};
+
+test('regression (PR #11 review): wrapping a box keeps plain lines attached to it (walls and ports, both ways)', () => {
+  const G = Grid2DEditor;
+  const cases = [
+    // [text, the box to wrap, the row to check, what it should read]
+    ['+---+   +---+\n| A |---| B |\n+---+   +---+', 'B', 2, '| A |-+-| B ||'], // the border goes in the gap that is there
+    ['+---+   +---+\n| A +---+ B |\n+---+   +---+', 'B', 2, '| A +-+-+ B ||'],
+    ['+---+   +---+\n| A |---| B |\n+---+   +---+', 'A', 2, '|| A |-+-| B |'],
+    ['+---+\n| A |\n+-+-+\n  |\n  |\n+-+-+\n| B |\n+---+', 'B', 6, '|  |  |'],
+    ['+---+\n| A |\n+---+\n  |\n  |\n+---+\n| B |\n+---+', 'B', 6, '|  |  |'],
+    ['+---+\n| A |\n+-+-+\n  |\n  |\n+-+-+\n| B |\n+---+', 'A', 4, '|  |  |']
+  ];
+  for (const [t, name, row, line] of cases) {
+    const b = parse(t).boxes.find((x) => x.lines[0] === name);
+    const res = G.drawBoxAround(t, b, { wrap: true });
+    assert.ok(!res.error, res.error);
+    assert.equal(res.text.split('\n')[row], line, `${name} in ${JSON.stringify(t)}:\n${res.text}`);
+    const after = conns(res.text);
+    assert.ok(after.includes(`${name}–container`), `${name} is still wired: ${after}`);
+    const other = name === 'A' ? 'B' : 'A';
+    assert.ok(after.includes(`${other}–container`), `${other} is still wired: ${after}`);
+    assert.equal(parse(res.text).boxes.length, 3);
+  }
+});
+
+test('regression (PR #11 review): wrapping a block never rewrites labels outside it; empty space is used as it is', () => {
+  const G = Grid2DEditor;
+  const t = '+----------+\n| HEADLINE |\n+----------+\n\n  XY';
+  const res = G.drawBoxAround(t, { r1: 4, c1: 2, r2: 4, c2: 3 }, { wrap: true });
+  assert.equal(res.text, '+----------+\n| HEADLINE |\n+----------+\n +--+\n |XY|\n +--+');
+  assert.deepEqual(parse(res.text).boxes.map((b) => b.lines[0]), ['HEADLINE', 'XY']);
+  // When columns must be made, a label above or below gets its gap after the label
+  const tight = '+----------+\n| HEADLINE |\n+----------+\nXY';
+  const r2 = G.drawBoxAround(tight, { r1: 3, c1: 0, r2: 3, c2: 1 }, { wrap: true });
+  assert.ok(parse(r2.text).boxes.some((b) => b.lines[0] === 'HEADLINE'), r2.text);
+  const labels = [
+    ['| Big Label  |', 'XY'],
+    ['|  App Service  |', 'AB']
+  ];
+  for (const [label, sel] of labels) {
+    const w = label.length;
+    const src = ['+' + '-'.repeat(w - 2) + '+', label, '+' + '-'.repeat(w - 2) + '+', ' '.repeat(3) + sel + ' ' + 'z'].join('\n');
+    const out = G.drawBoxAround(src, { r1: 3, c1: 3, r2: 3, c2: 4 }, { wrap: true });
+    assert.equal(parse(out.text).boxes.find((b) => b.r1 === 0).lines[0], label.slice(1, -1).trim(), out.text);
+  }
 });

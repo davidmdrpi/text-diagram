@@ -87,10 +87,13 @@ Ctrl+C, click just right of its top-right corner, Ctrl+V.
 
 **Draw a box around a block:** select a block, then `+Box+` (or `/Rnd\` for rounded corners, or
 right-click → *Draw box around block*). This is how to add a container around boxes and lines
-that already exist. In insert mode room is made first (a line above and below, a column either
-side, with the lines and walls crossing them carried through), so the new box goes around the
-block without covering anything; an arrow pointing into the block keeps its arrowhead on what it
-pointed at. In overwrite mode the border is drawn on the block's own edge, over what is there.
+that already exist. In insert mode the box goes around the block without covering anything:
+empty space next to the block is used as it is, and only a side with no room gets a new line
+(or column) made for it, with the lines and walls crossing it carried through. Labels elsewhere
+are never split: a column made through another box's text goes in after the words instead.
+Where a line runs into the block (an arrow, or a plain line ending on a wall or `+`), that side
+gets one more line or column, so the line still reaches what it reached inside the new box. In
+overwrite mode the border is drawn on the block's own edge, over what is there.
 Either way, lines crossing the border join it with a `+`.
 
 **Right-click** in the editor for connected shapes:
