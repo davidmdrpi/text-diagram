@@ -1907,3 +1907,48 @@ test('moving a block into something: OVR writes over it, INS makes room right / 
   assert.match(G.moveBlock(t, X, 0, -1).error, /in the way on the left/);
   assert.equal(G.moveBlock(t, X, 0, -1, { overwrite: true }).text, '+---x\n| A x\n+---x');
 });
+
+/* ---------------- PR #12 review ---------------- */
+
+test('regression (PR #12 review): moving a block never mistakes text for a line (INS makes room instead)', () => {
+  const G = Grid2DEditor;
+  const res = G.moveBlock('X\nversion\nvalue', { r1: 0, c1: 0, r2: 0, c2: 0 }, 1, 0);
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(res.text.split('\n').slice(-2), ['version', 'value'], 'both words verbatim');
+  assert.equal(res.text.split('\n')[res.block.r1][res.block.c1], 'X');
+  // Hyphens in a label beside a moving block aren't a line either
+  const hy = G.moveBlock('X  \na-b', { r1: 0, c1: 0, r2: 0, c2: 0 }, 0, 1);
+  assert.equal(hy.text.split('\n')[1], 'a-b');
+});
+
+test('regression (PR #12 review): lines behind a moving block stay attached: arrows either way, plain lines and junctions', () => {
+  const G = Grid2DEditor;
+  const cases = [
+    // [text, block, dr, dc, expected line, which line]
+    ['+---+ +---+ +---+\n| A |<| B |>| C |\n+---+ +---+ +---+', { r1: 0, c1: 6, r2: 2, c2: 16 }, 0, 1, '| A |<-| B |>| C |', 1],
+    ['+---+ +---+\n| A |>| B |\n+---+ +---+', { r1: 0, c1: 6, r2: 2, c2: 10 }, 0, 1, '| A |->| B |', 1],
+    ['+---+    +---+\n| A +--+-+ B |\n+---+  | +---+\n       |', { r1: 0, c1: 9, r2: 2, c2: 13 }, 0, 1, '| A +--+--+ B |', 1],
+    ['+---+   +---+\n| A +--+| B |\n+---+  |+---+\n       |', { r1: 0, c1: 8, r2: 2, c2: 12 }, 0, 1, '| A +--+-| B |', 1],
+    ['+---+\n| A |\n+-+-+\n  ^\n+-+-+\n| B |\n+---+', { r1: 4, c1: 0, r2: 6, c2: 4 }, 1, 0, '  |', 4],
+    ['+---+\n| A |\n+-+-+\n  v\n+-+-+\n| B |\n+---+', { r1: 4, c1: 0, r2: 6, c2: 4 }, 1, 0, '  v', 4]
+  ];
+  for (const [t, b, dr, dc, line, row] of cases) {
+    const before = conns(t);
+    const res = G.moveBlock(t, b, dr, dc);
+    assert.ok(!res.error, res.error);
+    assert.equal(res.text.split('\n')[row], line, `${JSON.stringify(t)}:\n${res.text}`);
+    assert.deepEqual(conns(res.text), before, `still connected:\n${res.text}`);
+    const heads = (x) => [...x].filter((ch) => '<>^v'.includes(ch)).sort().join('');
+    assert.equal(heads(res.text), heads(t), 'every arrowhead kept');
+  }
+});
+
+test('regression (PR #12 review): in OVR, a collision on one line does not stop another line\'s arrowhead stepping back', () => {
+  const G = Grid2DEditor;
+  const A = { r1: 0, c1: 0, r2: 2, c2: 4 };
+  const withX = G.moveBlock('+---+x   +---+\n| A |<---| B |\n+---+    +---+', A, 0, 1, { overwrite: true });
+  const without = G.moveBlock('+---+    +---+\n| A |<---| B |\n+---+    +---+', A, 0, 1, { overwrite: true });
+  assert.equal(withX.text.split('\n')[1], ' | A |<--| B |');
+  assert.equal(withX.text.split('\n')[1], without.text.split('\n')[1]);
+  assert.deepEqual(conns(withX.text), ['A–B']);
+});
