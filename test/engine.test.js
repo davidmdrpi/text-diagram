@@ -1361,7 +1361,7 @@ test('connection errors: no route, and a start point that is no longer on a wall
   ].join('\n');
   // In is a leaf inside a container; a start on In with no clear path out to Far's (blocked) wall
   const r1 = Grid2DEditor.connectPorts(CONN, { r: 6, c: 12 }, { r: 3, c: 4 });
-  assert.match(r1.error, /no longer on a box wall/);
+  assert.match(r1.error, /no longer on a wall, a line or empty space/);
   const far = boxNamed(boxed, 'Far');
   const start = Grid2DEditor.placePort(boxed, { box: far, sides: ['left'] }, 6, 0);
   assert.ok(start.error || start.port, 'a 1-line box wall can still take a point');
@@ -1488,4 +1488,78 @@ test('typing and Enter in a nested box grow it into empty space only', () => {
   // No room left: auto-fit declines rather than growing Mid (the editor types it plainly)
   const again = type(res.text, 6, 10, { type: 'newline' });
   assert.match(again.error, /Not enough empty space/);
+});
+
+/* ---------------- Connections between lines and empty space ---------------- */
+
+test('a connection mends a gap in a line: the two line ends are joined straight', () => {
+  const t = [
+    '+---+                +---+',
+    '| A +------    ----->+ B |',
+    '+---+                +---+'
+  ].join('\n');
+  const res = Grid2DEditor.connectTo(t, { r: 1, c: 10 }, 1, 15, { arrow: true });
+  assert.ok(!res.error, res.error);
+  assert.equal(res.text.split('\n')[1], '| A +--------------->+ B |', 'no arrowhead where it joins a line');
+});
+
+test('a connection from a line end to a box, and from empty space onto a line (a T)', () => {
+  const t = [
+    '+---+',
+    '| A +------',
+    '+---+',
+    '',
+    '',
+    '              +---+',
+    '              | B |',
+    '              +---+'
+  ].join('\n');
+  // The line end continues to B's wall: the old end turns into a corner
+  const toB = Grid2DEditor.connectTo(t, { r: 1, c: 10 }, 6, 14, { arrow: true });
+  assert.ok(!toB.error, toB.error);
+  assert.deepEqual(toB.text.split('\n').slice(1, 7), [
+    '| A +-----+',
+    '+---+     |',
+    '          |',
+    '          |',
+    '          |   +---+',
+    '          +-->+ B |'
+  ]);
+  // From an empty cell to the middle of the line: it joins with a '+', no arrowhead
+  const start = Grid2DEditor.startConnection(t, 4, 1);
+  assert.equal(start.text, t, 'starting in empty space changes nothing yet');
+  const tee = Grid2DEditor.connectTo(t, start.port, 1, 8, { arrow: true });
+  assert.ok(!tee.error, tee.error);
+  const ls = tee.text.split('\n');
+  assert.equal(ls[1][8], '+', 'joined from the side');
+  assert.equal(ls[4][1], '-', 'starts right on the empty cell');
+});
+
+test('a connection from an arrowhead continues the arrow; one can end in empty space', () => {
+  const t = ['+---+', '| A +----->', '+---+'].join('\n');
+  const res = Grid2DEditor.connectTo(t, { r: 1, c: 10 }, 1, 16, { arrow: true });
+  assert.ok(!res.error, res.error);
+  assert.equal(res.text.split('\n')[1], '| A +----------->', 'the old arrowhead becomes line; the new one is at the end');
+  const dashed = Grid2DEditor.connectTo(t, { r: 1, c: 10 }, 1, 16, { arrow: false, dashed: true });
+  assert.equal(dashed.text.split('\n')[1], '| A +------======', 'the old line keeps its style');
+});
+
+test('connection ends: text is refused; a click inside a box or next to it goes to the wall', () => {
+  const t = ['', '   +---+   note', '   | A |', '   +---+', ''].join('\n');
+  assert.equal(Grid2DEditor.connectionTarget(t, 1, 12), null, 'text');
+  assert.match(Grid2DEditor.startConnection(t, 1, 12).error, /not on text/);
+  assert.equal(Grid2DEditor.connectionTarget(t, 2, 5).kind, 'wall', 'inside the box');
+  assert.equal(Grid2DEditor.connectionTarget(t, 2, 8).kind, 'wall', 'right next to it');
+  assert.equal(Grid2DEditor.connectionTarget(t, 2, 10).kind, 'free', 'further away');
+  const res = Grid2DEditor.connectTo(t, { r: 2, c: 10 }, 2, 6, { arrow: true });
+  assert.ok(!res.error, res.error);
+  assert.equal(res.text.split('\n')[2], '   | A +<--', 'from the empty cell clicked');
+});
+
+test('mending a box wall with a connection is allowed (it completes the box)', () => {
+  const t = ['+------+', '| A    |', '+--  --+'].join('\n');
+  const res = Grid2DEditor.connectTo(t, { r: 2, c: 2 }, 2, 5, { arrow: true });
+  assert.ok(!res.error, res.error);
+  assert.equal(res.text.split('\n')[2], '+------+');
+  assert.equal(parse(res.text).boxes.length, 1);
 });

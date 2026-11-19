@@ -849,7 +849,7 @@
     conn.pending = port;
     conn.pendingText = port ? text : null;
     connStatus.textContent = port
-      ? `· Connecting from Ln ${port.r + 1}, Col ${port.c + 1}: click another box's wall (Esc cancels)`
+      ? `· Connecting from Ln ${port.r + 1}, Col ${port.c + 1}: click a wall, a line or empty space (Esc cancels)`
       : '';
   }
   document.addEventListener('keydown', (e) => {
@@ -859,45 +859,40 @@
     }
   });
 
-  function addConnectionItems(hit, cell) {
+  /** Starts a connection at `cell`: a box wall gets a '+'; a line or empty space just marks it. */
+  function startConnectionAt(cell) {
+    const res = Grid2DEditor.startConnection(editor.value, cell.r, cell.c);
+    const where = 'click a box wall, a line or empty space to connect (Esc cancels)';
+    if (res.error) return showError(res.error);
+    if (res.text === editor.value) showToast(`Start point: ${where}`);
+    else applyGridOperationResult(res, `Start point placed: ${where}`);
+    setPending(res.port, editor.value);
+  }
+
+  function addConnectionItems(cell) {
     ctxMenu.appendChild(menuHeader('Connection'));
-    ctxMenu.appendChild(menuItem('● Start connection here', () => {
-      const res = Grid2DEditor.placePort(editor.value, hit, cell.r, cell.c);
-      applyGridOperationResult(res, 'Start point placed: click another box\'s wall to connect');
-      if (!res.error) setPending(res.port, editor.value);
-    }));
+    ctxMenu.appendChild(menuItem('● Start connection here', () => startConnectionAt(cell)));
   }
 
   /**
-   * Finishes the pending connection at the wall near `cell`. With `onWallOnly` (a plain
-   * left click) the click must be on a wall or right next to it; otherwise nothing happens
-   * and the click just moves the caret. Returns whether it connected (or tried to).
+   * Finishes the pending connection at `cell`: on a box wall (clicked on, next to or inside
+   * the box), on a line (joining it) or in empty space. Success or not, the attempt ends
+   * the pending connection, so the user is never stuck in it.
    */
-  function connectPendingAt(cell, onWallOnly = false) {
-    const hit = Grid2DEditor.hitBoxSides(editor.value, cell.r, cell.c);
-    if (!hit) return false;
-    if (onWallOnly) {
-      const w = Grid2DEditor.nearestWallCell(hit.box, hit.sides, cell.r, cell.c);
-      if (!w || Math.abs(w.r - cell.r) + Math.abs(w.c - cell.c) > 1) return false;
-    }
-    const res = Grid2DEditor.connectToWall(editor.value, conn.pending, hit, cell.r, cell.c, { dashed: conn.dashed, arrow: conn.arrow });
-    // Success or not, the attempt ends the pending connection: never leave the user stuck
+  function connectPendingAt(cell) {
+    const res = Grid2DEditor.connectTo(editor.value, conn.pending, cell.r, cell.c, { dashed: conn.dashed, arrow: conn.arrow });
     setPending(null);
     if (res.error) res.error += ' (connection cancelled)';
     applyGridOperationResult(res, 'Connected');
-    return true;
   }
 
   /** While a connection is pending the menu is just: connect here, or cancel. */
   function openPendingMenu(ev, cell) {
-    const hit = Grid2DEditor.hitBoxSides(editor.value, cell.r, cell.c);
-    if (hit) {
-      const style = `${conn.dashed ? 'dashed' : 'solid'}${conn.arrow ? ', arrow' : ''}`;
-      ctxMenu.appendChild(menuHeader(`Connection to “${hit.name}”`));
-      ctxMenu.appendChild(menuItem(`→ Connect to here (${style})`, () => connectPendingAt(cell)));
-    } else {
-      ctxMenu.appendChild(menuHeader('Connection'));
-    }
+    const t = Grid2DEditor.connectionTarget(editor.value, cell.r, cell.c);
+    const style = `${conn.dashed ? 'dashed' : 'solid'}${conn.arrow ? ', arrow' : ''}`;
+    const to = !t ? '' : t.kind === 'wall' ? ` to “${t.hit.name}”` : t.kind === 'wire' ? ' to this line' : '';
+    ctxMenu.appendChild(menuHeader(`Connection${to}`));
+    if (t) ctxMenu.appendChild(menuItem(`→ Connect to here (${style})`, () => connectPendingAt(cell)));
     ctxMenu.appendChild(menuItem('✕ Cancel connection', () => { setPending(null); showToast('Connection cancelled'); }, { hint: 'Esc' }));
     showMenu(ev);
   }
@@ -926,7 +921,7 @@
           }));
         }
       }
-      addConnectionItems(hit, cell);
+      addConnectionItems(cell);
     } else {
       ctxMenu.appendChild(menuHeader('Insert here'));
       for (const [kind, label] of KINDS.slice(0, 3)) {
@@ -934,6 +929,7 @@
           applyGridOperationResult(Grid2DEditor.insertShapeAt(editor.value, cell.r, cell.c, kind), `Added ${label.toLowerCase()} — type its label`);
         }));
       }
+      if (Grid2DEditor.connectionTarget(text, cell.r, cell.c)) addConnectionItems(cell);
     }
     ctxMenu.appendChild(menuSeparator());
     const hasSel = editor.selectionStart !== editor.selectionEnd;
@@ -997,11 +993,12 @@
     openMenu(ev, cell);
   });
   document.addEventListener('mousedown', (e) => { if (!ctxMenu.contains(e.target)) closeMenu(); });
-  // While a connection is pending, a left click on a box's wall drops the endpoint there
+  // While a connection is pending, a left click drops the endpoint there (a wall, a line or
+  // empty space; on text it just cancels with a message)
   editor.addEventListener('click', (ev) => {
     if (!conn.pending || ev.button !== 0 || ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (editor.selectionStart !== editor.selectionEnd) return; // a drag-selection, not a click
-    connectPendingAt(cellAt(ev), true);
+    connectPendingAt(cellAt(ev));
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   editor.addEventListener('scroll', closeMenu);

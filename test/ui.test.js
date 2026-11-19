@@ -266,21 +266,35 @@ test('connection: right-click start, then click or right-click a wall to connect
     const lines = (await text()).split('\n');
     assert.equal(lines[3][3], ':');
     assert.equal(lines[4][3], ':', 'dashed vertical, no arrowhead');
-    // 4. off any wall, the pending menu offers only Cancel; a left click there just moves the caret
+    // 4. off any wall: a connection can end in empty space (and start on a line)
     await rc(6, 8);
     await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
-    const before = await text();
-    const near = await at(4, 22); // two lines below B's wall: near, but not on it
-    await page.mouse.click(near.x, near.y);
-    assert.equal(await text(), before, 'a click that is not on a wall draws nothing');
-    assert.match(await page.textContent('#conn-status'), /Connecting from/, 'still pending');
     await rc(4, 14); // empty space between the boxes
-    assert.deepEqual(await menuItems(), ['✕ Cancel connection']);
+    assert.deepEqual(await menuItems(), ['→ Connect to here (dashed)', '✕ Cancel connection']);
     await page.keyboard.press('Escape');
-    await rc(4, 14);
-    assert.deepEqual(await menuItems(), ['✕ Cancel connection']);
-    await page.locator('#ctx-menu button', { hasText: 'Cancel connection' }).click();
+    const free = await at(4, 22);
+    await page.mouse.click(free.x, free.y);
     assert.equal(await page.textContent('#conn-status'), '');
+    let ls = (await text()).split('\n');
+    assert.equal(ls[6].slice(8, 12), '+===', 'starts on C\'s wall');
+    assert.match(ls[4][22], /[=:+]/, 'ends right on the empty cell clicked');
+    // ...a start in empty space, then a click on plain text: cancelled, with a message
+    await page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      const ls = ed.value.split('\n');
+      ls[3] = ls[3].padEnd(13) + 'note';
+      ed.value = ls.join('\n');
+      ed.dispatchEvent(new Event('input'));
+    });
+    await rc(4, 14);
+    await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
+    assert.match(await page.textContent('#conn-status'), /Connecting from Ln 5, Col 15/);
+    const before = await text();
+    const onText = await at(3, 14);
+    await page.mouse.click(onText.x, onText.y);
+    assert.equal(await text(), before, 'nothing drawn');
+    assert.equal(await page.textContent('#conn-status'), '');
+    assert.match(await page.textContent('#error-banner'), /not on text.*connection cancelled/);
     // 5. Esc cancels a pending start
     await rc(6, 8);
     await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();

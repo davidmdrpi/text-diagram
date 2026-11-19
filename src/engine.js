@@ -2692,6 +2692,44 @@
       return firstError || { error: 'Put the end point on a straight part of a box wall' };
     }
 
+    /**
+     * Where a click near (r, c) puts a connection end: on a box wall when the click is on a
+     * wall, right next to one, or inside a (non-container) box; otherwise on the line or the
+     * empty cell clicked. Returns { kind: 'wall', hit } | { kind: 'wire' | 'free' } | null.
+     */
+    static connectionTarget(rawText, r, c) {
+      const ast = new DitaaParser().parse(rawText);
+      const g = this.toGridState(rawText, r + 1, c + 1).grid;
+      const kind = this.endpointKind(ast, g, { r, c });
+      if (kind === 'wire') return { kind };
+      const hit = this.hitBoxSides(rawText, r, c);
+      if (hit) {
+        const w = this.nearestWallCell(hit.box, hit.sides, r, c);
+        const inLeaf = !hit.box.isContainer && r > hit.box.r1 && r < hit.box.r2 && c > hit.box.c1 && c < hit.box.c2;
+        if (w && (inLeaf || Math.abs(w.r - r) + Math.abs(w.c - c) <= 1)) return { kind: 'wall', hit };
+      }
+      return kind === 'free' ? { kind } : null;
+    }
+
+    /**
+     * "Start connection here": on a wall a '+' port is placed; on a line or empty space
+     * nothing changes yet. Returns { text, cursorR, cursorC, port } or { error }.
+     */
+    static startConnection(rawText, r, c) {
+      const t = this.connectionTarget(rawText, r, c);
+      if (!t) return { error: 'Start a connection on a box wall, a line or empty space (not on text)' };
+      if (t.kind === 'wall') return this.placePort(rawText, t.hit, r, c);
+      return { text: rawText, cursorR: r, cursorC: c, port: { r, c } };
+    }
+
+    /** "Connect to here": finishes a connection from `a` at the place clicked. */
+    static connectTo(rawText, a, r, c, opts = {}) {
+      const t = this.connectionTarget(rawText, r, c);
+      if (!t) return { error: 'End the connection on a box wall, a line or empty space (not on text)' };
+      if (t.kind === 'wall') return this.connectToWall(rawText, a, t.hit, r, c, opts);
+      return this.connectPorts(rawText, a, { r, c }, opts);
+    }
+
     /** Directions a line can leave a wall point in: outward, and inward for a container. */
     static portDirections(boxes, r, c) {
       const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]]; // up right down left
@@ -2712,27 +2750,46 @@
     }
 
     /**
-     * Draws a connection from the point at `a` to `b` (both { r, c } wall cells; b gets a '+'
-     * if it doesn't have one). The line is routed with horizontal and vertical segments,
-     * leaving and entering the walls at right angles, around boxes and text. It may cross a
-     * container's wall (that cell becomes '+') or, when there is no other way, another line
-     * (the crossing becomes '+'); both cost extra, as do turns, so it prefers clean routes.
+     * What a connection endpoint at p is: 'wall' (a straight part of a box wall), 'wire' (a
+     * cell of an existing line, which the new line joins), 'free' (an empty cell: the line
+     * starts or ends right there) or null (text, or a box corner).
+     */
+    static endpointKind(ast, grid, p) {
+      const ro = (ast.cellRole[p.r] && ast.cellRole[p.r][p.c]) || 'empty';
+      const ch = (grid[p.r] && grid[p.r][p.c]) || ' ';
+      if (ro === 'box-border') return this.portDirections(ast.boxes, p.r, p.c).length && '-=|:+'.includes(ch) ? 'wall' : null;
+      if (ro.startsWith('wire-')) return 'wire';
+      return ch === ' ' ? 'free' : null;
+    }
+
+    /**
+     * Draws a connection from `a` to `b` ({ r, c } cells). Each end can be on a box wall
+     * (it becomes a '+' port), on an existing line (the new line joins it: a '+' where it
+     * meets the line from the side, or it just continues a line end) or in empty space (the
+     * line starts / ends right there). The line is routed with horizontal and vertical
+     * segments, leaving and entering walls at right angles, around boxes and text. It may
+     * cross a container's wall (that cell becomes '+') or, when there is no other way,
+     * another line (the crossing becomes '+'); both cost extra, as do turns, so it prefers
+     * clean routes. The arrowhead (opts.arrow) goes on the end unless it joins a line.
      * opts: { dashed, arrow }. Returns { text, cursorR, cursorC } or { error }.
      */
     static connectPorts(rawText, a, b, opts = {}) {
       const parser = new DitaaParser();
       const ast0 = parser.parse(rawText);
-      const startDirs = this.portDirections(ast0.boxes, a.r, a.c);
-      const endDirs = this.portDirections(ast0.boxes, b.r, b.c);
-      if (!startDirs.length) return { error: 'The start point is no longer on a box wall: start the connection again' };
-      if (!endDirs.length) return { error: 'Put the end point on a straight part of a box wall' };
+      const g0 = this.toGridState(rawText).grid;
+      const kindA = this.endpointKind(ast0, g0, a);
+      const kindB = this.endpointKind(ast0, g0, b);
+      if (!kindA) return { error: 'The start point is no longer on a wall, a line or empty space: start the connection again' };
+      if (!kindB) return { error: 'End the connection on a box wall, a line or empty space (not on text or a corner)' };
       if (a.r === b.r && a.c === b.c) return { error: 'Pick a different point to connect to' };
+      const ALL = [0, 1, 2, 3].map((d) => ({ d, delta: [[-1, 0], [0, 1], [1, 0], [0, -1]][d] }));
+      const startDirs = kindA === 'wall' ? this.portDirections(ast0.boxes, a.r, a.c) : ALL;
+      const endDirs = kindB === 'wall' ? this.portDirections(ast0.boxes, b.r, b.c) : ALL;
 
       const R = ast0.numRows + 8, C = ast0.numCols + 40;
       const state = this.toGridState(rawText, R, C);
       const g = state.grid;
-      if (!'-=|:+'.includes(g[b.r][b.c]) || g[b.r][b.c] === ' ') return { error: 'Put the end point on a straight part of a box wall' };
-      g[b.r][b.c] = '+';
+      if (kindB === 'wall') g[b.r][b.c] = '+';
       const ast = parser.parse(this.fromGridState(state));
       const role = (r, c) => (ast.cellRole[r] && ast.cellRole[r][c]) || 'empty';
       const owners = new Map();
@@ -2746,7 +2803,8 @@
       }
       const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]];
       const horiz = (d) => d === 1 || d === 3;
-      const isEnd = (r, c) => (r === a.r && c === a.c) || (r === b.r && c === b.c);
+      // Wall and line ends are entered from beside them; a free end is part of the route
+      const isEnd = (r, c) => (r === a.r && c === a.c) || (kindB !== 'free' && r === b.r && c === b.c);
       // cost of entering (r, c) moving in direction d; crossing cells can't be turned on
       const enter = (r, c, d) => {
         if (r < 0 || c < 0 || r >= R || c >= C || isEnd(r, c)) return null;
@@ -2816,7 +2874,15 @@
         }
         return top;
       };
-      for (const { d } of startDirs) {
+      if (kindA === 'free') {
+        for (const { d } of startDirs) {
+          const k = key(a.r, a.c, d);
+          dist.set(k, 0);
+          prev.set(k, null);
+          push(0, a.r, a.c, d);
+        }
+      }
+      for (const { d } of kindA === 'free' ? [] : startDirs) {
         const r = a.r + DIRS[d][0], c = a.c + DIRS[d][1];
         const e = enter(r, c, d);
         if (!e || e.cross) continue;
@@ -2827,6 +2893,7 @@
       }
       const goals = new Map(); // key -> true when arriving there moving into b
       for (const { d } of endDirs) {
+        if (kindB === 'free') { goals.set(key(b.r, b.c, d), true); continue; }
         const r = b.r + DIRS[d][0], c = b.c + DIRS[d][1];
         goals.set(key(r, c, (d + 2) % 4), true);
       }
@@ -2862,12 +2929,23 @@
         const d = k % 4, rc = (k - d) / 4;
         cells.unshift({ r: Math.floor(rc / C), c: rc % C, d });
       }
-      const endD = (endDirs.find(({ d }) => {
-        const last = cells[cells.length - 1];
-        return last.r === b.r + DIRS[d][0] && last.c === b.c + DIRS[d][1];
-      }) || endDirs[0]).d;
-      const intoB = (endD + 2) % 4;
+      const lastCell = cells[cells.length - 1];
+      const intoB = kindB === 'free' ? lastCell.d : (endDirs.find(({ d }) =>
+        lastCell.r === b.r + DIRS[d][0] && lastCell.c === b.c + DIRS[d][1]) || endDirs[0]).d ^ 2;
       const HEAD = ['^', '>', 'v', '<'];
+      const straight = (d) => (horiz(d) ? (opts.dashed ? '=' : '-') : (opts.dashed ? ':' : '|'));
+      // A line end the new line meets: continuing it keeps it straight, from the side it's a '+'
+      // (an arrowhead it continues becomes line, in the style of the line behind it)
+      const join = (p, d) => {
+        const ch = g[p.r][p.c];
+        const along = (chars) => [[0, -1], [0, 1], [-1, 0], [1, 0]]
+          .map(([dr, dc]) => (g[p.r + dr] || [])[p.c + dc]).find((x) => x && chars.includes(x));
+        if ('-='.includes(ch)) return horiz(d) ? ch : '+';
+        if ('|:'.includes(ch)) return horiz(d) ? '+' : ch;
+        if ('<>'.includes(ch)) return horiz(d) ? along('-=') || straight(d) : '+';
+        if ('^v'.includes(ch)) return horiz(d) ? '+' : along('|:') || straight(d);
+        return '+';
+      };
       cells.forEach((cell, i) => {
         const inD = cell.d;
         const outD = i < cells.length - 1 ? cells[i + 1].d : intoB;
@@ -2876,15 +2954,18 @@
         if (crossing || inD !== outD) ch = '+';
         else if (horiz(inD)) ch = opts.dashed ? '=' : '-';
         else ch = opts.dashed ? ':' : '|';
-        if (i === cells.length - 1 && opts.arrow !== false) ch = HEAD[intoB];
+        if (i === cells.length - 1 && opts.arrow !== false && kindB !== 'wire') ch = HEAD[intoB];
         g[cell.r][cell.c] = ch;
       });
+      if (kindA === 'wire') g[a.r][a.c] = join(a, cells[0].d);
+      if (kindB === 'wire') g[b.r][b.c] = join(b, intoB);
       this.normalizeWidth(state);
-      const last = cells[cells.length - 1];
-      const res = { text: this.fromGridState(state), cursorR: last.r, cursorC: last.c };
+      const res = { text: this.fromGridState(state), cursorR: lastCell.r, cursorC: lastCell.c };
       // Boxes must all survive (a container wall crossing becomes '+', still a wall); the
-      // wiring changes by design, so only boxes are checked.
-      return this.guardOtherBoxes(rawText, res, 'connect', null, 0, false);
+      // wiring changes by design, so only boxes are checked. Joining lines may close a
+      // shape on purpose (e.g. mending a box's wall), so new boxes are allowed then.
+      const mending = kindA !== 'wall' || kindB !== 'wall';
+      return this.guardOtherBoxes(rawText, res, 'connect', null, mending ? Infinity : 0, false);
     }
   }
 
