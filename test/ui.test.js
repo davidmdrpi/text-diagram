@@ -449,7 +449,9 @@ test('block selection (on by default): rectangles, whole rows and whole columns;
     await page.keyboard.press('Control+Z');
     await click(0, 6);
     for (let i = 0; i < 7; i++) await page.keyboard.press('Shift+ArrowDown');
-    assert.match(await status(), /· 1 column/);
+    assert.match(await status(), /· 8×1 block/, 'down to the last line: still a rectangle');
+    await page.keyboard.press('Shift+ArrowDown');
+    assert.match(await status(), /· 1 column/, 'past the last line: whole columns');
     await page.keyboard.press('Control+C');
     await click(1, 6); // anywhere in that column: it goes in before it, on every line
     await page.evaluate(() => window.__pasteClip());
@@ -527,6 +529,83 @@ test('regression (PR #10 review): with Fit on, overwrite mode never auto-fits (E
     assert.equal(await page.inputValue('#ascii-editor'), ['+-----+', '| L   |', '+-----+'].join('\n'));
     await page.keyboard.type('ONGER');
     assert.equal(await page.inputValue('#ascii-editor'), ['+-----+', '| LONGER', '+-----+'].join('\n'));
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('nested example: copy the whole outer box and paste it beside itself; right-click Box in OVR vs INS; draw a box around a block', { skip }, async () => {
+  const { browser, page, errors, setClipboard } = await openPage();
+  try {
+    await page.selectOption('#preset-select', 'nested');
+    const text = () => page.inputValue('#ascii-editor').then((v) => v.split('\n'));
+    const original = await text();
+    const at = (r, c) => cellXY(page, r, c);
+    const rclick = async (r, c, dx = 0) => { const p = await at(r, c); await page.mouse.click(p.x + dx, p.y, { button: 'right' }); };
+    const item = (label) => page.locator('#ctx-menu button', { hasText: label }).first().click();
+    assert.equal(await page.getAttribute('#ascii-editor', 'title'), null, 'no tooltip over the drawing');
+
+    // 1. Select the outer box (it spans the whole diagram, but it's a box: a rectangle)
+    await rclick(0, 20);
+    await item('Select box');
+    assert.match(await page.textContent('#cursor-pos'), /13×49 block/);
+    await page.keyboard.press('Control+C');
+    const copied = await page.evaluate(() => {
+      const G = window.DitaaEngine.Grid2DEditor;
+      return G.blockCopy(document.getElementById('ascii-editor').value, { r1: 0, c1: 0, r2: 12, c2: 48, kind: 'rect' }).text;
+    });
+    // 2. Right-click just after the top-right corner → Paste: a second copy beside the first
+    setClipboard(copied);
+    await rclick(0, 48, 3);
+    await item('Paste');
+    let ls = await text();
+    assert.equal(ls.length, original.length, 'nothing inserted below');
+    ls.forEach((l, i) => assert.equal(l, original[i] + original[i], `line ${i + 1}`));
+    // ...the same with a left click there and Ctrl+V
+    await page.keyboard.press('Control+Z');
+    assert.deepEqual(await text(), original);
+    const corner = await at(0, 48);
+    await page.mouse.click(corner.x + 3, corner.y);
+    await page.evaluate((t) => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', t);
+      document.getElementById('ascii-editor').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, copied);
+    ls = await text();
+    ls.forEach((l, i) => assert.equal(l, original[i] + original[i], `Ctrl+V line ${i + 1}`));
+    await page.keyboard.press('Control+Z');
+
+    // 3. Right-click → Box right of App Service: OVR draws over the container's wall...
+    await page.click('#toggle-overwrite');
+    await rclick(4, 40);
+    await item('→ Box');
+    ls = await text();
+    assert.equal(ls[0], original[0], 'the container keeps its size');
+    assert.match(ls[4], /\|  App Service  \+--->\|  Component  \|$/);
+    await page.keyboard.press('Control+Z');
+    // ...INS makes room: the container grows
+    await page.click('#toggle-overwrite');
+    await rclick(4, 40);
+    await item('→ Box');
+    ls = await text();
+    assert.ok(ls[0].length > original[0].length, 'the container grew');
+    await page.keyboard.press('Control+Z');
+    assert.deepEqual(await text(), original);
+
+    // 4. +Box+ with a block selected draws a box around it (INS: room is made around it)
+    const p1 = await at(3, 3), p2 = await at(11, 44); // the three inner boxes
+    await page.mouse.move(Math.round(p1.x), Math.round(p1.y));
+    await page.mouse.down();
+    await page.mouse.move(Math.round(p2.x), Math.round(p2.y), { steps: 4 });
+    await page.mouse.up();
+    await page.click('#stamp-box');
+    ls = await text();
+    assert.equal(ls.length, original.length + 2);
+    assert.equal(ls[3].slice(3, 47), '+' + '-'.repeat(42) + '+');
+    assert.equal(ls[5].slice(0, 9), '|  | |  I', 'the inner boxes moved in, untouched');
+    const n = await page.evaluate(() => new window.DitaaEngine.DitaaParser().parse(document.getElementById('ascii-editor').value).boxes.length);
+    assert.equal(n, 5, 'one more box (4 + 1)');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

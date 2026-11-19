@@ -1582,32 +1582,39 @@ const ROWCOL = [
 test('a block is whole rows when it spans the width, whole columns when it spans the diagram (not the legend)', () => {
   const G = Grid2DEditor;
   assert.equal(G.diagramLineCount(ROWCOL), 8);
-  assert.equal(G.blockKind(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13 }), 'rows');
-  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 7, c1: 6, c2: 6 }), 'cols');
+  // A drag has to reach past the content to mean whole rows / columns...
+  assert.equal(G.blockKind(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 14 }), 'rows');
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 8, c1: 6, c2: 6 }), 'cols');
   assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 2, c1: 0, c2: 4 }), 'rect');
+  // ...so a box that happens to span the whole diagram is still a rectangle
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 7, c1: 0, c2: 13 }), 'rect');
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 2, c1: 0, c2: 13 }), 'rect');
+  // An explicit choice (Select row / column / box) wins
+  assert.equal(G.blockKind(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13, kind: 'rows' }), 'rows');
+  assert.equal(G.blockKind(ROWCOL, { r1: 0, r2: 7, c1: 0, c2: 13, kind: 'rect' }), 'rect');
   assert.deepEqual(G.blockCopy(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 20 }), { text: '  |        |', kind: 'rows' });
   assert.equal(G.blockCopy(ROWCOL, { r1: 0, r2: 9, c1: 6, c2: 6 }).text.split('\n').length, 8, 'stops at the legend');
 });
 
 test('pasting a copied row inserts a line: vertical lines through it get longer', () => {
   const G = Grid2DEditor;
-  const { text, kind } = G.blockCopy(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13 });
+  const { text, kind } = G.blockCopy(ROWCOL, { r1: 3, r2: 3, c1: 0, c2: 13, kind: 'rows' });
   const res = G.pasteBlockInsert(ROWCOL, 3, 5, text, kind);
   assert.deepEqual(res.text.split('\n').slice(2, 6), ['+-+-+    +-+-+', '  |        |', '  |        |', '  v        v']);
   assert.equal(parse(res.text).boxes.length, 4);
   // ...and cutting rows in insert mode takes the lines out again
-  assert.equal(G.removeBlock(res.text, { r1: 3, r2: 3, c1: 0, c2: 13 }, false).text, ROWCOL);
+  assert.equal(G.removeBlock(res.text, { r1: 3, r2: 3, c1: 0, c2: 13, kind: 'rows' }, false).text, ROWCOL);
 });
 
 test('pasting a copied column inserts it on every diagram line: horizontal lines get longer, the legend is untouched', () => {
   const G = Grid2DEditor;
-  const { text, kind } = G.blockCopy(ROWCOL, { r1: 0, r2: 7, c1: 6, c2: 6 });
+  const { text, kind } = G.blockCopy(ROWCOL, { r1: 0, r2: 7, c1: 6, c2: 6, kind: 'cols' });
   const res = G.pasteBlockInsert(ROWCOL, 4, 6, text, kind);
   const ls = res.text.split('\n');
   assert.equal(ls[1], '| A +---->+ B |');
   assert.equal(ls[6], '| C |     | D |');
   assert.equal(ls[9], '# [D] = Thing');
-  assert.equal(G.removeBlock(res.text, { r1: 0, r2: 7, c1: 6, c2: 6 }, false).text, ROWCOL);
+  assert.equal(G.removeBlock(res.text, { r1: 0, r2: 7, c1: 6, c2: 6, kind: 'cols' }, false).text, ROWCOL);
   // In overwrite mode the same paste writes over the column from the top instead
   const over = G.pasteBlockOverwrite(ROWCOL, 4, 2, text, kind);
   assert.equal(over.text.split('\n')[1], '| - +--->+ B |');
@@ -1632,7 +1639,7 @@ test('regression (PR #10 review): a connection in empty space ends exactly on th
 
 test('regression (PR #10 review): pasting whole columns never writes into the legend or comments', () => {
   const G = Grid2DEditor;
-  const { text, kind } = G.blockCopy('axx\nbxx\ncxx\ndxx', { r1: 0, r2: 3, c1: 0, c2: 0 });
+  const { text, kind } = G.blockCopy('axx\nbxx\ncxx\ndxx', { r1: 0, r2: 3, c1: 0, c2: 0, kind: 'cols' });
   assert.equal(kind, 'cols');
   // Taller than the destination's diagram: blank lines are added above the footer first
   assert.equal(G.pasteBlockInsert('XX\nYY\n# keep', 0, 0, text, kind).text, 'aXX\nbYY\nc\nd\n# keep');
@@ -1659,7 +1666,7 @@ test('regression (PR #10 review): cutting whole columns and pasting them straigh
       for (const c of [0, 1, 2]) {
         let x = t;
         for (let i = 0; i < 3; i++) { // repeating it must not add a line each time either
-          const b = { r1: 0, r2: G.diagramLineCount(x) - 1, c1: c, c2: c };
+          const b = { r1: 0, r2: G.diagramLineCount(x) - 1, c1: c, c2: c, kind: 'cols' };
           const { text, kind } = G.blockCopy(x, b);
           assert.equal(kind, 'cols');
           const cut = G.removeBlock(x, b, overwrite).text;
@@ -1669,4 +1676,59 @@ test('regression (PR #10 review): cutting whole columns and pasting them straigh
       }
     }
   }
+});
+
+/* ---------------- Draw a box around a block; right-click insert in overwrite mode ---------------- */
+
+test('a box drawn around a block: insert mode makes room and lines crossing it join with +', () => {
+  const G = Grid2DEditor;
+  const res = G.drawBoxAround(ROWCOL, { r1: 0, c1: 0, r2: 2, c2: 13 }, { wrap: true });
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(res.text.split('\n').slice(0, 7), [
+    '+--------------+',
+    '|+---+    +---+|',
+    '|| A +--->+ B ||',
+    '|+-+-+    +-+-+|',
+    '+--+--------+--+',
+    '   |        |',
+    '   v        v'
+  ]);
+  assert.equal(parse(res.text).boxes.length, 5, 'one more box; the arrows below still reach C and D');
+  assert.ok(res.text.endsWith('# [D] = Thing'), 'the legend is untouched');
+  // An arrow pointing into the block still touches what it pointed at (one more line or
+  // column on that side makes room for its arrowhead inside the new box)
+  const wrap = (t, b) => G.drawBoxAround(t, b, { wrap: true }).text.split('\n');
+  assert.deepEqual(wrap('  |\n  v\n+---+\n| C |\n+---+', { r1: 2, c1: 0, r2: 4, c2: 4 }),
+    ['   |', '   |', '+--+--+', '|  v  |', '|+---+|', '|| C ||', '|+---+|', '+-----+']);
+  assert.deepEqual(wrap('+---+\n| C |\n+---+\n  ^\n  |', { r1: 0, c1: 0, r2: 2, c2: 4 }),
+    ['+-----+', '|+---+|', '|| C ||', '|+---+|', '|  ^  |', '+--+--+', '   |', '   |']);
+  assert.equal(wrap('    +---+\n--->| C |\n    +---+', { r1: 0, c1: 4, r2: 2, c2: 8 })[2], '----+>| C ||');
+  assert.equal(wrap('+---+\n| C |<---\n+---+', { r1: 0, c1: 0, r2: 2, c2: 4 })[2], '|| C |<+----');
+});
+
+test('a box drawn around a block in overwrite mode goes on the block\'s edge; rounded corners', () => {
+  const G = Grid2DEditor;
+  const t = ['       ', '  ab   ', '  cd   ', '       '].join('\n');
+  assert.equal(G.drawBoxAround(t, { r1: 0, c1: 0, r2: 3, c2: 6 }, {}).text, ['+-----+', '| ab  |', '| cd  |', '+-----+'].join('\n'));
+  assert.equal(G.drawBoxAround(t, { r1: 0, c1: 0, r2: 3, c2: 6 }, { rounded: true }).text, ['/-----\\', '| ab  |', '| cd  |', '\\-----/'].join('\n'));
+  assert.match(G.drawBoxAround(t, { r1: 1, c1: 1, r2: 1, c2: 5 }, {}).error, /at least 2×2/);
+});
+
+test('right-click insert in overwrite mode draws over a container wall instead of growing the container', () => {
+  const G = Grid2DEditor;
+  const t = [
+    '+--------------------+',
+    '|  +-----+           |',
+    '|  |  A  |           |',
+    '|  +-----+           |',
+    '+--------------------+'
+  ].join('\n');
+  const a = parse(t).boxes.find((b) => b.lines[0] === 'A');
+  const ins = G.insertConnected(t, a, 'right', 'box');
+  assert.ok(!ins.error, ins.error);
+  const over = G.insertConnected(t, a, 'right', 'box', { overwrite: true });
+  assert.ok(!over.error, over.error);
+  assert.equal(over.text.split('\n')[0], '+--------------------+', 'the container keeps its size');
+  assert.match(over.text.split('\n')[2], /\|  \|  A  \+--->\|  Component  \|/);
+  assert.ok(ins.text.split('\n')[0].length > 22, 'insert mode makes room (the container grows)');
 });

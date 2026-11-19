@@ -287,15 +287,18 @@
     toastTimer = setTimeout(() => toastEl.classList.add('opacity-0'), 2200);
   }
 
-  // Refusals must never look like "nothing happened": a red banner that stays a while.
-  const errorBanner = document.createElement('div');
+  // Refusals must never look like "nothing happened": a red message that stays a while, in
+  // the editor's status line (never over the drawing)
+  const errorBanner = document.createElement('span');
   errorBanner.id = 'error-banner';
   errorBanner.setAttribute('role', 'alert');
-  errorBanner.className = 'fixed left-1/2 -translate-x-1/2 bottom-6 z-50 max-w-[90vw] px-4 py-2 rounded-lg bg-rose-600 text-white text-xs font-medium shadow-2xl hidden';
-  document.body.appendChild(errorBanner);
+  errorBanner.className = 'text-rose-400 font-sans font-medium truncate hidden';
+  const statusLine = cursorPosEl.parentElement;
+  statusLine.insertBefore(errorBanner, statusLine.lastElementChild);
   let errorTimer = null;
   function showError(msg) {
     errorBanner.textContent = msg;
+    errorBanner.title = msg; // the whole message, if the status line cuts it short
     errorBanner.classList.remove('hidden');
     clearTimeout(errorTimer);
     errorTimer = setTimeout(() => errorBanner.classList.add('hidden'), 6000);
@@ -506,12 +509,14 @@
    * STAMPERS
    *************************************************************************/
   $('stamp-box').addEventListener('click', () => {
+    if (blockSel) return drawBoxAroundBlock(false);
     const { r, c } = getCursorRC();
     const tpl = ['+--------------+', '|  Component   |', '|  cBLU        |', '+--------------+'];
     applyGridOperationResult(Grid2DEditor.smartStampBox(editor.value, r, c, tpl), 'Stamped box');
   });
 
   $('stamp-rbox').addEventListener('click', () => {
+    if (blockSel) return drawBoxAroundBlock(true);
     const { r, c } = getCursorRC();
     const tpl = ['/--------------\\', '|  Service     |', '|  cGRE        |', '\\--------------/'];
     applyGridOperationResult(Grid2DEditor.smartStampBox(editor.value, r, c, tpl), 'Stamped rounded box');
@@ -924,7 +929,7 @@
         ctxMenu.appendChild(menuHeader(`${SIDE_LABEL[side]} “${name}”`));
         for (const [kind, label] of KINDS) {
           ctxMenu.appendChild(menuItem(`${SIDE_ARROW[side]} ${label}`, () => {
-            applyGridOperationResult(Grid2DEditor.insertConnected(editor.value, hit.box, side, kind),
+            applyGridOperationResult(Grid2DEditor.insertConnected(editor.value, hit.box, side, kind, { overwrite: modes.overwrite }),
               kind === 'arrow' ? 'Added arrow' : `Added ${label.toLowerCase()} — type its label`);
           }));
         }
@@ -944,20 +949,25 @@
       ctxMenu.appendChild(menuItem(`▭ Select box “${hit.name}”`, () => {
         const b = hit.box;
         editor.focus();
-        setBlock({ r1: b.r1, c1: b.c1, r2: b.r2, c2: b.c2 });
+        setBlock({ r1: b.r1, c1: b.c1, r2: b.r2, c2: b.c2, kind: 'rect' });
         showToast('Box selected: Ctrl+C or Ctrl+X, then click and Ctrl+V to paste it');
       }));
     }
     ctxMenu.appendChild(menuItem('▭ Select row', () => {
       editor.focus();
-      setBlock({ r1: cell.r, r2: cell.r, c1: 0, c2: diagramWidth() - 1 });
+      setBlock({ r1: cell.r, r2: cell.r, c1: 0, c2: diagramWidth() - 1, kind: 'rows' });
       showToast('Row selected: Ctrl+C, then click a line and Ctrl+V to insert it above that line');
     }));
     ctxMenu.appendChild(menuItem('▯ Select column', () => {
       editor.focus();
-      setBlock({ r1: 0, r2: Math.max(0, Grid2DEditor.diagramLineCount(editor.value) - 1), c1: cell.c, c2: cell.c });
+      setBlock({ r1: 0, r2: Math.max(0, Grid2DEditor.diagramLineCount(editor.value) - 1), c1: cell.c, c2: cell.c, kind: 'cols' });
       showToast('Column selected: Ctrl+C, then click and Ctrl+V to insert it before that column');
     }));
+    if (blockSel) {
+      ctxMenu.appendChild(menuItem('▭ Draw box around block', () => drawBoxAroundBlock(false), {
+        hint: modes.overwrite ? 'on its edge' : 'around it'
+      }));
+    }
     const hasSel = editor.selectionStart !== editor.selectionEnd || !!blockSel;
     ctxMenu.appendChild(menuItem('Cut', () => { editor.focus(); if (blockSel) copyBlock(true); else document.execCommand('cut'); }, { disabled: !hasSel, hint: 'Ctrl+X' }));
     ctxMenu.appendChild(menuItem('Copy', () => { editor.focus(); if (blockSel) copyBlock(false); else document.execCommand('copy'); }, { disabled: !hasSel, hint: 'Ctrl+C' }));
@@ -965,6 +975,9 @@
       editor.focus();
       try {
         const clip = await navigator.clipboard.readText();
+        // "Paste" pastes where you right-clicked, even inside a block selection (Ctrl+V
+        // with a block selected replaces it)
+        if (blockSel) setBlock(null);
         if (pasteSpecial(clip)) return;
         // Same path as typing: pasting into a box grows it and replaces a selection there
         const res = toggleAutofit.checked && !modes.overwrite ? boxEdit({ type: 'insert', text: clip }) : null;
@@ -1012,10 +1025,12 @@
     }
     // Without a selection, move the caret to the click (as a left click would)
     if (editor.selectionStart === editor.selectionEnd) {
-      const idx = Grid2DEditor.getIndexFromRowCol(editor.value, cell.r, cell.c);
+      // The same caret a left click gives: the nearest gap in insert mode, the cell in overwrite
+      const at = caretCellAt(ev);
+      const idx = Grid2DEditor.getIndexFromRowCol(editor.value, at.r, at.c);
       editor.focus();
       editor.selectionStart = editor.selectionEnd = idx;
-      virtualCursor = { text: editor.value, idx, r: cell.r, c: cell.c };
+      virtualCursor = { text: editor.value, idx, r: at.r, c: at.c };
       onCaretMove();
     }
     openMenu(ev, cell);
@@ -1052,7 +1067,6 @@
       btn.style.color = on ? '#fff' : '';
     };
     ovrBtn.textContent = modes.overwrite ? 'OVR' : 'INS';
-    editor.title = modes.block ? 'Drag (or Shift+Arrows) selects a rectangle; Alt+drag selects lines' : '';
     ovrBtn.title = modes.overwrite
       ? 'Overwrite: typing and paste replace the characters under the caret; Backspace/Delete blank them (click or press Insert for insert mode)'
       : 'Insert: typing and paste push text along (click or press Insert for overwrite mode)';
@@ -1186,7 +1200,7 @@
     const a = blockSel ? blockSel.anchor : getCursorRC();
     const h = blockSel ? { ...blockSel.head } : { ...a };
     if (e.key === 'Home') h.c = 0;
-    else if (e.key === 'End') h.c = diagramWidth();
+    else if (e.key === 'End') h.c = diagramWidth() + 1; // past the longest line: whole rows
     else { h.r = Math.max(0, h.r + steps[e.key][0]); h.c = Math.max(0, h.c + steps[e.key][1]); }
     setBlock(rectFromPoints(a, h));
     return true;
@@ -1255,6 +1269,17 @@
     } else {
       showToast(`Copied ${blockLabel(b)}: ${where}`);
     }
+  }
+  /**
+   * Draws a box around the block selection: in insert mode room is made first (a line above
+   * and below, a column either side) so nothing is covered; in overwrite mode the border is
+   * drawn on the block's edge, over what is there. Lines crossing the border join it with '+'.
+   */
+  function drawBoxAroundBlock(rounded) {
+    const b = blockSel;
+    const res = Grid2DEditor.drawBoxAround(editor.value, b, { wrap: !modes.overwrite, rounded });
+    if (!res.error) setBlock(null);
+    applyGridOperationResult(res, modes.overwrite ? 'Drew a box on the block\'s edge' : 'Drew a box around the block');
   }
   let pendingCopy = null;
   editor.addEventListener('copy', (e) => {

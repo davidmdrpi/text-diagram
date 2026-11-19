@@ -2436,7 +2436,8 @@
      * the very top/left edge of the diagram); if something is in the way the user is told how
      * to make room. Returns { text, cursorR, cursorC, selC1, selC2 } or { error }.
      */
-    static insertConnected(rawText, box, side, kind) {
+    static insertConnected(rawText, box, side, kind, opts = {}) {
+      const overwrite = !!opts.overwrite; // draw over whatever is there: no room is made
       const tpl = this.shapeTemplate(kind);
       const h = tpl ? tpl.lines.length : 0;
       const w = tpl ? tpl.lines[0].length : 0;
@@ -2511,7 +2512,7 @@
       let L = layout();
       // Left/above of a box inside a container whose own wall is in the way: the container
       // grows to make room, the way typing spaces (or Enter) before the box would.
-      if (side === 'left' || side === 'above') {
+      if (!overwrite && (side === 'left' || side === 'above')) {
         const encl = new DitaaParser().parse(this.fromGridState(state)).boxes
           .filter((p) => p.r1 < b.r1 && p.r2 > b.r2 && p.c1 < b.c1 && p.c2 > b.c2)
           .sort((p, q) => (p.r2 - p.r1) * (p.c2 - p.c1) - (q.r2 - q.r1) * (q.c2 - q.c1))[0];
@@ -2547,7 +2548,9 @@
         this.normalizeWidth(state);
       }
       L = layout();
-      if (side === 'above' || side === 'left') {
+      if (overwrite) {
+        // nothing to check: the user chose to write over what is there
+      } else if (side === 'above' || side === 'left') {
         if (blocked(L, false)) {
           return {
             error: side === 'above'
@@ -2601,6 +2604,7 @@
       const res = sel
         ? { text: this.fromGridState(state), cursorR: sel.r, cursorC: sel.c2, selC1: sel.c1, selC2: sel.c2 }
         : { text: this.fromGridState(state), cursorR: tip[0], cursorC: tip[1] + (side === 'right' ? 1 : 0) };
+      if (overwrite) return res;
       const checked = this.guardOtherBoxes(rawText, res, 'insert here', null, tpl ? 1 : 0);
       if (!checked.error && tpl &&
           new DitaaParser().parse(checked.text).boxes.length !== new DitaaParser().parse(rawText).boxes.length + 1) {
@@ -2688,14 +2692,17 @@
     }
 
     /**
-     * What a block selection is: 'rows' when it spans the diagram's full width (whole lines),
-     * 'cols' when it spans its full height (whole columns), else 'rect'.
+     * What a block selection is: b.kind when it was chosen (Select row / column / box), else
+     * 'rows' when it reaches past the end of the diagram's longest line from the left edge
+     * (whole lines), 'cols' when it reaches past the diagram's last line from the top (whole
+     * columns), else 'rect'. Just covering a box that happens to span the diagram is a rect.
      */
     static blockKind(rawText, b) {
+      if (b.kind) return b.kind;
       const n = this.diagramLineCount(rawText);
       const width = Math.max(1, ...this.textLines(rawText).slice(0, n).map((l) => l.length));
-      if (b.c1 === 0 && b.c2 >= width - 1) return 'rows';
-      if (b.r1 === 0 && b.r2 >= n - 1 && n > 0) return 'cols';
+      if (b.c1 === 0 && b.c2 >= width) return 'rows';
+      if (b.r1 === 0 && b.r2 >= n && n > 0) return 'cols';
       return 'rect';
     }
 
@@ -2787,6 +2794,92 @@
       if (kind === 'rows') return this.deleteTextRows(rawText, b.r1, Math.min(b.r2, this.textLines(rawText).length - 1));
       if (kind === 'cols') return this.deleteBlock(rawText, { ...b, r2: Math.min(b.r2, this.diagramLineCount(rawText) - 1) });
       return this.deleteBlock(rawText, b);
+    }
+
+    /**
+     * Inserts a line before line `at` (diagram lines only) that carries vertical lines and box
+     * walls straight through it, so nothing above and below comes apart. An arrowhead that
+     * touched what is below keeps touching it (it moves down into the new line).
+     */
+    static insertContinuingRow(lines, at) {
+      const A = lines[at - 1] || '', B = lines[at] || '';
+      const w = Math.max(A.length, B.length);
+      const row = [];
+      const up = [...A], down = [...B];
+      for (let c = 0; c < w; c++) {
+        const a = A[c] || ' ', b = B[c] || ' ';
+        const dashed = a === ':' || b === ':';
+        if (a === 'v' && '-=+'.includes(b) && b !== ' ') { row.push('v'); up[c] = dashed ? ':' : '|'; continue; }
+        if (b === '^' && '-=+'.includes(a) && a !== ' ') { row.push('^'); down[c] = dashed ? ':' : '|'; continue; }
+        const vertA = '|:+*v^'.includes(a) && a !== ' ', vertB = '|:+*v^'.includes(b) && b !== ' ';
+        const line = '|:'.includes(a) || '|:'.includes(b);
+        row.push(vertA && vertB && line && a !== 'v' && b !== '^' ? (dashed ? ':' : '|') : ' ');
+      }
+      if (at > 0) lines[at - 1] = up.join('');
+      if (at < lines.length) lines[at] = down.join('');
+      lines.splice(at, 0, row.join('').replace(/\s+$/, ''));
+    }
+
+    /** Inserts a column before column `at` on lines 0..n-1 that carries horizontal lines and box walls through. */
+    static insertContinuingColumn(lines, at, n) {
+      for (let r = 0; r < n; r++) {
+        const l = (lines[r] || '').padEnd(at);
+        const a = l[at - 1] || ' ', b = l[at] || ' ';
+        const dashed = a === '=' || b === '=';
+        let ch = ' ', left = l.slice(0, at), right = l.slice(at);
+        if (a === '>' && '|:+'.includes(b) && b !== ' ') { ch = '>'; left = left.slice(0, -1) + (dashed ? '=' : '-'); }
+        else if (b === '<' && '|:+'.includes(a) && a !== ' ') { ch = '<'; right = (dashed ? '=' : '-') + right.slice(1); }
+        else {
+          const hA = '-=+*<>'.includes(a) && a !== ' ', hB = '-=+*<>'.includes(b) && b !== ' ';
+          if (hA && hB && ('-='.includes(a) || '-='.includes(b)) && a !== '>' && b !== '<') ch = dashed ? '=' : '-';
+        }
+        lines[r] = (left + ch + right).replace(/\s+$/, '');
+      }
+    }
+
+    /**
+     * Draws a box on the border of rectangle b. Where a line crosses the border the
+     * crossing becomes '+', so the line stays joined. With `wrap` (insert mode) room is
+     * made first: a line above and below and a column either side, continuing the lines
+     * and walls that cross them, so the box goes around b without covering anything (one
+     * more on a side where an arrow points in, so its arrowhead still touches what it did).
+     * Otherwise (overwrite mode) the border is drawn over what is on b's edge.
+     * opts: { wrap, rounded }. Returns { text, cursorR, cursorC, box }.
+     */
+    static drawBoxAround(rawText, b, opts = {}) {
+      const lines = this.textLines(rawText);
+      let { r1, c1, r2, c2 } = b;
+      if (opts.wrap) {
+        const n = Math.max(this.diagramLineCount(rawText), r2 + 1);
+        while (lines.length < n) lines.push('');
+        const ch = (r, c) => (lines[r] || '')[c] || ' ';
+        const anyR = (r, head) => { for (let c = c1; c <= c2; c++) if (ch(r, c) === head) return 1; return 0; };
+        const anyC = (c, head) => { for (let r = r1; r <= r2; r++) if (ch(r, c) === head) return 1; return 0; };
+        const top = 1 + anyR(r1 - 1, 'v'), bottom = 1 + anyR(r2 + 1, '^');
+        const left = 1 + (c1 > 0 ? anyC(c1 - 1, '>') : 0), right = 1 + anyC(c2 + 1, '<');
+        for (let i = 0; i < right; i++) this.insertContinuingColumn(lines, c2 + 1 + i, n);
+        for (let i = 0; i < left; i++) this.insertContinuingColumn(lines, c1, n);
+        for (let i = 0; i < bottom; i++) this.insertContinuingRow(lines, r2 + 1 + i);
+        for (let i = 0; i < top; i++) this.insertContinuingRow(lines, r1);
+        r2 += top + bottom; c2 += left + right;
+      }
+      if (r2 - r1 < 1 || c2 - c1 < 1) return { error: 'Select at least 2×2 characters to draw a box' };
+      const get = (r, c) => (lines[r] || '')[c] || ' ';
+      const put = (r, c, ch) => {
+        while (lines.length <= r) lines.push('');
+        const l = lines[r].padEnd(c + 1);
+        lines[r] = l.slice(0, c) + ch + l.slice(c + 1);
+      };
+      const corner = opts.rounded ? ['/', '\\', '\\', '/'] : ['+', '+', '+', '+'];
+      for (let c = c1 + 1; c < c2; c++) {
+        for (const r of [r1, r2]) put(r, c, '|:v^+'.includes(get(r, c)) && get(r, c) !== ' ' ? '+' : '-');
+      }
+      for (let r = r1 + 1; r < r2; r++) {
+        for (const c of [c1, c2]) put(r, c, '-=<>+'.includes(get(r, c)) && get(r, c) !== ' ' ? '+' : '|');
+      }
+      put(r1, c1, corner[0]); put(r1, c2, corner[1]); put(r2, c1, corner[2]); put(r2, c2, corner[3]);
+      const text = lines.map((l) => l.replace(/\s+$/, '')).join('\n');
+      return { text, cursorR: r1 + 1, cursorC: c1 + 2, box: { r1, c1, r2, c2 } };
     }
 
     /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */
