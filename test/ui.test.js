@@ -611,3 +611,69 @@ test('nested example: copy the whole outer box and paste it beside itself; right
     await browser.close();
   }
 });
+
+test('a block drag past the edge of the editor scrolls it, so the block can reach what was hidden; so do Shift+Arrows', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      ed.value = Array.from({ length: 150 }, (_, i) => `${String(i).padStart(3, '0')} ` + 'x'.repeat(296)).join('\n');
+      ed.dispatchEvent(new Event('input'));
+      ed.focus();
+      ed.selectionStart = ed.selectionEnd = 0; // (setting the text left the caret, and the view, at the end)
+    });
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => {
+      const ed = document.getElementById('ascii-editor');
+      ed.scrollTop = 0;
+      ed.scrollLeft = 0;
+      done();
+    })));
+    assert.equal(await page.evaluate(() => document.getElementById('ascii-editor').scrollTop), 0);
+    const box = await page.locator('#ascii-editor').boundingBox();
+    const state = () => page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      return { top: ed.scrollTop, left: ed.scrollLeft, status: document.getElementById('cursor-pos').textContent };
+    });
+    const rows = () => state().then((s) => { const m = s.status.match(/· (\d+)×(\d+) block/); return m ? [+m[1], +m[2]] : null; });
+    // Drag from near the top-left to below the editor and hold there: it scrolls down
+    await page.mouse.move(Math.round(box.x + 40), Math.round(box.y + 40));
+    await page.mouse.down();
+    await page.mouse.move(Math.round(box.x + 200), Math.round(box.y + box.height + 20), { steps: 5 });
+    await page.waitForTimeout(600);
+    const down = await state();
+    assert.ok(down.top > 200, `scrolled down (${down.top})`);
+    const [h1] = await rows();
+    const visibleRows = Math.floor(box.height / 17);
+    assert.ok(h1 > visibleRows, `the block reaches past the first screen (${h1} rows > ${visibleRows})`);
+    // ...then past the right edge: it scrolls right too
+    await page.mouse.move(Math.round(box.x + box.width + 40), Math.round(box.y + box.height - 60), { steps: 3 });
+    await page.waitForTimeout(600);
+    const right = await state();
+    assert.ok(right.left > 200, `scrolled right (${right.left})`);
+    const [, w1] = await rows();
+    assert.ok(w1 * 7.8 > box.width, `the block is wider than the editor (${w1} columns)`);
+    await page.mouse.up();
+    // Releasing stops it
+    const stopped = await state();
+    await page.waitForTimeout(200);
+    assert.equal((await state()).top, stopped.top, 'no more scrolling after the mouse is released');
+    // Shift+Arrows keep the moving corner in view
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => {
+      const ed = document.getElementById('ascii-editor');
+      ed.focus();
+      ed.selectionStart = ed.selectionEnd = 0;
+      ed.scrollTop = 0;
+      ed.scrollLeft = 0;
+    });
+    for (let i = 0; i < 80; i++) await page.keyboard.press('Shift+ArrowDown');
+    const kb = await state();
+    assert.match(kb.status, /81×1 block/);
+    assert.ok(kb.top > 200, `Shift+Down scrolled (${kb.top})`);
+    await page.keyboard.press('Shift+End');
+    assert.ok((await state()).left > 200, 'Shift+End scrolled right');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

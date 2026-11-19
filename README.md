@@ -57,7 +57,9 @@ typing over a selection is plain replacement.
 
 **Block selection** is on by default (`▭ Block` at the bottom right): a drag selects a
 rectangle, not runs of lines. Shift+Arrows grow a rectangle from the caret, Shift+Home / Shift+End
-reach the diagram's left edge / past its right edge, and Shift+click extends. Alt+drag selects lines the usual way (with block mode off it's the other
+reach the diagram's left edge / past its right edge, and Shift+click extends. Dragging past an edge
+of the editor scrolls it (faster the further out you go), and Shift+Arrows keep the moving corner
+in view, so a block can reach parts of the diagram that didn't fit. Alt+drag selects lines the usual way (with block mode off it's the other
 way round). Right-click also offers *Select box*, *Select row* and *Select column*.
 
 A block that reaches past the end of the diagram's longest line from its left edge (Shift+End,

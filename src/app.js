@@ -1126,10 +1126,14 @@
     } : null;
     if (blockSel) blockSel.kind = Grid2DEditor.blockKind(editor.value, blockSel);
     if (b) {
-      // The caret sits at the block's top-left, so keys and paste go to the editor
+      // The caret sits at the block's top-left, so keys and paste go to the editor. Moving
+      // it must not scroll the view (a drag may be scrolling it the other way).
+      const { scrollTop, scrollLeft } = editor;
       const idx = Grid2DEditor.getIndexFromRowCol(editor.value, b.r1, b.c1);
       editor.selectionStart = editor.selectionEnd = idx;
       virtualCursor = { text: editor.value, idx, r: b.r1, c: b.c1 };
+      editor.scrollTop = scrollTop;
+      editor.scrollLeft = scrollLeft;
     }
     updateCursorPos();
     paintOverlay();
@@ -1184,12 +1188,59 @@
     setBlock(null);
     caretToCell(caretCellAt(ev));
   });
+  let dragPointer = null; // where the mouse is during a block drag (it may be outside the editor)
+  let autoScrollFrame = null;
+  function dragTo(pt) {
+    const cell = cellAt(pt);
+    if (cell.r !== blockDrag.r || cell.c !== blockDrag.c || blockSel) setBlock(dragRect(blockDrag, cell));
+  }
+  /**
+   * While a block drag is near or past an edge of the editor, scroll that way (faster the
+   * further out the mouse is) and keep growing the block, so it can reach text that didn't fit.
+   */
+  function autoScrollStep() {
+    autoScrollFrame = null;
+    if (!blockDrag || !dragPointer) return;
+    const rect = editor.getBoundingClientRect();
+    const left = rect.left + editor.clientLeft, top = rect.top + editor.clientTop;
+    const right = left + editor.clientWidth, bottom = top + editor.clientHeight;
+    const EDGE = 12;
+    const speed = (d) => Math.sign(d) * Math.min(48, 4 + Math.ceil(Math.abs(d) / 3));
+    const { x, y } = dragPointer;
+    const dx = x < left + EDGE ? speed(x - (left + EDGE)) : x > right - EDGE ? speed(x - (right - EDGE)) : 0;
+    const dy = y < top + EDGE ? speed(y - (top + EDGE)) : y > bottom - EDGE ? speed(y - (bottom - EDGE)) : 0;
+    if (!dx && !dy) return;
+    const before = editor.scrollLeft + ',' + editor.scrollTop;
+    editor.scrollLeft += dx;
+    editor.scrollTop += dy;
+    if (editor.scrollLeft + ',' + editor.scrollTop === before) return; // at the end already
+    dragTo({ clientX: x, clientY: y });
+    autoScrollFrame = requestAnimationFrame(autoScrollStep);
+  }
   document.addEventListener('mousemove', (ev) => {
     if (!blockDrag) return;
-    const cell = cellAt(ev);
-    if (cell.r !== blockDrag.r || cell.c !== blockDrag.c || blockSel) setBlock(dragRect(blockDrag, cell));
+    dragPointer = { x: ev.clientX, y: ev.clientY };
+    dragTo(ev);
+    if (!autoScrollFrame) autoScrollFrame = requestAnimationFrame(autoScrollStep);
   });
-  document.addEventListener('mouseup', () => { blockDrag = null; });
+  document.addEventListener('mouseup', () => {
+    blockDrag = null;
+    dragPointer = null;
+    if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
+    autoScrollFrame = null;
+  });
+
+  /** Scrolls the editor just enough to show the cell (r, c), e.g. the corner Shift+Arrows move. */
+  function revealCell(r, c) {
+    const { cw, lh } = metrics();
+    const cs = getComputedStyle(editor);
+    const padL = parseFloat(cs.paddingLeft), padT = parseFloat(cs.paddingTop);
+    const x = padL + c * cw, y = padT + r * lh;
+    if (x < editor.scrollLeft + padL) editor.scrollLeft = Math.max(0, x - padL);
+    else if (x + cw > editor.scrollLeft + editor.clientWidth - padL) editor.scrollLeft = x + cw - editor.clientWidth + padL;
+    if (y < editor.scrollTop + padT) editor.scrollTop = Math.max(0, y - padT);
+    else if (y + lh > editor.scrollTop + editor.clientHeight - padT) editor.scrollTop = y + lh - editor.clientHeight + padT;
+  }
 
   /** Block mode: Shift+Arrows grow the rectangle from the caret; Shift+Home / End reach the diagram's edges. */
   function extendBlockByKey(e) {
@@ -1203,6 +1254,7 @@
     else if (e.key === 'End') h.c = diagramWidth() + 1; // past the longest line: whole rows
     else { h.r = Math.max(0, h.r + steps[e.key][0]); h.c = Math.max(0, h.c + steps[e.key][1]); }
     setBlock(rectFromPoints(a, h));
+    revealCell(h.r, Math.max(0, h.c - (h.c > a.c ? 1 : 0))); // keep the moving corner in view
     return true;
   }
   const diagramWidth = () => {
