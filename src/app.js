@@ -340,16 +340,20 @@
       setPending(null);
       showToast('Connection cancelled: the diagram changed');
     }
+    if (blockSel && blockSel.text !== editor.value) blockSel = null; // the text changed under it
     lastAst = makeParser().parse(editor.value);
     updateActiveBoxUI();
     paintSvg();
     updateCursorPos();
+    paintOverlay();
   }
 
   function updateCursorPos() {
     const { r, c } = getCursorRC();
     const n = Math.abs(editor.selectionEnd - editor.selectionStart);
-    cursorPosEl.textContent = `Ln ${r + 1}, Col ${c + 1}` + (n ? ` · ${n} selected` : '');
+    const b = blockSel;
+    cursorPosEl.textContent = `Ln ${r + 1}, Col ${c + 1}` +
+      (b ? ` · block ${b.r2 - b.r1 + 1}×${b.c2 - b.c1 + 1}` : n ? ` · ${n} selected` : '');
   }
 
   /** Caret moved (no text change): update status, repaint only if the selected box changed. */
@@ -357,6 +361,7 @@
     const prevIdx = activeBoxIndex;
     updateActiveBoxUI();
     updateCursorPos();
+    paintOverlay();
     if (prevIdx !== activeBoxIndex && lastAst) paintSvg();
   }
 
@@ -404,6 +409,7 @@
     clearTimeout(typingBurstTimer);
     typingBurstTimer = setTimeout(() => { typingBurstTimer = null; }, 700);
 
+    if (overwriteInput(e)) return;
     if (!toggleAutofit.checked || e.isComposing) return;
     const op = boxOpFor(e);
     if (!op) return;
@@ -431,6 +437,7 @@
 
   editor.addEventListener('keydown', (e) => {
     const mod = e.ctrlKey || e.metaKey;
+    if (modeKeydown(e)) return;
     if (mod && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault();
       e.shiftKey ? redo() : undo();
@@ -932,13 +939,22 @@
       if (Grid2DEditor.connectionTarget(text, cell.r, cell.c)) addConnectionItems(cell);
     }
     ctxMenu.appendChild(menuSeparator());
-    const hasSel = editor.selectionStart !== editor.selectionEnd;
-    ctxMenu.appendChild(menuItem('Cut', () => { editor.focus(); document.execCommand('cut'); }, { disabled: !hasSel, hint: 'Ctrl+X' }));
-    ctxMenu.appendChild(menuItem('Copy', () => { editor.focus(); document.execCommand('copy'); }, { disabled: !hasSel, hint: 'Ctrl+C' }));
+    if (hit) {
+      ctxMenu.appendChild(menuItem(`▭ Select box “${hit.name}”`, () => {
+        const b = hit.box;
+        editor.focus();
+        setBlock({ r1: b.r1, c1: b.c1, r2: b.r2, c2: b.c2 });
+        showToast('Box selected: Ctrl+C or Ctrl+X, then click and Ctrl+V to paste it');
+      }));
+    }
+    const hasSel = editor.selectionStart !== editor.selectionEnd || !!blockSel;
+    ctxMenu.appendChild(menuItem('Cut', () => { editor.focus(); if (blockSel) copyBlock(true); else document.execCommand('cut'); }, { disabled: !hasSel, hint: 'Ctrl+X' }));
+    ctxMenu.appendChild(menuItem('Copy', () => { editor.focus(); if (blockSel) copyBlock(false); else document.execCommand('copy'); }, { disabled: !hasSel, hint: 'Ctrl+C' }));
     ctxMenu.appendChild(menuItem('Paste', async () => {
       editor.focus();
       try {
         const clip = await navigator.clipboard.readText();
+        if (pasteSpecial(clip)) return;
         // Same path as typing: pasting into a box grows it and replaces a selection there
         const res = toggleAutofit.checked ? boxEdit({ type: 'insert', text: clip }) : null;
         if (res && !res.error) applyGridOperationResult(res);
@@ -971,6 +987,7 @@
     if (ev.shiftKey) return; // browser menu
     ev.preventDefault();
     const cell = cellAt(ev);
+    if (blockSel && !inBlock(cell)) setBlock(null);
     // Right-clicking inside a selection keeps it (so Cut/Copy/Paste act on it)
     const saved = selBeforeRightClick;
     selBeforeRightClick = null;
@@ -1000,6 +1017,254 @@
     if (editor.selectionStart !== editor.selectionEnd) return; // a drag-selection, not a click
     connectPendingAt(cellAt(ev));
   });
+
+  /*************************************************************************
+   * INSERT / OVERWRITE AND BLOCK (RECTANGLE) SELECTION
+   * Plain text editing: overwrite replaces the characters under the caret; a block is a
+   * rectangle of the text for cut / copy / paste in the middle of a diagram.
+   *************************************************************************/
+  const ovrBtn = $('toggle-overwrite');
+  const blockBtn = $('toggle-block');
+  const overlay = $('editor-overlay');
+  const modes = { overwrite: false, block: false };
+  try { Object.assign(modes, JSON.parse(localStorage.getItem('text-diagram.modes')) || {}); } catch (_) { /* ignore */ }
+  let blockSel = null; // { r1, c1, r2, c2, text }: the rectangle, and the text it was made on
+  let blockDrag = null; // the cell a block drag started on
+  let blockClip = null; // the last block copied, so pasting it inserts columns, not text
+
+  function renderModeToggles() {
+    const pressed = (btn, on) => {
+      btn.setAttribute('aria-pressed', String(on));
+      btn.style.background = on ? '#b45309' : '';
+      btn.style.color = on ? '#fff' : '';
+    };
+    ovrBtn.textContent = modes.overwrite ? 'OVR' : 'INS';
+    ovrBtn.title = modes.overwrite
+      ? 'Overwrite: typing and paste replace the characters under the caret; Backspace/Delete blank them (click or press Insert for insert mode)'
+      : 'Insert: typing and paste push text along (click or press Insert for overwrite mode)';
+    pressed(ovrBtn, modes.overwrite);
+    blockBtn.title = modes.block
+      ? 'Block selection is on: drag selects a rectangle (click to turn off)'
+      : 'Block selection: drag selects a rectangle to cut / copy / paste (or hold Alt while dragging)';
+    pressed(blockBtn, modes.block);
+    try { localStorage.setItem('text-diagram.modes', JSON.stringify(modes)); } catch (_) { /* ignore */ }
+    paintOverlay();
+  }
+  ovrBtn.addEventListener('click', () => { modes.overwrite = !modes.overwrite; renderModeToggles(); editor.focus(); });
+  blockBtn.addEventListener('click', () => { modes.block = !modes.block; renderModeToggles(); editor.focus(); });
+
+  let metricsCache = null;
+  const metrics = () => metricsCache || (metricsCache = editorMetrics());
+  window.addEventListener('resize', () => { metricsCache = null; paintOverlay(); });
+  editor.addEventListener('scroll', () => paintOverlay());
+  editor.addEventListener('focus', () => paintOverlay());
+  editor.addEventListener('blur', () => paintOverlay());
+
+  /** Draws the block selection, and in overwrite mode a block caret on the cell it replaces. */
+  function paintOverlay() {
+    if (!overlay) return;
+    overlay.innerHTML = '';
+    const showCaret = modes.overwrite && document.activeElement === editor && editor.selectionStart === editor.selectionEnd && !blockSel;
+    if (!blockSel && !showCaret) return;
+    const { cw, lh } = metrics();
+    const cs = getComputedStyle(editor);
+    const ox = editor.offsetLeft + editor.clientLeft + parseFloat(cs.paddingLeft) - editor.scrollLeft;
+    const oy = editor.offsetTop + editor.clientTop + parseFloat(cs.paddingTop) - editor.scrollTop;
+    const rect = (r1, c1, r2, c2, style, cls) => {
+      const d = document.createElement('div');
+      d.className = cls;
+      d.style.cssText = `position:absolute;left:${ox + c1 * cw}px;top:${oy + r1 * lh}px;` +
+        `width:${(c2 - c1 + 1) * cw}px;height:${(r2 - r1 + 1) * lh}px;${style}`;
+      overlay.appendChild(d);
+    };
+    if (blockSel) {
+      const b = blockSel;
+      rect(b.r1, b.c1, b.r2, b.c2, 'background:rgba(99,102,241,.32);outline:1px dashed rgba(165,180,252,.9)', 'block-sel');
+    }
+    if (showCaret) {
+      const { r, c } = getCursorRC();
+      rect(r, c, r, c, 'background:rgba(251,191,36,.45)', 'ovr-caret');
+    }
+  }
+
+  function setBlock(b) {
+    blockSel = b ? { ...b, text: editor.value } : null;
+    if (b) {
+      // The caret sits at the block's top-left, so keys and paste go to the editor
+      const idx = Grid2DEditor.getIndexFromRowCol(editor.value, b.r1, b.c1);
+      editor.selectionStart = editor.selectionEnd = idx;
+      virtualCursor = { text: editor.value, idx, r: b.r1, c: b.c1 };
+    }
+    updateCursorPos();
+    paintOverlay();
+  }
+  const inBlock = (cell) => blockSel && cell.r >= blockSel.r1 && cell.r <= blockSel.r2 && cell.c >= blockSel.c1 && cell.c <= blockSel.c2;
+  const normRect = (a, b) => ({ r1: Math.min(a.r, b.r), c1: Math.min(a.c, b.c), r2: Math.max(a.r, b.r), c2: Math.max(a.c, b.c) });
+
+  /** Puts the caret at a cell, even past the end of its line (overwrite and block modes). */
+  function caretToCell(cell) {
+    const idx = Grid2DEditor.getIndexFromRowCol(editor.value, cell.r, cell.c);
+    editor.selectionStart = editor.selectionEnd = idx;
+    virtualCursor = { text: editor.value, idx, r: cell.r, c: cell.c };
+    onCaretMove();
+  }
+
+  // Block mode (or Alt) + drag selects a rectangle; a plain click there just places the caret
+  editor.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) return;
+    if (!(modes.block || ev.altKey)) {
+      if (blockSel) setBlock(null);
+      return;
+    }
+    ev.preventDefault();
+    editor.focus();
+    blockDrag = cellAt(ev);
+    setBlock(null);
+    caretToCell(blockDrag);
+  });
+  document.addEventListener('mousemove', (ev) => {
+    if (!blockDrag) return;
+    const cell = cellAt(ev);
+    if (cell.r !== blockDrag.r || cell.c !== blockDrag.c || blockSel) setBlock(normRect(blockDrag, cell));
+  });
+  document.addEventListener('mouseup', () => { blockDrag = null; });
+  // In overwrite mode a click puts the caret on the cell clicked (the one typing replaces),
+  // even past the end of its line
+  editor.addEventListener('click', (ev) => {
+    if (!modes.overwrite || modes.block || ev.altKey || ev.button !== 0) return;
+    if (editor.selectionStart !== editor.selectionEnd || conn.pending) return;
+    const cell = cellAt(ev);
+    const cur = getCursorRC();
+    if (cur.r !== cell.r || cur.c !== cell.c) caretToCell(cell);
+  });
+
+  /** Applies a plain-text result at the caret within the current typing burst (no auto-fit). */
+  function applyTyped(res) {
+    if (res.text !== editor.value) editor.value = res.text;
+    const idx = Grid2DEditor.getIndexFromRowCol(editor.value, res.cursorR, res.cursorC);
+    editor.selectionStart = editor.selectionEnd = idx;
+    virtualCursor = { text: editor.value, idx, r: res.cursorR, c: res.cursorC };
+    refresh();
+  }
+
+  /** Overwrite mode: a typed character replaces the one under the caret; Backspace/Delete blank. */
+  function overwriteInput(e) {
+    if (!modes.overwrite || e.isComposing || editor.selectionStart !== editor.selectionEnd) return false;
+    const { r, c } = getCursorRC();
+    const G = Grid2DEditor;
+    let res;
+    if (e.inputType === 'insertText' && e.data) res = G.overwriteBlock(editor.value, r, c, e.data);
+    else if (e.inputType === 'deleteContentBackward' && c > 0) res = { ...G.overwriteBlock(editor.value, r, c - 1, ' '), cursorR: r, cursorC: c - 1 };
+    else if (e.inputType === 'deleteContentForward') res = { ...G.overwriteBlock(editor.value, r, c, ' '), cursorR: r, cursorC: c };
+    else return false; // Enter, paste (see below), and Backspace at the start of a line work as usual
+    e.preventDefault();
+    applyTyped(res);
+    return true;
+  }
+
+  /** Copies the block (and with `cut`, removes it: blanks it in overwrite mode, pulls the text left in insert mode). */
+  function copyBlock(cut) {
+    const b = blockSel;
+    const text = Grid2DEditor.blockText(editor.value, b);
+    blockClip = text;
+    pendingCopy = text;
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    pendingCopy = null;
+    if (!ok && navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+    if (cut) {
+      const res = modes.overwrite ? Grid2DEditor.clearBlock(editor.value, b) : Grid2DEditor.deleteBlock(editor.value, b);
+      setBlock(null);
+      applyGridOperationResult(res, `Cut ${b.r2 - b.r1 + 1}×${b.c2 - b.c1 + 1} block`);
+    } else {
+      showToast(`Copied ${b.r2 - b.r1 + 1}×${b.c2 - b.c1 + 1} block`);
+    }
+  }
+  let pendingCopy = null;
+  editor.addEventListener('copy', (e) => {
+    const text = pendingCopy !== null ? pendingCopy : blockSel ? Grid2DEditor.blockText(editor.value, blockSel) : null;
+    if (text === null) { blockClip = null; return; }
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+    blockClip = text;
+  });
+  editor.addEventListener('cut', (e) => {
+    if (pendingCopy === null && !blockSel) { blockClip = null; return; }
+    e.preventDefault();
+    if (pendingCopy === null) copyBlock(true);
+  });
+
+  /**
+   * Paste as a block where that's what's wanted: over a block selection (replacing it), in
+   * overwrite mode (writing over the text at the caret), or a copied block in insert mode
+   * (inserted as columns on consecutive lines). Returns false for an ordinary paste.
+   */
+  function pasteSpecial(clip) {
+    const G = Grid2DEditor;
+    const text = clip.replace(/\r\n?/g, '\n').replace(/\n$/, '');
+    const isBlock = blockClip !== null && text === blockClip.replace(/\n$/, '');
+    const collapsed = editor.selectionStart === editor.selectionEnd;
+    let res, msg;
+    if (blockSel) {
+      const b = blockSel;
+      const base = (modes.overwrite ? G.clearBlock : G.deleteBlock).call(G, editor.value, b).text;
+      res = (modes.overwrite ? G.overwriteBlock : G.insertBlock).call(G, base, b.r1, b.c1, text);
+      msg = 'Pasted over the block';
+    } else if (modes.overwrite && collapsed) {
+      const { r, c } = getCursorRC();
+      res = G.overwriteBlock(editor.value, r, c, text);
+      msg = 'Pasted over the text (overwrite)';
+    } else if (isBlock && collapsed) {
+      const { r, c } = getCursorRC();
+      res = G.insertBlock(editor.value, r, c, text);
+      msg = 'Inserted the block';
+    } else {
+      return false;
+    }
+    setBlock(null);
+    applyGridOperationResult(res, msg);
+    return true;
+  }
+  editor.addEventListener('paste', (e) => {
+    const clip = e.clipboardData && e.clipboardData.getData('text/plain');
+    if (clip && pasteSpecial(clip)) e.preventDefault();
+  });
+
+  /** Insert toggles overwrite; with a block selected, Delete/Backspace remove it and other keys drop it. */
+  function modeKeydown(e) {
+    const mod = e.ctrlKey || e.metaKey;
+    if (e.key === 'Insert' && !mod && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      modes.overwrite = !modes.overwrite;
+      renderModeToggles();
+      showToast(modes.overwrite ? 'Overwrite mode' : 'Insert mode');
+      return true;
+    }
+    if (!blockSel) return false;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !mod && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      const b = blockSel;
+      const res = modes.overwrite ? Grid2DEditor.clearBlock(editor.value, b) : Grid2DEditor.deleteBlock(editor.value, b);
+      setBlock(null);
+      applyGridOperationResult(res, 'Deleted the block');
+      return true;
+    }
+    if (mod && !e.altKey && (e.key === 'c' || e.key === 'C' || e.key === 'x' || e.key === 'X')) {
+      e.preventDefault();
+      copyBlock(e.key === 'x' || e.key === 'X');
+      return true;
+    }
+    if (mod && (e.key === 'v' || e.key === 'V')) return false; // the paste event handles it
+    if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return false;
+    if (e.key === 'Escape') {
+      setBlock(null);
+      return true;
+    }
+    setBlock(null); // any other key: the block is dropped and the key works as usual
+    return false;
+  }
+  renderModeToggles();
+
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   editor.addEventListener('scroll', closeMenu);
   window.addEventListener('resize', closeMenu);

@@ -16,7 +16,7 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 
 | Action | Buttons | Keys |
 | --- | --- | --- |
-| Move box (connections stretch and stay on their `+` points) | ← ↑ ↓ → | `Alt+Arrows` |
+| Move box | ← ↑ ↓ → | `Alt+Arrows` |
 | Resize box | +W −W +H −H | `Alt+Shift+Arrows` |
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
@@ -26,8 +26,8 @@ inserting text naturally pushes the rest of a line along:
 
 - When text would reach the right wall, the box widens on its own lines only. Arrows and boxes
   beside it move over to make room (a box beside it moves as a whole); lines above and below
-  are untouched. A vertical wire hanging off something that moved is re-joined with a small
-  jog (`+--+`), which straightens again if the box shrinks back.
+  are untouched. Lines above and below are not re-routed: if one no longer meets what moved,
+  fix it by hand or redraw it with a connection.
 - Enter inside a box (or the +H button) adds a line to that box only: boxes beside it keep
   their size, the space and vertical wires around them stretch, and a horizontal arrow to a
   box beside it stays attached (that box moves down with the arrow if the arrow moves).
@@ -44,6 +44,29 @@ inserting text naturally pushes the rest of a line along:
 
 The +W / −W buttons follow the same rule (only the box's own lines shift).
 
+**Boxes inside boxes** grow into the empty space inside the box around them (typing, Enter,
++W/+H): the outer box never resizes on its own. If there isn't enough room you're told so;
+make the outer box bigger first.
+
+**Insert / overwrite** (the `INS` / `OVR` button at the bottom right, or the Insert key): in
+overwrite mode typing replaces the character under the caret (shown as a highlighted cell),
+Backspace and Delete blank characters instead of pulling text along, a click puts the caret on
+the cell clicked (even past the end of a line), and paste writes over the text at the caret.
+Nothing is auto-fitted in overwrite mode; Enter works as usual.
+
+**Block selection** (hold Alt while dragging, or turn on `▭ Block` at the bottom right; or
+right-click a box → *Select box*) selects a rectangle instead of whole lines:
+
+| | Insert mode | Overwrite mode |
+| --- | --- | --- |
+| Ctrl+C | copies the rectangle | copies the rectangle |
+| Ctrl+X / Delete | removes its columns (text to the right moves left) | blanks it |
+| Ctrl+V of a copied block | inserts it as columns at the caret, on consecutive lines | writes it over the text at the caret |
+| Ctrl+V with a block selected | replaces the block's columns | replaces the block |
+
+Any other key or a click drops the block selection. Ordinary text from elsewhere pastes as
+usual in insert mode.
+
 **Right-click** in the editor for connected shapes:
 
 - On a box's wall (or just outside it): add a **Box**, **Rounded box**, **Diamond `{c}`** or
@@ -59,12 +82,18 @@ The +W / −W buttons follow the same rule (only the box's own lines shift).
 - On empty space: insert a shape right there.
 - Cut / Copy / Paste are in the menu too; Shift+right-click opens the browser's own menu.
 
-**Connections** (right-click a box's wall):
+**Connections** (right-click → *Start connection here*, on a box's wall, on a line or in empty space):
 
-1. *Start connection here* puts a `+` on the wall where you clicked.
-2. Click (or right-click → *Connect to here*) another box's wall: a second `+` goes there and the
-   line is drawn. While a start is pending the right-click menu offers only that and *Cancel
-   connection* (Esc also cancels). To leave a lone connection point, just type a `+`.
+1. On a wall a `+` port goes where you clicked; on a line or empty space nothing changes yet.
+2. Click (or right-click → *Connect to here*) where it should end: another box's wall (or just
+   next to it, or inside the box), a line, or empty space. While a start is pending the
+   right-click menu offers only that and *Cancel connection* (Esc also cancels); a click on
+   text, or a route that can't be found, cancels it with a message.
+
+Ends on a line join it: continuing from a line's end keeps it straight (so you can mend a gap
+in a line, or extend one after deleting what it pointed to), and meeting a line from the side
+makes a `+`. An arrowhead goes on the end only when it ends on a wall or in empty space. To
+leave a lone connection point on a wall, just type a `+`.
 
 The line is routed with horizontal and vertical segments, leaving and entering the walls at right
 angles, around boxes and text. Where it has to cross a container's wall, or another line, the

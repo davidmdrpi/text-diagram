@@ -2626,6 +2626,74 @@
     }
 
     /*************************************************************************
+     * PLAIN TEXT BLOCKS: overwrite typing and rectangular (block) selections.
+     * These are text operations on lines and columns, with no box logic at all.
+     *************************************************************************/
+
+    static textLines(rawText) {
+      return rawText.replace(/\r\n?/g, '\n').split('\n');
+    }
+
+    /** A block's lines, all padded to the same width (a ragged paste is still a rectangle). */
+    static blockLines(block) {
+      const lines = this.textLines(block);
+      const w = Math.max(...lines.map((l) => l.length));
+      return lines.map((l) => l.padEnd(w));
+    }
+
+    /** The text of the rectangle rows r1..r2, columns c1..c2 (inclusive), padded with spaces. */
+    static blockText(rawText, b) {
+      const lines = this.textLines(rawText);
+      const out = [];
+      for (let r = b.r1; r <= b.r2; r++) out.push((lines[r] || '').padEnd(b.c2 + 1).slice(b.c1, b.c2 + 1));
+      return out.join('\n');
+    }
+
+    /**
+     * Writes `block` over the text with its top-left at (r, c), replacing what was there
+     * (overwrite typing and paste). Lines and columns are added as needed. The caret ends
+     * after the last character written.
+     */
+    static overwriteBlock(rawText, r, c, block) {
+      const lines = this.textLines(rawText);
+      const bl = this.blockLines(block);
+      bl.forEach((s, i) => {
+        while (lines.length <= r + i) lines.push('');
+        const l = lines[r + i].padEnd(c + s.length);
+        lines[r + i] = (l.slice(0, c) + s + l.slice(c + s.length)).replace(/\s+$/, '');
+      });
+      return { text: lines.join('\n'), cursorR: r + bl.length - 1, cursorC: c + bl[bl.length - 1].length };
+    }
+
+    /** Inserts `block` as columns at (r, c) on consecutive lines: text to its right moves over. */
+    static insertBlock(rawText, r, c, block) {
+      const lines = this.textLines(rawText);
+      const bl = this.blockLines(block);
+      bl.forEach((s, i) => {
+        while (lines.length <= r + i) lines.push('');
+        const l = lines[r + i].padEnd(c);
+        lines[r + i] = (l.slice(0, c) + s + l.slice(c)).replace(/\s+$/, '');
+      });
+      return { text: lines.join('\n'), cursorR: r + bl.length - 1, cursorC: c + bl[bl.length - 1].length };
+    }
+
+    /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */
+    static clearBlock(rawText, b) {
+      const blank = Array(b.r2 - b.r1 + 1).fill(' '.repeat(b.c2 - b.c1 + 1)).join('\n');
+      return { ...this.overwriteBlock(rawText, b.r1, b.c1, blank), cursorR: b.r1, cursorC: b.c1 };
+    }
+
+    /** Removes the rectangle's columns from its lines (insert mode cut / delete): text to its right moves left. */
+    static deleteBlock(rawText, b) {
+      const lines = this.textLines(rawText);
+      for (let r = b.r1; r <= b.r2 && r < lines.length; r++) {
+        const l = lines[r];
+        lines[r] = (l.slice(0, b.c1) + l.slice(b.c2 + 1)).replace(/\s+$/, '');
+      }
+      return { text: lines.join('\n'), cursorR: b.r1, cursorC: b.c1 };
+    }
+
+    /*************************************************************************
      * CONNECTIONS: '+' endpoints on box walls, joined by a routed line
      *************************************************************************/
 
