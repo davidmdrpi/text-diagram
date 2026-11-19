@@ -2950,6 +2950,93 @@
       return { text, cursorR: r1 + 1, cursorC: c1 + 2, box: { r1, c1, r2, c2 } };
     }
 
+    /**
+     * Moves the characters of block b by one cell (dr, dc) together: they are lifted, the
+     * cells they leave become blank, and they are put down one cell over. Nothing else moves,
+     * with two obvious exceptions: a line attached to the block on the side it moves away
+     * from stretches to follow it (an arrowhead moves along), and a line the block moves
+     * into along its length gets one cell shorter (as long as some of it is left).
+     * Anything else in the way: overwrite mode writes over it; insert mode makes room going
+     * right or down (a column / line is made before the block, carrying the lines and walls
+     * through and keeping labels elsewhere intact) and refuses left or up.
+     * Returns { text, cursorR, cursorC, block } or { error }.
+     */
+    static moveBlock(rawText, b, dr, dc, opts = {}) {
+      if (b.r1 + dr < 0) return { error: 'The block is at the top already: move the rest down instead' };
+      if (b.c1 + dc < 0) return { error: 'The block is at the left edge already: move the rest right instead' };
+      const lines = this.textLines(rawText);
+      const get = (r, c) => (r < 0 || c < 0 ? ' ' : (lines[r] || '')[c] || ' ');
+      const inside = (r, c) => r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2;
+      // Only what the parser reads as a line counts as one (a 'v' or '-' in prose is text)
+      const roles = new DitaaParser().parse(rawText).cellRole;
+      const wire = (r, c) => r >= 0 && c >= 0 && /^wire/.test((roles[r] && roles[r][c]) || '');
+      const edge = (ch) => ch !== ' ' && '|:+-=<>^v/\\*'.includes(ch);
+      const along = dc ? '-=<>' : '|:^v'; // line characters running the way the block moves
+      const isAlong = (r, c) => { const ch = get(r, c); return ch !== ' ' && along.includes(ch) && wire(r, c); };
+      let blocked = false;
+      const heads = []; // arrowheads of lines that get shorter: they step back along their line
+      // (the whole leading edge is checked, so in OVR every shortened line keeps its arrowhead)
+      for (let r = b.r1 + dr; r <= b.r2 + dr; r++) {
+        for (let c = b.c1 + dc; c <= b.c2 + dc; c++) {
+          if (inside(r, c)) continue;
+          const ch = get(r, c);
+          if (ch === ' ') continue;
+          // A line attached to the block's edge, running on past this cell: it gets shorter
+          if (isAlong(r, c) && isAlong(r + dr, c + dc) && edge(get(r - dr, c - dc))) {
+            if ('<>^v'.includes(ch)) heads.push([r + dr, c + dc, ch]);
+            continue;
+          }
+          blocked = true;
+        }
+      }
+      const moved = { r1: b.r1 + dr, c1: b.c1 + dc, r2: b.r2 + dr, c2: b.c2 + dc };
+      const done = (text) => ({ text, cursorR: moved.r1, cursorC: moved.c1, block: moved });
+      const makeRoom = blocked && !opts.overwrite;
+      if (makeRoom && (dr < 0 || dc < 0)) {
+        return { error: `Something is in the way ${dr < 0 ? 'above' : 'on the left'}: move it first, or switch to OVR to move over it` };
+      }
+      let out;
+      if (makeRoom) {
+        // Make room: a column / line before the block moves it (and what's beside it) over
+        out = lines.slice();
+        const n = Math.max(this.diagramLineCount(rawText), b.r2 + 1);
+        while (out.length < n) out.push('');
+        if (dc > 0) this.insertContinuingColumn(out, b.c1, n, { lo: b.r1, hi: b.r2 });
+        else this.insertContinuingRow(out, b.r1);
+      } else {
+        const block = this.blockText(rawText, b);
+        out = this.textLines(this.overwriteBlock(this.clearBlock(rawText, b).text, moved.r1, moved.c1, block).text);
+      }
+      const put = (r, c, ch) => {
+        while (out.length <= r) out.push('');
+        const l = out[r].padEnd(c + 1);
+        out[r] = l.slice(0, c) + ch + l.slice(c + 1);
+      };
+      if (!makeRoom) for (const [r, c, ch] of heads) put(r, c, ch);
+      // (both when lifted and when room was made) Lines attached on the side the block moved
+      // away from follow it across the gap: an
+      // arrowhead pointing at the block moves up to it; any other line end (a shaft, an
+      // arrowhead pointing away, a junction) gets a piece of shaft to reach it
+      const fill = (o, dashed) => (dc ? (o === '=' || dashed ? '=' : '-') : (o === ':' || dashed ? ':' : '|'));
+      const toward = dc > 0 ? '>' : dc < 0 ? '<' : dr > 0 ? 'v' : '^';
+      const ends = dc ? '-=+*<>' : '|:+*^v';
+      for (let i = dc ? b.r1 : b.c1; i <= (dc ? b.r2 : b.c2); i++) {
+        const [or, oc] = dc ? [i, dc > 0 ? b.c1 - 1 : b.c2 + 1] : [dr > 0 ? b.r1 - 1 : b.r2 + 1, i];
+        const [gr, gc] = dc ? [i, dc > 0 ? b.c1 : b.c2] : [dr > 0 ? b.r1 : b.r2, i];
+        const [nr, nc] = [gr + dr, gc + dc];
+        const o = get(or, oc), e = (out[nr] || '')[nc] || ' ';
+        if (((out[gr] || '')[gc] || ' ') !== ' ') continue; // the gap is already bridged
+        if (o === ' ' || !ends.includes(o) || !wire(or, oc) || !edge(e)) continue;
+        if (o === toward) {
+          put(gr, gc, o);
+          put(or, oc, fill(get(or - dr, oc - dc)));
+        } else {
+          put(gr, gc, fill(o, get(or - dr, oc - dc) === (dc ? '=' : ':')));
+        }
+      }
+      return done(out.map((l) => l.replace(/\s+$/, '')).join('\n'));
+    }
+
     /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */
     static clearBlock(rawText, b) {
       const blank = Array(b.r2 - b.r1 + 1).fill(' '.repeat(b.c2 - b.c1 + 1)).join('\n');

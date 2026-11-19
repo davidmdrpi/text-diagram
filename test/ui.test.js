@@ -679,3 +679,45 @@ test('a block drag past the edge of the editor scrolls it, so the block can reac
     await browser.close();
   }
 });
+
+test('select everything with a drag, Alt+Arrows (or the arrow buttons) move it together to make room, then draw a box around it', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.selectOption('#preset-select', 'arch');
+    const text = () => page.inputValue('#ascii-editor').then((v) => v.split('\n'));
+    const original = await text();
+    const n = await page.evaluate(() => window.DitaaEngine.Grid2DEditor.diagramLineCount(document.getElementById('ascii-editor').value));
+    const width = Math.max(...original.slice(0, n).map((l) => l.length));
+    const nBoxes = () => page.evaluate(() => new window.DitaaEngine.DitaaParser().parse(document.getElementById('ascii-editor').value).boxes.length);
+    const boxes0 = await nBoxes();
+    const p1 = await cellXY(page, 0, 0), p2 = await cellXY(page, n - 1, width - 1);
+    await page.mouse.move(Math.round(p1.x), Math.round(p1.y));
+    await page.mouse.down();
+    await page.mouse.move(Math.round(p2.x), Math.round(p2.y), { steps: 5 });
+    await page.mouse.up();
+    assert.match(await page.textContent('#cursor-pos'), new RegExp(`· ${n}×${width} block`));
+    await page.keyboard.press('Alt+ArrowRight');
+    await page.click('#shift-right'); // the toolbar arrows do the same
+    await page.keyboard.press('Alt+ArrowDown');
+    await page.click('#shift-down');
+    assert.match(await page.textContent('#cursor-pos'), new RegExp(`· ${n}×${width} block`), 'still selected');
+    let ls = await text();
+    for (let r = 0; r < n; r++) assert.equal(ls[r + 2], original[r] ? '  ' + original[r] : '', `line ${r + 1} moved together`);
+    assert.equal(ls[0], '');
+    assert.equal(ls[ls.length - 1], original[original.length - 1], 'the legend stays put');
+    // Now there is room: select around it and draw the box, even in OVR nothing is covered
+    await page.click('#toggle-overwrite');
+    const q1 = await cellXY(page, 0, 0), q2 = await cellXY(page, n + 3, width + 3);
+    await page.mouse.move(Math.round(q1.x), Math.round(q1.y));
+    await page.mouse.down();
+    await page.mouse.move(Math.round(q2.x), Math.round(q2.y), { steps: 5 });
+    await page.mouse.up();
+    await page.click('#stamp-box');
+    ls = await text();
+    assert.equal(ls[0], '+' + '-'.repeat(width + 2) + '+');
+    assert.equal(await nBoxes(), boxes0 + 1, 'every box intact, plus the new one');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

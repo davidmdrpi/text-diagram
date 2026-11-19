@@ -1856,3 +1856,119 @@ test('regression (PR #11 review 3): free text right above or below the block is 
   const boxed = G.drawBoxAround('+-------------+\n| API-Gateway |\n+-------------+\n XYz', { r1: 3, c1: 1, r2: 3, c2: 2 }, { wrap: true });
   assert.equal(parse(boxed.text).boxes.find((b) => b.r1 === 0).lines[0], 'API-Gateway');
 });
+
+/* ---------------- Moving a block of characters ---------------- */
+
+test('moving a block moves its characters together; lines attached behind it stretch, lines ahead get shorter', () => {
+  const G = Grid2DEditor;
+  const t = '+---+    +---+\n| A +--->+ B |\n+---+    +---+';
+  const A = { r1: 0, c1: 0, r2: 2, c2: 4 }, B = { r1: 0, c1: 9, r2: 2, c2: 13 };
+  const row = (res) => res.text.split('\n')[1];
+  assert.equal(row(G.moveBlock(t, B, 0, 1)), '| A +---->+ B |', 'the arrow follows B');
+  assert.equal(row(G.moveBlock(t, B, 0, -1)), '| A +-->+ B |', 'B moves into the arrow: shorter, arrowhead kept');
+  assert.equal(row(G.moveBlock(t, A, 0, 1)), ' | A +-->+ B |');
+  assert.deepEqual(G.moveBlock(t, B, 0, 1).block, { r1: 0, c1: 10, r2: 2, c2: 14 });
+  assert.equal(conns(G.moveBlock(t, B, 0, 1).text).join(), 'A–B');
+  const v = '+---+\n| A |\n+-+-+\n  |\n  v\n+-+-+\n| B |\n+---+';
+  const B2 = { r1: 5, c1: 0, r2: 7, c2: 4 };
+  assert.deepEqual(G.moveBlock(v, B2, 1, 0).text.split('\n').slice(3, 6), ['  |', '  |', '  v']);
+  assert.deepEqual(G.moveBlock(v, B2, -1, 0).text.split('\n').slice(3, 4), ['  v']);
+  for (const [dr, dc] of [[1, 0], [-1, 0]]) assert.equal(conns(G.moveBlock(v, B2, dr, dc).text).join(), 'A–B');
+  // At the top / left edge there is nowhere to go
+  assert.match(G.moveBlock(t, A, 0, -1).error, /left edge/);
+  assert.match(G.moveBlock(t, A, -1, 0).error, /top/);
+});
+
+test('moving everything right and down makes room at the top and left, then a box fits around it', () => {
+  const G = Grid2DEditor;
+  let t = ROWCOL;
+  let b = { r1: 0, c1: 0, r2: 7, c2: 13 };
+  for (const [dr, dc] of [[0, 1], [0, 1], [1, 0], [1, 0]]) {
+    const res = G.moveBlock(t, b, dr, dc);
+    assert.ok(!res.error, res.error);
+    t = res.text;
+    b = res.block;
+  }
+  assert.deepEqual(b, { r1: 2, c1: 2, r2: 9, c2: 15 });
+  assert.equal(t.split('\n')[3], '  | A +--->+ B |');
+  assert.ok(t.endsWith('# [D] = Thing'), 'the legend stays put');
+  const boxed = G.drawBoxAround(t, { r1: 0, c1: 0, r2: 11, c2: 17 }, {}); // OVR: on the edge, now empty
+  assert.equal(parse(boxed.text).boxes.length, 5);
+  assert.deepEqual(conns(boxed.text).filter((c) => !c.includes('container')), ['A–B', 'A–C', 'B–D']);
+});
+
+test('moving a block into something: OVR writes over it, INS makes room right / down and refuses left / up', () => {
+  const G = Grid2DEditor;
+  const t = '+---+x\n| A |x\n+---+x';
+  const A = { r1: 0, c1: 0, r2: 2, c2: 4 };
+  assert.equal(G.moveBlock(t, A, 0, 1, { overwrite: true }).text, ' +---+\n | A |\n +---+');
+  assert.equal(G.moveBlock(t, A, 0, 1).text, ' +---+x\n | A |x\n +---+x', 'INS pushes what is beside it');
+  const X = { r1: 0, c1: 5, r2: 2, c2: 5 };
+  assert.match(G.moveBlock(t, X, 0, -1).error, /in the way on the left/);
+  assert.equal(G.moveBlock(t, X, 0, -1, { overwrite: true }).text, '+---x\n| A x\n+---x');
+});
+
+/* ---------------- PR #12 review ---------------- */
+
+test('regression (PR #12 review): moving a block never mistakes text for a line (INS makes room instead)', () => {
+  const G = Grid2DEditor;
+  const res = G.moveBlock('X\nversion\nvalue', { r1: 0, c1: 0, r2: 0, c2: 0 }, 1, 0);
+  assert.ok(!res.error, res.error);
+  assert.deepEqual(res.text.split('\n').slice(-2), ['version', 'value'], 'both words verbatim');
+  assert.equal(res.text.split('\n')[res.block.r1][res.block.c1], 'X');
+  // Hyphens in a label beside a moving block aren't a line either
+  const hy = G.moveBlock('X  \na-b', { r1: 0, c1: 0, r2: 0, c2: 0 }, 0, 1);
+  assert.equal(hy.text.split('\n')[1], 'a-b');
+});
+
+test('regression (PR #12 review): lines behind a moving block stay attached: arrows either way, plain lines and junctions', () => {
+  const G = Grid2DEditor;
+  const cases = [
+    // [text, block, dr, dc, expected line, which line]
+    ['+---+ +---+ +---+\n| A |<| B |>| C |\n+---+ +---+ +---+', { r1: 0, c1: 6, r2: 2, c2: 16 }, 0, 1, '| A |<-| B |>| C |', 1],
+    ['+---+ +---+\n| A |>| B |\n+---+ +---+', { r1: 0, c1: 6, r2: 2, c2: 10 }, 0, 1, '| A |->| B |', 1],
+    ['+---+    +---+\n| A +--+-+ B |\n+---+  | +---+\n       |', { r1: 0, c1: 9, r2: 2, c2: 13 }, 0, 1, '| A +--+--+ B |', 1],
+    ['+---+   +---+\n| A +--+| B |\n+---+  |+---+\n       |', { r1: 0, c1: 8, r2: 2, c2: 12 }, 0, 1, '| A +--+-| B |', 1],
+    ['+---+\n| A |\n+-+-+\n  ^\n+-+-+\n| B |\n+---+', { r1: 4, c1: 0, r2: 6, c2: 4 }, 1, 0, '  |', 4],
+    ['+---+\n| A |\n+-+-+\n  v\n+-+-+\n| B |\n+---+', { r1: 4, c1: 0, r2: 6, c2: 4 }, 1, 0, '  v', 4]
+  ];
+  for (const [t, b, dr, dc, line, row] of cases) {
+    const before = conns(t);
+    const res = G.moveBlock(t, b, dr, dc);
+    assert.ok(!res.error, res.error);
+    assert.equal(res.text.split('\n')[row], line, `${JSON.stringify(t)}:\n${res.text}`);
+    assert.deepEqual(conns(res.text), before, `still connected:\n${res.text}`);
+    const heads = (x) => [...x].filter((ch) => '<>^v'.includes(ch)).sort().join('');
+    assert.equal(heads(res.text), heads(t), 'every arrowhead kept');
+  }
+});
+
+test('regression (PR #12 review): in OVR, a collision on one line does not stop another line\'s arrowhead stepping back', () => {
+  const G = Grid2DEditor;
+  const A = { r1: 0, c1: 0, r2: 2, c2: 4 };
+  const withX = G.moveBlock('+---+x   +---+\n| A |<---| B |\n+---+    +---+', A, 0, 1, { overwrite: true });
+  const without = G.moveBlock('+---+    +---+\n| A |<---| B |\n+---+    +---+', A, 0, 1, { overwrite: true });
+  assert.equal(withX.text.split('\n')[1], ' | A |<--| B |');
+  assert.equal(withX.text.split('\n')[1], without.text.split('\n')[1]);
+  assert.deepEqual(conns(withX.text), ['A–B']);
+});
+
+test('regression (PR #12 re-review): when INS makes room, lines behind the block stay attached too', () => {
+  const G = Grid2DEditor;
+  const group = { r1: 0, c1: 8, r2: 2, c2: 18 };
+  const clear = '+---+   +---+ +---+\n| A +--+| B |>| C |\n+---+  |+---+ +---+\n       |';
+  const blocked = '+---+   +---+ +---+x\n| A +--+| B |>| C |\n+---+  |+---+ +---+\n       |';
+  for (const t of [clear, blocked]) {
+    const res = G.moveBlock(t, group, 0, 1);
+    assert.ok(!res.error, res.error);
+    assert.equal(res.text.split('\n')[1], '| A +--+-| B |>| C |', JSON.stringify(t));
+    assert.deepEqual(conns(res.text), ['A–B', 'B–C']);
+  }
+  assert.equal(G.moveBlock(blocked, group, 0, 1).text.split('\n')[0], '+---+    +---+ +---+x', 'the x was moved over to make room');
+  // The same going down, with a junction above and something in the way below
+  const v = '+---+\n| A |\n+-+-+\n  +--\n+---+\n| B |\n+---+\nxxxxx';
+  const res = G.moveBlock(v, { r1: 4, c1: 0, r2: 6, c2: 4 }, 1, 0);
+  assert.deepEqual(res.text.split('\n').slice(3, 6), ['  +--', '  |', '+---+']);
+  assert.deepEqual(conns(res.text), ['A–B']);
+  assert.equal(res.text.split('\n').pop(), 'xxxxx');
+});
