@@ -718,8 +718,8 @@
         if (box.macroKey && this.legendMode !== 'off') {
           if (this.legendMode === 'inline' || this.legendMode === 'both') {
             const badgeW = Math.max(18, box.macroKey.length * 8 + 8);
-            svg += `<rect x="${x + 4}" y="${y + 4}" width="${badgeW}" height="14" rx="4" fill="${palette.stroke}" />`;
-            svg += `<text x="${x + 4 + badgeW / 2}" y="${y + 13.5}" text-anchor="middle" fill="#ffffff" font-family="JetBrains Mono, monospace" font-size="9" font-weight="700">${esc(box.macroKey)}</text>`;
+            svg += `<g class="ditaa-badge"><rect x="${x + 4}" y="${y + 4}" width="${badgeW}" height="14" rx="4" fill="${palette.stroke}" />`;
+            svg += `<text x="${x + 4 + badgeW / 2}" y="${y + 13.5}" text-anchor="middle" fill="#ffffff" font-family="JetBrains Mono, monospace" font-size="9" font-weight="700">${esc(box.macroKey)}</text></g>`;
 
             const words = box.macroExpanded.split(/\s+/);
             let displayLines = [box.macroExpanded];
@@ -800,7 +800,7 @@
         const cardBorder = this.lightCanvas ? '#cbd5e1' : '#334155';
         const keyW = Math.max(26, Math.max(...legendKeys.map((k) => k.length)) * 7 + 10);
 
-        svg += `<g transform="translate(0, ${cardY})">`;
+        svg += `<g class="ditaa-legend" transform="translate(0, ${cardY})">`;
         svg += `<rect x="0" y="0" width="${contentW}" height="${cardH}" rx="8" fill="${cardFill}" stroke="${cardBorder}" stroke-width="1.5" />`;
         svg += `<text x="14" y="20" fill="${defaultTextFill}" font-size="11" font-weight="700" letter-spacing="0.04em">DIAGRAM LEGEND MACROS</text>`;
         const colWidth = Math.floor((contentW - 28) / 2);

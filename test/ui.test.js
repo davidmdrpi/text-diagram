@@ -468,7 +468,12 @@ test('block selection (on by default): rectangles, whole rows and whole columns;
 
     // 4. Cut of whole rows in insert mode removes the lines
     await page.keyboard.press('Control+Z');
-    await drag([3, 0], [4, 20]);
+    await drag([3, 0], [4, 20]); // a drag past the text is still a rectangle...
+    assert.match(await status(), /· 2×21 block/);
+    await page.keyboard.press('Escape');
+    await click(3, 0); // ...whole rows come from the keyboard (or Select row)
+    await page.keyboard.press('Shift+ArrowDown');
+    await page.keyboard.press('Shift+End');
     assert.match(await status(), /· 2 rows/);
     await page.keyboard.press('Control+X');
     assert.deepEqual(await text(), [start[0], start[1], start[2], start[5], start[6], start[7]]);
@@ -825,6 +830,106 @@ test('the divider between the editor and the preview can be dragged, all the way
     await page.dblclick('#pane-divider');
     const [e2] = await widths();
     assert.ok(Math.abs(e2 - e0) < 2, 'double-click resets');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a nested box copied with a drag (even one past its edge) pastes beside itself, in INS and OVR', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.selectOption('#preset-select', 'nested');
+    await page.evaluate(() => {
+      let clip = '';
+      document.addEventListener('copy', (e) => { clip = e.clipboardData.getData('text/plain'); });
+      window.__pasteClip = () => {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', clip);
+        document.getElementById('ascii-editor').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      };
+    });
+    const text = () => page.inputValue('#ascii-editor').then((v) => v.split('\n'));
+    const original = await text();
+    const at = (r, c) => cellXY(page, r, c);
+    const p = await at(0, 0), q = await at(12, 49); // one column past the right wall
+    await page.mouse.move(Math.round(p.x), Math.round(p.y));
+    await page.mouse.down();
+    await page.mouse.move(Math.round(q.x), Math.round(q.y), { steps: 4 });
+    await page.mouse.up();
+    assert.match(await page.textContent('#cursor-pos'), /13×50 block/, 'a rectangle, not whole rows');
+    await page.keyboard.press('Control+C');
+    // INS: click just right of the top-right corner, paste: a second copy beside it
+    const corner = await at(0, 48);
+    await page.mouse.click(Math.round(corner.x + 3), Math.round(corner.y));
+    await page.evaluate(() => window.__pasteClip());
+    let ls = await text();
+    assert.equal(ls.length, original.length, 'nothing went below');
+    ls.forEach((l, i) => assert.equal(l.replace(/\s+$/, ''), (original[i] + original[i] + ' ').replace(/\s+$/, ''), `INS line ${i + 1}`));
+    // OVR: the same, writing into the empty space beside it
+    await page.keyboard.press('Control+Z');
+    await page.click('#toggle-overwrite');
+    const beyond = await at(0, 49);
+    await page.mouse.click(Math.round(beyond.x), Math.round(beyond.y));
+    await page.evaluate(() => window.__pasteClip());
+    ls = await text();
+    ls.forEach((l, i) => assert.equal(l.replace(/\s+$/, ''), (original[i] + original[i] + ' ').replace(/\s+$/, ''), `OVR line ${i + 1}`));
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('import: an SVG file, a PNG picture of the diagram, and pasted SVG markup become ditaa text', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.selectOption('#preset-select', 'nested');
+    const count = () => page.evaluate(() => {
+      const p = new window.DitaaEngine.DitaaParser();
+      const ast = p.parse(document.getElementById('ascii-editor').value);
+      return { boxes: ast.boxes.length, connections: p.connections(ast).length, labels: ast.boxes.map((b) => b.lines[0]).filter(Boolean).sort() };
+    });
+    const before = await count();
+    const svg = await page.evaluate(() => {
+      const p = new window.DitaaEngine.DitaaParser();
+      return p.renderSVG(p.parse(document.getElementById('ascii-editor').value));
+    });
+    // 1. An SVG through the Import button
+    await page.evaluate(() => { document.getElementById('ascii-editor').value = ''; document.getElementById('ascii-editor').dispatchEvent(new Event('input')); });
+    await page.setInputFiles('#import-file', { name: 'diagram.svg', mimeType: 'image/svg+xml', buffer: Buffer.from(svg) });
+    await page.waitForFunction(() => document.getElementById('ascii-editor').value.length > 0);
+    assert.deepEqual(await count(), before);
+    assert.match(await page.textContent('#toast-indicator'), /Imported 4 boxes, 2 lines, 2 arrows/);
+    // ...and Ctrl+Z puts back what was there
+    await page.keyboard.press('Control+Z');
+    assert.equal(await page.inputValue('#ascii-editor'), '');
+    // 2. A PNG of the diagram, drawn by the browser
+    const png = await page.evaluate(async (markup) => {
+      const img = new Image();
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
+      await img.decode();
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      cv.getContext('2d').drawImage(img, 0, 0);
+      return cv.toDataURL('image/png').split(',')[1];
+    }, svg);
+    await page.setInputFiles('#import-file', { name: 'diagram.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+    await page.waitForFunction(() => document.getElementById('ascii-editor').value.length > 0);
+    const fromPng = await count();
+    assert.equal(fromPng.boxes, before.boxes, await page.inputValue('#ascii-editor'));
+    assert.equal(fromPng.connections, before.connections);
+    assert.match(await page.textContent('#toast-indicator'), /placeholder labels/);
+    // 3. Pasting SVG markup imports it
+    await page.evaluate(() => { document.getElementById('ascii-editor').value = ''; document.getElementById('ascii-editor').dispatchEvent(new Event('input')); });
+    await page.evaluate((markup) => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', markup);
+      const ed = document.getElementById('ascii-editor');
+      ed.focus();
+      ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, svg);
+    await page.waitForFunction(() => document.getElementById('ascii-editor').value.length > 0);
+    assert.deepEqual(await count(), before);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

@@ -628,6 +628,70 @@
   $('btn-undo').addEventListener('click', undo);
   $('btn-redo').addEventListener('click', redo);
   /*************************************************************************
+   * IMPORT: an SVG, or a picture of boxes and arrows, becomes ditaa text
+   *************************************************************************/
+  /** The pixels of a picture file (big pictures are scaled down first). */
+  async function pixelsOf(file) {
+    const img = await createImageBitmap(file);
+    const k = Math.min(1, 2400 / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * k)), h = Math.max(1, Math.round(img.height * k));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#fff'; // transparent parts count as background
+    g.fillRect(0, 0, w, h);
+    g.drawImage(img, 0, 0, w, h);
+    return { width: w, height: h, data: g.getImageData(0, 0, w, h).data };
+  }
+  const looksLikeSvg = (t) => /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(t);
+
+  /** Imports an SVG text or a picture file, replacing the editor text (Ctrl+Z undoes it). */
+  async function importDiagram(source, name = 'the diagram') {
+    let res, picture = false;
+    try {
+      if (typeof source === 'string') res = DiagramImport.importDiagram(source);
+      else if (source.type === 'image/svg+xml' || /\.svg$/i.test(source.name || '')) res = DiagramImport.importDiagram(await source.text());
+      else if (/^image\//.test(source.type)) { picture = true; res = DiagramImport.importDiagram(await pixelsOf(source)); }
+      else return showError('Import an SVG, or a PNG / JPEG picture of a diagram');
+    } catch (err) {
+      return showError(`Could not read ${name}: ${err.message || err}`);
+    }
+    if (res.error) return showError(res.error);
+    const what = [`${res.boxes} box${res.boxes === 1 ? '' : 'es'}`, `${res.lines} line${res.lines === 1 ? '' : 's'}`, `${res.arrows} arrow${res.arrows === 1 ? '' : 's'}`].join(', ');
+    setBlock(null);
+    applyGridOperationResult({ text: res.text, cursorR: 0, cursorC: 0 },
+      `Imported ${what}${picture ? ' (text in a picture can\'t be read: boxes with writing got placeholder labels)' : ''}. Ctrl+Z undoes it`);
+  }
+  const importInput = $('import-file');
+  $('btn-import').addEventListener('click', () => importInput.click());
+  importInput.addEventListener('change', () => {
+    const f = importInput.files && importInput.files[0];
+    importInput.value = '';
+    if (f) importDiagram(f, f.name);
+  });
+  // Drop a file on the editor or the preview
+  for (const el of [editor, $('canvas-viewport')]) {
+    el.addEventListener('dragover', (e) => {
+      if ([...(e.dataTransfer && e.dataTransfer.types || [])].includes('Files')) e.preventDefault();
+    });
+    el.addEventListener('drop', (e) => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) return;
+      e.preventDefault();
+      importDiagram(f, f.name);
+    });
+  }
+  // Paste a picture (a screenshot), or SVG markup
+  editor.addEventListener('paste', (e) => {
+    const dt = e.clipboardData;
+    if (!dt) return;
+    const text = dt.getData('text/plain');
+    const pic = [...(dt.files || [])].find((f) => /^image\//.test(f.type));
+    if (pic && !text) { e.preventDefault(); e.stopImmediatePropagation(); importDiagram(pic, 'the picture'); return; }
+    if (text && looksLikeSvg(text)) { e.preventDefault(); e.stopImmediatePropagation(); importDiagram(text, 'the SVG'); }
+  }, true);
+
+  /*************************************************************************
    * PANE DIVIDER: drag to share the width between editor and preview
    *************************************************************************/
   const editorPane = $('editor-pane');
@@ -1322,7 +1386,7 @@
     editor.focus();
     if (ev.shiftKey) {
       const from = blockSel ? blockSel.anchor : getCursorRC();
-      setBlock(rectFromPoints(from, cellAt(ev)));
+      setBlock({ ...rectFromPoints(from, cellAt(ev)), kind: 'rect' });
       return;
     }
     blockDrag = cellAt(ev);
@@ -1341,7 +1405,9 @@
       paintOverlay();
       return;
     }
-    if (cell.r !== blockDrag.r || cell.c !== blockDrag.c || blockSel) setBlock(dragRect(blockDrag, cell));
+    // A mouse drag is always a rectangle, even if it goes past the text: whole rows /
+    // columns come from Select row / column or the keyboard (Shift+End, Shift+Down)
+    if (cell.r !== blockDrag.r || cell.c !== blockDrag.c || blockSel) setBlock({ ...dragRect(blockDrag, cell), kind: 'rect' });
   }
   // The move cursor over a block selection says it can be dragged
   editor.addEventListener('mousemove', (ev) => {

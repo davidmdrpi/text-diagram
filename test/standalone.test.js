@@ -11,6 +11,7 @@ test('text-diagram.html is self-contained and up to date with src/ (run `npm run
   const html = read('text-diagram.html');
   assert.ok(html.includes(read('src/engine.js')), 'src/engine.js changed since the last build');
   assert.ok(html.includes(read('src/app.js')), 'src/app.js changed since the last build');
+  assert.ok(html.includes(read('src/import.js')), 'src/import.js changed since the last build');
   assert.ok(!/<script[^>]+src=/.test(html), 'must not load external scripts');
   assert.ok(!html.includes('cdn.tailwindcss.com'), 'Tailwind must be compiled in, not loaded from the CDN');
   const markup = (s) => s.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '').replace(/<!--[\s\S]*?-->/g, '')
