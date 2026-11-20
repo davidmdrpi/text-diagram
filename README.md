@@ -19,6 +19,7 @@ the right pane renders it. Click a box (in the text or the preview) to select it
 | Move box (or the selected block) | ← ↑ ↓ → | `Alt+Arrows` |
 | Resize box | +W −W +H −H | `Alt+Shift+Arrows` |
 | Toggle shape / color tag | `{c}` `{s}` `{d}` `cBLU` … | |
+| Delete the block selection, or the line / box at the caret | ⌫ | right-click → *Delete …* |
 | Undo / redo | ↶ ↷ | `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) |
 
 **Typing inside a box grows it** (the *Fit* checkbox in the toolbar, on by default), the way
@@ -80,6 +81,12 @@ them gets a line longer; copy a column that the arrows cross and paste it, and t
 | Ctrl+V of a copied rectangle | inserts it as columns at the caret, on consecutive lines | writes it over the text at the caret |
 | Ctrl+V with a block selected | replaces the block | replaces the block |
 
+**Dragging a block:** press inside the block selection and drag it where it should go; a
+preview shows where it will land, and it stays selected after the drop. Where it lands on empty
+space it's just placed; on top of something, OVR writes over it and INS makes room (what's beside
+it on those lines moves over). The boxes inside a block selection are all shown selected in the
+preview.
+
 **Moving a block:** with a block selected, `Alt+Arrows` (or the ← ↑ ↓ → buttons) move everything
 in it one character at a time, and it stays selected so you can keep going. That's how to make
 room at the top or left edge: select everything, then move it right and down. Nothing outside
@@ -102,6 +109,15 @@ Where a line runs into the block (an arrow, or a plain line ending on a wall or 
 gets one more line or column, so the line still reaches what it reached inside the new box. In
 overwrite mode the border is drawn on the block's own edge, over what is there.
 Either way, lines crossing the border join it with a `+`.
+
+**Deleting:** the `⌫` button deletes the block selection (blanking it), else the line or box at
+the caret; right-click a line or a box for *Delete line* / *Delete box* too. A line is deleted
+whole: it is traced along its straight runs, round its corners and through crossings (the other
+line stays) to its ends. Where it joined a box, the `+` becomes plain wall again; a container
+wall it passed through is mended; where it met another line at a T, that line is left whole.
+
+**Panes:** drag the divider between the editor and the preview to share the width (all the way to
+one side gives the other side the whole window); double-click it to reset. It is remembered.
 
 **Right-click** in the editor for connected shapes:
 

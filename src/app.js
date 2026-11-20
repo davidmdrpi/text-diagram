@@ -332,9 +332,22 @@
 
 
 
+  /** The boxes to show selected in the preview: all those inside a block selection, else the caret's box. */
+  function previewSelection() {
+    if (!blockSel || !lastAst) return activeBoxIndex;
+    const b = blockSel;
+    return lastAst.boxes.map((x, i) => (x.r1 >= b.r1 && x.r2 <= b.r2 && x.c1 >= b.c1 && x.c2 <= b.c2 ? i : -1)).filter((i) => i >= 0);
+  }
+  let paintedSelection = '';
   function paintSvg() {
-    svgWrapper.innerHTML = makeParser().renderSVG(lastAst, activeBoxIndex);
+    const sel = previewSelection();
+    paintedSelection = String(sel);
+    svgWrapper.innerHTML = makeParser().renderSVG(lastAst, sel);
     applyZoom();
+  }
+  /** Repaints the preview only if the boxes shown selected changed (cheap to call while dragging). */
+  function repaintSelectionIfChanged() {
+    if (lastAst && String(previewSelection()) !== paintedSelection) paintSvg();
   }
 
   /** Re-parses the text, refreshes the selection and status bar, and repaints. */
@@ -366,6 +379,7 @@
     updateCursorPos();
     paintOverlay();
     if (prevIdx !== activeBoxIndex && lastAst) paintSvg();
+    else repaintSelectionIfChanged();
   }
 
   /** Clean SVG for export: no selection outline. */
@@ -474,9 +488,22 @@
             ArrowUp: [() => G.shiftBoxWithElasticWires(t, box, -1, 0), 'Shifted Box ↑']
           };
       const [fn, label] = ops[e.key];
-      applyGridOperationResult(fn(), label);
+      const res = fn();
+      if (!e.shiftKey) caretMovesWithBox(res, ...({ ArrowRight: [0, 1], ArrowLeft: [0, -1], ArrowDown: [1, 0], ArrowUp: [-1, 0] })[e.key]);
+      applyGridOperationResult(res, label);
     }
   });
+
+  /**
+   * After a box move the caret moves with the box (it stays where it was inside it), so the
+   * same box stays selected: not an inner box that happens to be at the moved box's centre.
+   */
+  function caretMovesWithBox(res, dr, dc) {
+    if (!res || res.error) return;
+    const { r, c } = getCursorRC();
+    res.cursorR = r + dr;
+    res.cursorC = c + dc;
+  }
 
   presetSelect.addEventListener('change', (e) => {
     const key = e.target.value;
@@ -581,8 +608,11 @@
     fn(box);
   };
   // With a block selected, the arrows move the block's characters (see moveSelectedBlock)
-  const shift = (dr, dc, label) => () => (blockSel ? moveSelectedBlock(dr, dc) : requireBox((box) =>
-    applyGridOperationResult(Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, dr, dc), label))());
+  const shift = (dr, dc, label) => () => (blockSel ? moveSelectedBlock(dr, dc) : requireBox((box) => {
+    const res = Grid2DEditor.shiftBoxWithElasticWires(editor.value, box, dr, dc);
+    caretMovesWithBox(res, dr, dc);
+    applyGridOperationResult(res, label);
+  })());
   const resize = (dw, dh, label) => requireBox((box) =>
     applyGridOperationResult(Grid2DEditor.resizeBox(editor.value, box, dw, dh), label));
 
@@ -597,9 +627,93 @@
 
   $('btn-undo').addEventListener('click', undo);
   $('btn-redo').addEventListener('click', redo);
-  $('btn-clear').addEventListener('click', () => {
-    setEditorText('');
+  /*************************************************************************
+   * PANE DIVIDER: drag to share the width between editor and preview
+   *************************************************************************/
+  const editorPane = $('editor-pane');
+  const previewPane = $('preview-pane');
+  const divider = $('pane-divider');
+  const wide = window.matchMedia('(min-width: 1024px)');
+  let editorShare = null; // percent of the width for the editor; null = the default layout
+  try { const v = parseFloat(localStorage.getItem('text-diagram.split')); if (v >= 0 && v <= 100) editorShare = v; } catch (_) { /* ignore */ }
+  function applySplit() {
+    const on = wide.matches && editorShare !== null;
+    editorPane.style.flex = on ? `0 0 ${editorShare}%` : '';
+    previewPane.style.flex = on ? '1 1 0' : '';
+    editorPane.style.display = on && editorShare === 0 ? 'none' : '';
+    previewPane.style.display = on && editorShare === 100 ? 'none' : '';
+    metricsCache = null;
+    paintOverlay();
+  }
+  divider.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    divider.setPointerCapture(ev.pointerId);
+    const main = divider.parentElement.getBoundingClientRect();
+    const move = (e) => {
+      let pct = ((e.clientX - main.left) / main.width) * 100;
+      if (pct < 4) pct = 0; // all the way: that side gets the whole width
+      if (pct > 96) pct = 100;
+      editorShare = Math.round(pct * 10) / 10;
+      applySplit();
+    };
+    const up = () => {
+      divider.removeEventListener('pointermove', move);
+      divider.removeEventListener('pointerup', up);
+      try { localStorage.setItem('text-diagram.split', String(editorShare)); } catch (_) { /* ignore */ }
+    };
+    divider.addEventListener('pointermove', move);
+    divider.addEventListener('pointerup', up);
+  });
+  divider.addEventListener('dblclick', () => {
+    editorShare = null;
+    try { localStorage.removeItem('text-diagram.split'); } catch (_) { /* ignore */ }
+    applySplit();
+  });
+  wide.addEventListener('change', applySplit);
+
+  /*************************************************************************
+   * DELETE: the block selection, a whole line (traced), or a box
+   *************************************************************************/
+  const isLineCell = (cell) => !!lastAst && /^wire/.test((lastAst.cellRole[cell.r] || [])[cell.c] || '');
+  /** The innermost box the cell is in or on the wall of. */
+  function boxContaining(cell) {
+    if (!lastAst) return null;
+    const area = (b) => (b.r2 - b.r1) * (b.c2 - b.c1);
+    return lastAst.boxes.filter((b) => cell.r >= b.r1 && cell.r <= b.r2 && cell.c >= b.c1 && cell.c <= b.c2)
+      .sort((p, q) => area(p) - area(q))[0] || null;
+  }
+  function deleteBlockSel() {
+    const b = blockSel;
+    const res = Grid2DEditor.clearBlock(editor.value, b);
+    setBlock(null);
+    applyGridOperationResult(res, `Deleted the ${blockLabel(b)}`);
+  }
+  /** Deletes the line through `cell`, traced to its ends (ports it used become plain wall). */
+  function deleteLineAt(cell) {
+    const res = Grid2DEditor.deleteLine(editor.value, cell.r, cell.c);
+    applyGridOperationResult(res, `Deleted the line (${res.count} characters)`);
+  }
+  /** Deletes a box and everything in it (lines attached to it are left as they are). */
+  function deleteBox(box) {
+    const name = Grid2DEditor.boxName(lastAst, box);
+    applyGridOperationResult(Grid2DEditor.clearBlock(editor.value, box), `Deleted box “${name}”`);
+  }
+  /** The Del button: the block selection, else a text selection, else the line or box at the caret. */
+  $('btn-delete').addEventListener('click', () => {
     editor.focus();
+    if (blockSel) return deleteBlockSel();
+    if (editor.selectionStart !== editor.selectionEnd) {
+      endTypingBurst();
+      pushUndoState();
+      editor.setRangeText('', editor.selectionStart, editor.selectionEnd, 'start');
+      refresh();
+      return showToast('Deleted the selection');
+    }
+    const { r, c } = getCursorRC();
+    for (const cell of [{ r, c }, { r, c: c - 1 }]) if (isLineCell(cell)) return deleteLineAt(cell);
+    const box = boxContaining({ r, c }) || activeBox();
+    if (box) return deleteBox(box);
+    showError('Nothing to delete here: select a block, or put the caret on a line or in a box');
   });
 
   /*************************************************************************
@@ -969,6 +1083,14 @@
         hint: modes.overwrite ? 'on its edge' : 'around it'
       }));
     }
+    // Delete: the block selection, or the line / box right-clicked
+    if (blockSel) {
+      ctxMenu.appendChild(menuItem('✕ Delete block', deleteBlockSel, { hint: 'Del button' }));
+    } else {
+      if (isLineCell(cell)) ctxMenu.appendChild(menuItem('✕ Delete line', () => deleteLineAt(cell), { hint: 'the whole line' }));
+      const box = boxContaining(cell);
+      if (box) ctxMenu.appendChild(menuItem(`✕ Delete box “${Grid2DEditor.boxName(lastAst, box)}”`, () => deleteBox(box)));
+    }
     const hasSel = editor.selectionStart !== editor.selectionEnd || !!blockSel;
     ctxMenu.appendChild(menuItem('Cut', () => { editor.focus(); if (blockSel) copyBlock(true); else document.execCommand('cut'); }, { disabled: !hasSel, hint: 'Ctrl+X' }));
     ctxMenu.appendChild(menuItem('Copy', () => { editor.focus(); if (blockSel) copyBlock(false); else document.execCommand('copy'); }, { disabled: !hasSel, hint: 'Ctrl+C' }));
@@ -1095,7 +1217,7 @@
     const showCaret = modes.overwrite && document.activeElement === editor && editor.selectionStart === editor.selectionEnd && !blockSel;
     // Leave the page alone when there's nothing to draw: changing it during a mouse drag
     // would cancel the browser's own text selection
-    if (!blockSel && !showCaret) {
+    if (!blockSel && !showCaret && !moveDrag) {
       if (overlay.firstChild) overlay.textContent = '';
       return;
     }
@@ -1115,6 +1237,14 @@
       const b = blockSel;
       rect(b.r1, b.c1, b.r2, b.c2, 'background:rgba(99,102,241,.32);outline:1px dashed rgba(165,180,252,.9)', 'block-sel');
     }
+    if (moveDrag && (moveDrag.dr || moveDrag.dc)) {
+      // Where the dragged block will land, showing its text
+      const b = moveDrag.block, { dr, dc } = moveDrag;
+      rect(b.r1 + dr, b.c1 + dc, b.r2 + dr, b.c2 + dc,
+        `background:rgba(15,23,42,.88);outline:1px solid rgba(165,180,252,.95);color:#e0e7ff;white-space:pre;overflow:hidden;` +
+        `font-family:${cs.fontFamily};font-size:${cs.fontSize};line-height:${lh}px;letter-spacing:${cs.letterSpacing}`, 'block-ghost');
+      overlay.lastChild.textContent = Grid2DEditor.blockText(editor.value, b);
+    }
     if (showCaret) {
       const { r, c } = getCursorRC();
       rect(r, c, r, c, 'background:rgba(251,191,36,.45)', 'ovr-caret');
@@ -1126,6 +1256,7 @@
       anchor: { r: b.r1, c: b.c1 }, head: { r: b.r2, c: b.c2 + 1 }, ...b, text: editor.value
     } : null;
     if (blockSel) blockSel.kind = Grid2DEditor.blockKind(editor.value, blockSel);
+    repaintSelectionIfChanged();
     if (b) {
       // The caret sits at the block's top-left, so keys and paste go to the editor. Moving
       // it must not scroll the view (a drag may be scrolling it the other way).
@@ -1174,6 +1305,14 @@
   // off it's the other way round. A plain click just places the caret; Shift+click extends.
   editor.addEventListener('mousedown', (ev) => {
     if (ev.button !== 0 || ev.detail > 1) return; // double-click selects a word as usual
+    // Pressing inside the block selection picks it up: drag it where it should go (with
+    // Alt or Shift the press starts or extends a selection instead)
+    if (blockSel && !ev.shiftKey && !ev.altKey && inBlock(cellAt(ev))) {
+      ev.preventDefault();
+      editor.focus();
+      moveDrag = { start: cellAt(ev), block: { ...blockSel }, dr: 0, dc: 0 };
+      return;
+    }
     if (modes.block === ev.altKey) {
       if (blockSel) setBlock(null);
       return;
@@ -1191,17 +1330,30 @@
   });
   let dragPointer = null; // where the mouse is during a block drag (it may be outside the editor)
   let autoScrollFrame = null;
+  let moveDrag = null; // { start, block, dr, dc }: a block being dragged to a new place
   function dragTo(pt) {
     const cell = cellAt(pt);
+    if (moveDrag) {
+      const b = moveDrag.block;
+      moveDrag.dr = Math.max(cell.r - moveDrag.start.r, -b.r1);
+      moveDrag.dc = Math.max(cell.c - moveDrag.start.c, -b.c1);
+      paintOverlay();
+      return;
+    }
     if (cell.r !== blockDrag.r || cell.c !== blockDrag.c || blockSel) setBlock(dragRect(blockDrag, cell));
   }
+  // The move cursor over a block selection says it can be dragged
+  editor.addEventListener('mousemove', (ev) => {
+    if (blockDrag || moveDrag) return;
+    editor.style.cursor = blockSel && inBlock(cellAt(ev)) ? 'move' : '';
+  });
   /**
    * While a block drag is near or past an edge of the editor, scroll that way (faster the
    * further out the mouse is) and keep growing the block, so it can reach text that didn't fit.
    */
   function autoScrollStep() {
     autoScrollFrame = null;
-    if (!blockDrag || !dragPointer) return;
+    if ((!blockDrag && !moveDrag) || !dragPointer) return;
     const rect = editor.getBoundingClientRect();
     const left = rect.left + editor.clientLeft, top = rect.top + editor.clientTop;
     const right = left + editor.clientWidth, bottom = top + editor.clientHeight;
@@ -1219,12 +1371,28 @@
     autoScrollFrame = requestAnimationFrame(autoScrollStep);
   }
   document.addEventListener('mousemove', (ev) => {
-    if (!blockDrag) return;
+    if (!blockDrag && !moveDrag) return;
     dragPointer = { x: ev.clientX, y: ev.clientY };
     dragTo(ev);
     if (!autoScrollFrame) autoScrollFrame = requestAnimationFrame(autoScrollStep);
   });
-  document.addEventListener('mouseup', () => {
+  document.addEventListener('mouseup', (ev) => {
+    if (moveDrag) {
+      const { block, dr, dc } = moveDrag;
+      moveDrag = null;
+      if (dr || dc) {
+        // Drop it there: on empty space it's just placed; on top of something, OVR writes
+        // over it and INS makes room (as pasting a block does)
+        const res = Grid2DEditor.dragBlock(editor.value, block, dr, dc, { overwrite: modes.overwrite });
+        applyGridOperationResult(res, `Moved the ${blockLabel(blockSel || block)}`);
+        setBlock({ ...res.block, kind: 'rect' });
+      } else {
+        // A click inside the selection (no drag): drop the selection, caret there
+        setBlock(null);
+        caretToCell(caretCellAt(ev));
+      }
+      paintOverlay();
+    }
     blockDrag = null;
     dragPointer = null;
     if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
@@ -1435,6 +1603,7 @@
     return false;
   }
   renderModeToggles();
+  applySplit();
 
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   editor.addEventListener('scroll', closeMenu);

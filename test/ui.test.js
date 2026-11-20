@@ -721,3 +721,106 @@ test('select everything with a drag, Alt+Arrows (or the arrow buttons) move it t
     await browser.close();
   }
 });
+
+test('moving a container keeps it selected; drag a block to move it; delete a line / box; the preview shows the whole block selected', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    await page.selectOption('#preset-select', 'nested');
+    const text = () => page.inputValue('#ascii-editor').then((v) => v.split('\n'));
+    const pill = () => page.textContent('#active-box-pill');
+    const at = (r, c) => cellXY(page, r, c);
+    const click = async (r, c, opts) => { const p = await at(r, c); await page.mouse.click(Math.round(p.x), Math.round(p.y), opts); };
+    const marks = () => page.locator('#svg-wrapper rect[stroke="#6366f1"][stroke-dasharray="4,2"]').count();
+    // 1. Select the container (click its top-left inside), move it: it stays the selected box
+    await click(1, 1);
+    const container = await pill();
+    for (const key of ['Alt+ArrowRight', 'Alt+ArrowDown', 'Alt+ArrowRight']) {
+      await page.keyboard.press(key);
+      assert.equal(await pill(), container, `${key}: still the container, not the box at its centre`);
+    }
+    await page.keyboard.press('Control+Z');
+    await page.keyboard.press('Control+Z');
+    await page.keyboard.press('Control+Z');
+    const original = await text();
+
+    // 2. A block selection shows every box inside it selected in the preview
+    const drag = async (a, b) => {
+      const p = await at(...a), q = await at(...b);
+      await page.mouse.move(Math.round(p.x), Math.round(p.y));
+      await page.mouse.down();
+      await page.mouse.move(Math.round(q.x), Math.round(q.y), { steps: 4 });
+      await page.mouse.up();
+    };
+    await drag([3, 3], [6, 44]); // Ingress and App Service (its right wall is column 43)
+    assert.equal(await marks(), 2);
+
+    // 3. Drag the selection by pressing inside it: a ghost shows where it lands; drop places it
+    const from = await at(4, 10), to = await at(4 + 6, 10);
+    await page.mouse.move(Math.round(from.x), Math.round(from.y));
+    await page.mouse.down();
+    await page.mouse.move(Math.round(to.x), Math.round(to.y), { steps: 4 });
+    assert.equal(await page.locator('#editor-overlay .block-ghost').count(), 1, 'a ghost while dragging');
+    assert.match(await page.locator('#editor-overlay .block-ghost').textContent(), /Ingress/);
+    await page.mouse.up();
+    let ls = await text();
+    assert.equal(await page.locator('#editor-overlay .block-ghost').count(), 0);
+    assert.match(await page.textContent('#cursor-pos'), /4×42 block/, 'still selected where it landed');
+    assert.ok(ls[9].includes('Ingress') || ls[10].includes('Ingress'), ls.join('\n'));
+    assert.ok(!ls[4].includes('Ingress'), 'lifted from where it was');
+    await page.keyboard.press('Control+Z');
+    assert.deepEqual(await text(), original);
+
+    // 4. Right-click the arrow → Delete line: traced to both ends, ports become wall
+    await page.keyboard.press('Escape');
+    await click(7, 35, { button: 'right' });
+    await page.locator('#ctx-menu button', { hasText: 'Delete line' }).click();
+    ls = await text();
+    assert.ok(!/[|v]/.test(ls[7].slice(1, 47) + ls[8].slice(1, 47)), 'the arrow is gone (inside the container)');
+    assert.equal(ls[6].slice(27, 44), '+---------------+', 'App Service: its port is wall again');
+    assert.equal(ls[9].slice(27, 44), '+---------------+', 'Database: its port is wall again');
+    // 5. Del button with the caret in a box deletes the box
+    await click(10, 30);
+    await page.click('#btn-delete');
+    ls = await text();
+    assert.ok(!ls.join('\n').includes('Database'), 'the box is gone');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the divider between the editor and the preview can be dragged, all the way to either side, and reset', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    const widths = () => page.evaluate(() => [
+      document.getElementById('editor-pane').getBoundingClientRect().width,
+      document.getElementById('preview-pane').getBoundingClientRect().width
+    ]);
+    const [e0] = await widths();
+    const dragTo = async (x) => {
+      const d = await page.locator('#pane-divider').boundingBox(); // where it is now
+      await page.mouse.move(d.x + d.width / 2, d.y + 200);
+      await page.mouse.down();
+      await page.mouse.move(x, d.y + 200, { steps: 5 });
+      await page.mouse.up();
+    };
+    // (the divider itself stays reachable when the preview is hidden: it's at the right edge)
+    await dragTo(300);
+    let [e1, p1] = await widths();
+    assert.ok(Math.abs(e1 - 300) < 12, `the editor is about 300px wide (${e1})`);
+    assert.ok(p1 > 1000, 'the preview takes the rest');
+    await dragTo(1435); // all the way right: the editor gets everything
+    [e1, p1] = await widths();
+    assert.equal(p1, 0, 'the preview is hidden');
+    assert.ok(e1 > 1400);
+    // ...and it is remembered
+    await page.reload();
+    assert.equal((await widths())[1], 0);
+    await page.dblclick('#pane-divider');
+    const [e2] = await widths();
+    assert.ok(Math.abs(e2 - e0) < 2, 'double-click resets');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

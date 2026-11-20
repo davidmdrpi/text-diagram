@@ -1972,3 +1972,79 @@ test('regression (PR #12 re-review): when INS makes room, lines behind the block
   assert.deepEqual(conns(res.text), ['A–B']);
   assert.equal(res.text.split('\n').pop(), 'xxxxx');
 });
+
+/* ---------------- Enter beside a container; deleting lines; dragging blocks ---------------- */
+
+test('Enter in a box beside a container never stretches the container or the boxes inside it', () => {
+  let t = [
+    '+-------------+  +-------------+',
+    '| Left        |  | Right       |',
+    '|  +-------+  |  |  +-------+  |',
+    '|  |  L1   |  |  |  |  R1   |  |',
+    '|  +---+---+  |  |  +-------+  |',
+    '|      |      |  |             |',
+    '|      v      |  +-------------+',
+    '|  +-------+  |',
+    '|  |  L2   |  |',
+    '|  +-------+  |',
+    '+-------------+'
+  ].join('\n');
+  const left = (x) => x.split('\n').map((l) => l.slice(0, 15).replace(/\s+$/, ''));
+  const before = left(t);
+  let r = 5, c = 29;
+  for (let i = 0; i < 8; i++) {
+    const idx = Grid2DEditor.getIndexFromRowCol(t, r, c);
+    const res = Grid2DEditor.editAtSelection(t, idx, idx, { type: 'newline' }, { r, c });
+    assert.ok(res && !res.error, res && res.error);
+    t = res.text; r = res.cursorR; c = res.cursorC;
+    assert.deepEqual(left(t).slice(0, before.length), before, `after Enter ${i + 1}:\n${t}`);
+  }
+  assert.equal(parse(t).boxes.find((b) => b.r1 === 0 && b.c1 === 17).r2, 14, 'Right grew by 8');
+});
+
+test('deleting a line traces it to its ends; ports become wall, crossings and other lines are kept', () => {
+  const G = Grid2DEditor;
+  const simple = '+---+    +---+\n| A +--->+ B |\n+---+    +---+';
+  assert.equal(G.deleteLine(simple, 1, 6).text, '+---+    +---+\n| A |    | B |\n+---+    +---+');
+  const corners = '+---+\n| A |\n+-+-+\n  |\n  +-----+\n        |\n        v\n     +--+--+\n     | B   |\n     +-----+';
+  const c1 = G.deleteLine(corners, 3, 2);
+  assert.equal(parse(c1.text).boxes.length, 2);
+  assert.ok(!/[|v]/.test(c1.text.split('\n').slice(3, 7).join('')), 'every piece of it is gone');
+  assert.equal(c1.text.split('\n')[2], '+---+', 'the port is wall again');
+  assert.equal(c1.text.split('\n')[7], '     +-----+');
+  const cross = '      |\n+---+ | +---+\n| A +-+-+ B |\n+---+ | +---+\n      |';
+  assert.equal(G.deleteLine(cross, 2, 5).text.split('\n')[2], '| A | | | B |', 'the crossing line stays');
+  assert.equal(G.deleteLine(cross, 0, 6).text.split('\n')[2], '| A +---+ B |', 'and the other way round');
+  const tee = '+---+     +---+\n| A +--+--+ B |\n+---+  |  +---+\n       |\n    +--+--+\n    | C   |\n    +-----+';
+  const stem = G.deleteLine(tee, 3, 7);
+  assert.equal(stem.text.split('\n')[1], '| A +-----+ B |', 'the T becomes straight line');
+  assert.equal(stem.text.split('\n')[4], '    +-----+');
+  assert.deepEqual(conns(stem.text), ['A–B']);
+  const inside = '+------------+\n|  +---+     |\n|  | A +-----+------>\n|  +---+     |\n+------------+';
+  assert.equal(G.deleteLine(inside, 2, 17).text.split('\n')[2], '|  | A |     |', 'through a container wall, which is mended');
+  assert.equal(G.deleteLine('+---+\n| A += = = >\n+---+', 1, 7).text, '+---+\n| A |\n+---+', 'a spaced dashed line');
+  assert.match(G.deleteLine(simple, 1, 2).error, /on a line/);
+});
+
+test('dragging a block: placed on empty space; on something, OVR writes over it and INS makes room', () => {
+  const G = Grid2DEditor;
+  const t = '+---+        x\n| A |        x\n+---+        x';
+  const A = { r1: 0, c1: 0, r2: 2, c2: 4 };
+  const placed = G.dragBlock(t, A, 0, 6);
+  assert.equal(placed.text, '      +---+  x\n      | A |  x\n      +---+  x');
+  assert.deepEqual(placed.block, { r1: 0, c1: 6, r2: 2, c2: 10 });
+  assert.equal(G.dragBlock(t, A, 0, 10, { overwrite: true }).text, '          +---+\n          | A |\n          +---+');
+  assert.equal(G.dragBlock(t, A, 0, 10).text, '          +---+   x\n          | A |   x\n          +---+   x', 'INS: the x moves over');
+  assert.equal(G.dragBlock(t, A, 3, 0).text, '             x\n             x\n             x\n+---+\n| A |\n+---+', 'down into new lines');
+  assert.deepEqual(G.dragBlock(t, A, -5, -5).block, A, 'clamped at the top-left');
+});
+
+test('the preview can show several boxes selected (a block selection)', () => {
+  const p = new DitaaParser();
+  const ast = p.parse('+---+ +---+ +---+\n| A | | B | | C |\n+---+ +---+ +---+');
+  const marks = (svg) => (svg.match(/stroke="#6366f1" stroke-width="2.5" stroke-dasharray="4,2"/g) || []).length;
+  assert.equal(marks(p.renderSVG(ast, 1)), 1);
+  assert.equal(marks(p.renderSVG(ast, [0, 2])), 2);
+  assert.equal(marks(p.renderSVG(ast, [])), 0);
+  assert.equal(marks(p.renderSVG(ast)), 0);
+});
