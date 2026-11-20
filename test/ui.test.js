@@ -935,3 +935,32 @@ test('import: an SVG file, a PNG picture of the diagram, and pasted SVG markup b
     await browser.close();
   }
 });
+
+test('importing pictures of the busier examples finds most of their boxes and connections', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    // [example, at least this many boxes, at least this many connections] (pictures are best-effort)
+    for (const [preset, minBoxes, minConns] of [['nested', 4, 2], ['microservices', 5, 7], ['arch', 5, 7], ['flowchart', 5, 7]]) {
+      await page.selectOption('#preset-select', preset);
+      const got = await page.evaluate(async () => {
+        const P = new window.DitaaEngine.DitaaParser();
+        const svg = P.renderSVG(P.parse(document.getElementById('ascii-editor').value));
+        const img = new Image();
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        await img.decode();
+        const cv = document.createElement('canvas');
+        cv.width = img.width; cv.height = img.height;
+        const g = cv.getContext('2d');
+        g.drawImage(img, 0, 0);
+        const res = window.DiagramImport.importDiagram({ width: cv.width, height: cv.height, data: g.getImageData(0, 0, cv.width, cv.height).data });
+        const ast = P.parse(res.text);
+        return { boxes: ast.boxes.length, conns: P.connections(ast).length, text: res.text };
+      });
+      assert.ok(got.boxes >= minBoxes, `${preset}: ${got.boxes} boxes\n${got.text}`);
+      assert.ok(got.conns >= minConns, `${preset}: ${got.conns} connections\n${got.text}`);
+    }
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

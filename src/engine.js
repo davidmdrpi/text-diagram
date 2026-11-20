@@ -682,7 +682,7 @@
         const dashAttr = box.dashedBorder ? ` stroke-dasharray="5,4"` : '';
         const common = `fill="${palette.fill}" stroke="${palette.stroke}" stroke-width="2"${dashAttr}`;
 
-        svg += `<g class="ditaa-box" style="cursor:pointer" data-box-index="${bIdx}">`;
+        svg += `<g class="ditaa-box" style="cursor:pointer" data-box-index="${bIdx}" data-shape="${box.shape}">`;
         if (isSelected) {
           svg += `<rect x="${x - 4}" y="${y - 4}" width="${w + 8}" height="${h + 8}" rx="${box.rounded ? 12 : 5}" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-dasharray="4,2" />`;
         }
@@ -807,9 +807,10 @@
         legendKeys.forEach((k, idx) => {
           const lx = 14 + (idx % 2) * colWidth;
           const ly = 32 + Math.floor(idx / 2) * 26;
+          svg += `<g class="ditaa-legend-item" data-key="${esc(k)}" data-value="${esc(legends[k])}">`;
           svg += `<rect x="${lx}" y="${ly}" width="${keyW}" height="18" rx="4" fill="#4f46e5" />`;
           svg += `<text x="${lx + keyW / 2}" y="${ly + 12.5}" text-anchor="middle" fill="#ffffff" font-family="JetBrains Mono, monospace" font-size="10.5" font-weight="700">${esc(k)}</text>`;
-          svg += `<text x="${lx + keyW + 8}" y="${ly + 13}" fill="${defaultTextFill}" font-size="12" font-weight="500">${esc(legends[k])}</text>`;
+          svg += `<text x="${lx + keyW + 8}" y="${ly + 13}" fill="${defaultTextFill}" font-size="12" font-weight="500">${esc(legends[k])}</text></g>`;
         });
         svg += `</g>`;
       }

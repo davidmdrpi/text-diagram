@@ -173,7 +173,7 @@
    */
   function fromSVG(src) {
     const doc = parseXml(src);
-    const scene = { boxes: [], texts: [], segs: [], heads: [] };
+    const scene = { boxes: [], texts: [], segs: [], heads: [], legends: [] };
     const style = (n, inherited) => {
       const s = { ...inherited };
       for (const k of ['fill', 'stroke', 'stroke-dasharray', 'font-size', 'text-anchor', 'marker-end', 'marker-start', 'display', 'visibility']) {
@@ -245,13 +245,25 @@
       m = mul(m, parseTransform(n.attrs.transform));
       const A = (k, dflt = 0) => { const v = parseFloat(n.attrs[k]); return Number.isFinite(v) ? v : dflt; };
       switch (n.name) {
+        case 'switch': {
+          // only one branch of a switch is shown (e.g. an HTML label, with a plain text fallback)
+          const first = n.children.find((c) => c.name !== '#text');
+          if (first) walk(first, m, st, groupBox);
+          return;
+        }
         case 'svg': {
           if (n.attrs.x || n.attrs.y) m = mul(m, [1, 0, 0, 1, A('x'), A('y')]);
           break;
         }
         case 'g': {
           const cls = n.attrs.class || '';
-          if (/\bditaa-legend\b/.test(cls)) return; // our export's legend card: rebuilt from the boxes
+          if (/\bditaa-legend\b/.test(cls)) { // our export's legend card: its definitions, not its shapes
+            (function items(k) {
+              if (/\bditaa-legend-item\b/.test((k.attrs && k.attrs.class) || '')) scene.legends.push({ key: k.attrs['data-key'], value: k.attrs['data-value'] });
+              else (k.children || []).forEach(items);
+            })(n);
+            return;
+          }
           if (/\bditaa-badge\b/.test(cls)) { // a legend macro's key on its box
             if (groupBox) groupBox.macro = textOf(n).trim();
             return;
@@ -265,10 +277,13 @@
               const x2 = Math.max(...gb.parts.map((p) => p.x2)), y2 = Math.max(...gb.parts.map((p) => p.y2));
               const main = gb.parts[0];
               const storage = gb.parts.some((p) => p.shape === 'ellipse') && gb.parts.some((p) => p.shape === 'curved');
+              // our export says which shape it drew; else it's worked out from the parts
+              const SHAPES = { storage: 'storage', choice: 'choice', document: 'document', io: 'io', manual: 'manual', ellipse: 'pill' };
+              const shape = SHAPES[n.attrs['data-shape']] ||
+                (storage ? 'storage' : main.shape === 'choice' ? 'choice' : main.shape === 'ellipse' ? 'pill' : 'rect');
               scene.boxes.push({
-                x1, y1, x2, y2, rounded: main.rounded || false, dashed: main.dashed, fill: main.fill, label: [],
-                shape: storage ? 'storage' : main.shape === 'choice' ? 'choice' : main.shape === 'ellipse' ? 'pill' : 'rect',
-                macro: gb.macro || null
+                x1, y1, x2, y2, rounded: (main.rounded || false) && shape === 'rect', dashed: main.dashed, fill: main.fill, label: [],
+                shape, macro: gb.macro || null
               });
             }
             return;
@@ -438,9 +453,52 @@
           }
           if (longest < MIN) for (const i of members) { textInk[i] = 1; ink[i] = 0; }
         }
-        // a solid block (a badge, a filled marker) is neither a line nor writing
-        if (w >= 10 && h >= 10 && members.length >= 0.5 * w * h) for (const i of members) ink[i] = 0;
+        // a small solid blob (a badge, perhaps with light letters in it) is neither a line nor
+        // writing; big solid areas are found below (a box filled with a dark color)
+        if (w >= 10 && h >= 10 && w <= 60 && h <= 24 && members.length >= 0.5 * w * h) for (const i of members) ink[i] = 0;
         id++;
+      }
+    }
+    // Solid regions: where a whole 7x7 square is ink (thin lines, letters and arrowheads never
+    // are). A big one is a box filled with a dark color; a small one (a badge) is dropped.
+    // Either way it's taken out of the ink, so only the lines touching it are left.
+    const solidBoxes = [];
+    {
+      const S = new Int32Array((W + 1) * (H + 1));
+      for (let y = 0; y < H; y++) {
+        let row = 0;
+        for (let x = 0; x < W; x++) { row += rawInk[y * W + x]; S[(y + 1) * (W + 1) + x + 1] = S[y * (W + 1) + x + 1] + row; }
+      }
+      const sum = (x1, y1, x2, y2) => S[(y2 + 1) * (W + 1) + x2 + 1] - S[y1 * (W + 1) + x2 + 1] - S[(y2 + 1) * (W + 1) + x1] + S[y1 * (W + 1) + x1];
+      const core = new Uint8Array(W * H);
+      for (let y = 3; y < H - 3; y++) for (let x = 3; x < W - 3; x++) if (sum(x - 3, y - 3, x + 3, y + 3) === 49) core[y * W + x] = 1;
+      const solid = new Uint8Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        if (!core[y * W + x]) continue;
+        for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) solid[(y + dy) * W + x + dx] = 1;
+      }
+      const seen = new Uint8Array(W * H);
+      for (let i0 = 0; i0 < W * H; i0++) {
+        if (!solid[i0] || seen[i0]) continue;
+        const stack = [i0];
+        seen[i0] = 1;
+        let x1 = W, y1 = H, x2 = 0, y2 = 0;
+        const cols = [];
+        while (stack.length) {
+          const i = stack.pop();
+          const x = i % W, y = (i - x) / W;
+          ink[i] = 0;
+          if (x < x1) x1 = x;
+          if (x > x2) x2 = x;
+          if (y < y1) y1 = y;
+          if (y > y2) y2 = y;
+          if (cols.length < 400) cols.push(px(x, y));
+          for (const j of [i - 1, i + 1, i - W, i + W]) if (j >= 0 && j < W * H && solid[j] && !seen[j] && Math.abs((j % W) - x) <= 1) { seen[j] = 1; stack.push(j); }
+        }
+        if (x2 - x1 >= 24 && y2 - y1 >= 16) {
+          const fill = '#' + [0, 1, 2].map((k) => Math.round(median(cols.map((p) => p[k]))).toString(16).padStart(2, '0')).join('');
+          solidBoxes.push({ x1, y1, x2, y2, fill });
+        }
       }
     }
     const at = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? ink[y * W + x] : 0);
@@ -558,6 +616,7 @@
         keep.push({ x1: L.mid, y1: topY, x2: R.mid, y2: botY, top: { gaps: 0 }, bot: { gaps: 0 }, storage: true });
       }
     }
+    for (const b of solidBoxes) keep.push({ ...b, top: { gaps: 0 }, bot: { gaps: 0 }, solid: true });
     const scene = { boxes: [], texts: [], segs: [], heads: [] };
     let n = 0;
     for (const b of keep.sort((p, q) => p.y1 - q.y1 || p.x1 - q.x1)) {
@@ -569,7 +628,7 @@
           if (!rawInk[y * W + x]) samples.push(px(x, y));
         }
       }
-      const fill = samples.length ? '#' + [0, 1, 2].map((k) => Math.round(median(samples.map((p) => p[k]))).toString(16).padStart(2, '0')).join('') : null;
+      const fill = b.fill || (samples.length ? '#' + [0, 1, 2].map((k) => Math.round(median(samples.map((p) => p[k]))).toString(16).padStart(2, '0')).join('') : null);
       const dashed = (b.top.gaps || 0) + (b.bot.gaps || 0) > 1;
       scene.boxes.push({
         x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2, rounded: !!b.rounded, dashed,
@@ -655,6 +714,12 @@
       else free.push(t);
     }
     const legends = [];
+    const legendKeys = new Set();
+    for (const l of scene.legends || []) {
+      if (!l.key || legendKeys.has(l.key)) continue;
+      legendKeys.add(l.key);
+      legends.push(`# [${l.key}] = ${l.value}`);
+    }
     for (const b of uniq) {
       const ts = (b.texts || []).sort((p, q) => p.y - q.y || p.x - q.x);
       // texts on the same line join up
@@ -668,7 +733,7 @@
       if (lines.length) b.label = lines.map((l) => l.text);
       // a legend macro: the box shows its key, and a legend line says what it stands for
       if (b.macro) {
-        legends.push(`# [${b.macro}] = ${b.label.join(' ')}`.trim());
+        if (!legendKeys.has(b.macro)) { legendKeys.add(b.macro); legends.push(`# [${b.macro}] = ${b.label.join(' ')}`.trim()); }
         b.label = [`[${b.macro}]`];
       }
       b.titleTop = lines.length && uniq.some((k) => k !== b && k.x1 >= b.x1 && k.x2 <= b.x2 && k.y1 >= b.y1 && k.y2 <= b.y2);
@@ -676,6 +741,9 @@
       if (b.shape === 'storage') tags.push('{s}');
       if (b.shape === 'choice') tags.push('{c}');
       if (b.shape === 'pill') tags.push('{o}');
+      if (b.shape === 'document') tags.push('{d}');
+      if (b.shape === 'io') tags.push('{io}');
+      if (b.shape === 'manual') tags.push('{mo}');
       const ct = colorTag(b.fill);
       if (ct) tags.push(ct);
       b.tags = tags.join(' ');

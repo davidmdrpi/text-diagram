@@ -104,3 +104,57 @@ test('a picture with boxes inside a box and a dashed line', () => {
   assert.equal(ast.boxes.filter((b) => b.isContainer).length, 1);
   assert.match(res.text, /=+>/, `a dashed arrow:\n${res.text}`);
 });
+
+/* ---------------- PR #14 review ---------------- */
+
+test('regression (PR #14 review): a box filled with a dark color is a box, and the plain line beside it has no arrowhead', () => {
+  const c = canvas(400, 140);
+  c.fillRect(20, 30, 100, 50, [20, 30, 40]);
+  c.box(230, 30, 100, 50, null);
+  c.hline(120, 229, 55);
+  const res = I.importDiagram({ width: c.W, height: c.H, data: c.data });
+  assert.equal(res.boxes, 2, res.text);
+  assert.equal(res.arrows, 0, res.text);
+  assert.ok(!/[<>^v]/.test(res.text), res.text);
+  const ast = P.parse(res.text);
+  assert.equal(ast.boxes.length, 2);
+  assert.equal(P.connections(ast).length, 1, 'still joined by the line');
+  assert.ok(ast.boxes.some((b) => (b.customHex || '').toLowerCase() === '#141e28'), 'with its own color');
+  // a small solid badge is still not a box
+  const d = canvas(300, 120);
+  d.box(20, 20, 120, 60, null);
+  d.fillRect(26, 26, 20, 14, [40, 40, 120]);
+  assert.equal(I.importDiagram({ width: d.W, height: d.H, data: d.data }).boxes, 1);
+});
+
+test('regression (PR #14 review): every shape tag survives a round trip through our SVG', () => {
+  for (const tag of ['{d}', '{io}', '{mo}', '{o}', '{s}', '{c}']) {
+    const t = `+-----------+\n| Thing ${tag.padEnd(4)}|\n+-----------+`;
+    const before = P.parse(t).boxes[0];
+    const after = P.parse(I.importDiagram(P.renderSVG(P.parse(t))).text).boxes[0];
+    assert.equal(after.shape, before.shape, tag);
+    assert.equal(after.lines[0], 'Thing', tag);
+  }
+});
+
+test('regression (PR #14 review): legend definitions come back with the legend shown as a card only (or both ways, once)', () => {
+  const t = '+-----+\n| [A] |\n+-----+\n\n# [A] = Alpha';
+  for (const legendMode of ['card', 'both', 'inline']) {
+    const p = new DitaaParser({ legendMode });
+    const back = I.importDiagram(p.renderSVG(p.parse(t))).text;
+    assert.match(back, /\| *\[A\] *\|/, legendMode);
+    assert.equal((back.match(/^# \[A\] = Alpha$/gm) || []).length, 1, `${legendMode}:\n${back}`);
+  }
+});
+
+test('regression (PR #14 review): only one branch of an SVG switch is read (an HTML label with a text fallback)', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect x="10" y="10" width="120" height="60" fill="#fff" stroke="#000"/>' +
+    '<switch><foreignObject x="10" y="10" width="120" height="60" requiredFeatures="http://www.w3.org/TR/SVG11/feature#Extensibility">' +
+    '<div xmlns="http://www.w3.org/1999/xhtml" style="font-size:12px">Start</div></foreignObject>' +
+    '<text x="70" y="44" text-anchor="middle" font-size="12">Start</text></switch></svg>';
+  const ast = P.parse(I.importDiagram(svg).text);
+  assert.deepEqual(ast.boxes.map((b) => b.lines.join(' / ')), ['Start']);
+  // a switch whose first branch is the text works the same
+  const textFirst = svg.replace(/<switch>(<foreignObject[\s\S]*?<\/foreignObject>)(<text[\s\S]*?<\/text>)<\/switch>/, '<switch>$2$1</switch>');
+  assert.deepEqual(P.parse(I.importDiagram(textFirst).text).boxes.map((b) => b.lines.join(' / ')), ['Start']);
+});
