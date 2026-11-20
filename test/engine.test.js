@@ -2048,3 +2048,32 @@ test('the preview can show several boxes selected (a block selection)', () => {
   assert.equal(marks(p.renderSVG(ast, [])), 0);
   assert.equal(marks(p.renderSVG(ast)), 0);
 });
+
+/* ---------------- PR #13 review ---------------- */
+
+test('regression (PR #13 review): deleting the stem of a T right beside a wall keeps the other connection', () => {
+  const G = Grid2DEditor;
+  const t = '+---+   +---+\n| A +--+| B |\n+---+  |+---+\n       |';
+  assert.deepEqual(conns(t), ['A–B']);
+  const res = G.deleteLine(t, 3, 7);
+  assert.equal(res.text, '+---+   +---+\n| A +---| B |\n+---+   +---+');
+  assert.deepEqual(conns(res.text), ['A–B']);
+  // ...and the same T upside down, against a wall above
+  const up = '       |\n+---+  |+---+\n| A +--+| B |\n+---+   +---+';
+  assert.deepEqual(conns(G.deleteLine(up, 0, 7).text), ['A–B']);
+});
+
+test('regression (PR #13 review): deleting a line goes round its rounded corners, from either leg', () => {
+  const G = Grid2DEditor;
+  const blank = (t) => t.replace(/\s/g, '');
+  for (const [t, starts] of [['--.\n  |\n  v', [[0, 0], [0, 2], [2, 2]]], ["  |\n--'", [[0, 2], [1, 0], [1, 2]]], ["'--\n|\n^", [[0, 2], [2, 0]]]]) {
+    for (const [r, c] of starts) assert.equal(blank(G.deleteLine(t, r, c).text), '', `${JSON.stringify(t)} from ${r},${c}`);
+  }
+});
+
+test('regression (PR #13 review): a spaced dashed arrow is deleted whole from its tip too', () => {
+  const G = Grid2DEditor;
+  const t = '+---+\n| A += = = >\n+---+';
+  for (const c of [5, 7, 9, 11]) assert.equal(G.deleteLine(t, 1, c).text, '+---+\n| A |\n+---+', `from column ${c}`);
+  assert.equal(G.deleteLine('< = = =', 0, 0).text, '');
+});

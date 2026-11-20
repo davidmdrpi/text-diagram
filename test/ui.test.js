@@ -813,6 +813,12 @@ test('the divider between the editor and the preview can be dragged, all the way
     [e1, p1] = await widths();
     assert.equal(p1, 0, 'the preview is hidden');
     assert.ok(e1 > 1400);
+    // ...but the divider stays on screen, so it can be dragged back
+    const edge = await page.locator('#pane-divider').boundingBox();
+    assert.ok(edge.width > 0 && edge.x >= 0 && edge.x + edge.width <= 1440, `divider at ${edge.x}+${edge.width}`);
+    await dragTo(700);
+    assert.ok((await widths())[1] > 600, 'dragged back: the preview is there again');
+    await dragTo(1435);
     // ...and it is remembered
     await page.reload();
     assert.equal((await widths())[1], 0);

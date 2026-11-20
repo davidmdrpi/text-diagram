@@ -3087,7 +3087,8 @@
       if (!isWire(r, c)) return { error: 'Right-click on a line to delete it' };
       const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]]; // up right down left
       const horiz = (d) => d === 1 || d === 3;
-      const H = '-=<>+*', V = '|:^v+*';
+      const H = "-=<>+*.'", V = "|:^v+*.'"; // ('.' and "'" are a line's rounded corners)
+      const JOINS = "+*.'";
       const fits = (ch, d) => ch !== ' ' && (horiz(d) ? H : V).includes(ch);
       const isCorner = (y, x) => ast.boxes.some((b) => (y === b.r1 || y === b.r2) && (x === b.c1 || x === b.c2));
       // Directions a wire cell runs in
@@ -3095,10 +3096,11 @@
         const ch = get(y, x);
         if ('-=<>'.includes(ch)) return [1, 3];
         if ('|:^v'.includes(ch)) return [0, 2];
-        // '+' / '*': every side something joins it
+        // '+' / '*' / a rounded corner: every side something joins it (a line running that
+        // way, or any box wall: a line touching a wall is attached to it)
         return [0, 1, 2, 3].filter((d) => {
           const ny = y + DIRS[d][0], nx = x + DIRS[d][1];
-          return fits(get(ny, nx), d) && (isWire(ny, nx) || role(ny, nx) === 'box-border');
+          return (fits(get(ny, nx), d) && isWire(ny, nx)) || role(ny, nx) === 'box-border';
         });
       };
       const gone = new Map(); // "y,x" -> new character
@@ -3118,9 +3120,10 @@
       const walk = (y, x, d) => {
         for (let guard = 0; guard < 100000; guard++) {
           let ny = y + DIRS[d][0], nx = x + DIRS[d][1];
-          // a spaced dashed line ('= = = >'): hop over the gap
-          if (horiz(d) && get(ny, nx) === ' ' && get(y, x) === '=' && '=<>'.includes(get(ny, nx + DIRS[d][1])) &&
-              get(ny, nx + DIRS[d][1]) !== ' ' && isWire(ny, nx + DIRS[d][1])) {
+          // a spaced dashed line ('= = = >'): hop over the gap, from a dash or from its arrowhead
+          const cur = get(y, x), hop = get(ny, nx + DIRS[d][1]);
+          if (horiz(d) && get(ny, nx) === ' ' && hop !== ' ' && '=<>'.includes(cur) && '=<>'.includes(hop) &&
+              (cur === '=' || hop === '=') && isWire(ny, nx + DIRS[d][1])) {
             nx += DIRS[d][1];
           }
           const ch = get(ny, nx);
@@ -3134,7 +3137,7 @@
             return;
           }
           if (!isWire(ny, nx)) return;
-          if (ch === '+' || ch === '*') {
+          if (JOINS.includes(ch)) {
             const ds = dirsOf(ny, nx);
             const back = (d + 2) % 4;
             const others = ds.filter((k) => k !== back);
@@ -3156,8 +3159,8 @@
         }
       };
       const start = dirsOf(r, c);
-      if (get(r, c) === '+' || get(r, c) === '*') {
-        if (start.length > 2) return { error: 'That is where lines meet: right-click on one of the lines instead' };
+      if (JOINS.includes(get(r, c)) && start.length > 2) {
+        return { error: 'That is where lines meet: right-click on one of the lines instead' };
       }
       set(r, c, ' ');
       for (const d of start) walk(r, c, d);
@@ -3167,7 +3170,11 @@
         lines[y] = l.slice(0, x) + ch + l.slice(x + 1);
       }
       const count = [...gone.values()].filter(([, , ch]) => ch === ' ').length;
-      return { text: lines.map((l) => l.replace(/\s+$/, '')).join('\n'), cursorR: r, cursorC: c, count };
+      const out = lines.map((l) => l.replace(/\s+$/, ''));
+      const before = this.textLines(rawText);
+      // Lines at the end that only held the deleted line go too (blank lines already there stay)
+      while (out.length > 1 && out[out.length - 1] === '' && (before[out.length - 1] || '').trim() !== '') out.pop();
+      return { text: out.join('\n'), cursorR: Math.min(r, out.length - 1), cursorC: c, count };
     }
 
     /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */

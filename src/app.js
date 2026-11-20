@@ -638,7 +638,8 @@
   try { const v = parseFloat(localStorage.getItem('text-diagram.split')); if (v >= 0 && v <= 100) editorShare = v; } catch (_) { /* ignore */ }
   function applySplit() {
     const on = wide.matches && editorShare !== null;
-    editorPane.style.flex = on ? `0 0 ${editorShare}%` : '';
+    // (it may shrink: at 100% the divider still needs its few pixels, so it stays on screen)
+    editorPane.style.flex = on ? `0 1 ${editorShare}%` : '';
     previewPane.style.flex = on ? '1 1 0' : '';
     editorPane.style.display = on && editorShare === 0 ? 'none' : '';
     previewPane.style.display = on && editorShare === 100 ? 'none' : '';
