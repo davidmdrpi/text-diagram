@@ -87,7 +87,7 @@
   <main class="flex-1 flex flex-col lg:flex-row overflow-hidden">
 
     <!-- LEFT PANE: Monospace ASCII Editor & 2D Spatial Manipulation Toolbar -->
-    <section class="w-full lg:w-[48%] h-1/2 lg:h-full flex flex-col border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-900/70">
+    <section id="editor-pane" class="w-full lg:w-[48%] h-1/2 lg:h-full min-w-0 flex flex-col border-b lg:border-b-0 border-slate-800 bg-slate-900/70">
       
       <!-- Editor toolbar: one wrapping row of compact button groups (hover a button for what it does) -->
       <div id="editor-toolbar" class="px-1.5 py-1 bg-slate-900 border-b border-slate-800 flex items-center gap-px flex-wrap">
@@ -127,7 +127,7 @@
         <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
         <button id="btn-undo" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700" title="Undo (Ctrl+Z)">↶</button>
         <button id="btn-redo" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700" title="Redo (Ctrl+Y)">↷</button>
-        <button id="btn-clear" class="text-[11px] leading-4 text-slate-400 hover:text-rose-400 px-1 py-0.5 rounded transition" title="Clear the editor (undoable with Ctrl+Z)" aria-label="Clear">✕</button>
+        <button id="btn-delete" class="text-[11px] leading-4 font-mono px-[3px] py-0.5 rounded border transition bg-slate-800 hover:bg-rose-700 text-slate-200 hover:text-white border-slate-700" aria-label="Delete" title="Delete (⌫): the block selection (drag), else the whole line or the box at the caret (a line is traced to its ends; the + where it joined a box becomes plain wall). Right-click a line or box to delete it too. Undo with Ctrl+Z">⌫</button>
         <label class="flex items-center gap-1 cursor-pointer text-[11px] text-slate-300 hover:text-white ml-0.5" title="Auto-fit: typing, Enter, Backspace and paste inside a box grow it to fit; things beside it move over">
           <input id="toggle-autofit" type="checkbox" checked aria-label="Auto-fit boxes while typing" class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
         </label>
@@ -161,7 +161,12 @@
     </section>
 
     <!-- RIGHT PANE: Interactive SVG Studio & Parser Controls -->
-    <section class="w-full lg:w-[52%] h-1/2 lg:h-full flex flex-col bg-slate-950 relative overflow-hidden">
+    <!-- Drag to share the width between the panes (all the way to either side); double-click resets -->
+    <div id="pane-divider" role="separator" aria-orientation="vertical" aria-label="Resize the editor and preview panes"
+      class="hidden lg:block w-1.5 shrink-0 cursor-col-resize bg-slate-800 hover:bg-indigo-500 transition-colors"
+      title="Drag to resize the editor and preview (all the way to either side to give it all the room); double-click to reset"></div>
+
+    <section id="preview-pane" class="w-full lg:w-[52%] h-1/2 lg:h-full min-w-0 flex flex-col bg-slate-950 relative overflow-hidden">
       <!-- Parser Feature Toggles & Zoom Controls Bar -->
       <div class="px-3 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
         <div class="flex items-center gap-3 flex-wrap text-xs">

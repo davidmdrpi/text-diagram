@@ -616,8 +616,12 @@
       return { wires, arrows, junctions, freeTexts };
     }
 
-    /** Renders the parsed AST into a standalone SVG string. Pass selectedBoxIndex = -1 for exports. */
+    /**
+     * Renders the parsed AST into a standalone SVG string. selectedBoxIndex is the index of
+     * the selected box, or a list of them (a block selection); -1 for exports.
+     */
     renderSVG(ast, selectedBoxIndex = -1) {
+      const selected = new Set([].concat(selectedBoxIndex));
       const { numRows, numCols, boxes, wires, arrows, junctions, freeTexts, legends } = ast;
       const padX = 28;
       const padY = 28;
@@ -662,7 +666,7 @@
 
       for (const bIdx of order) {
         const box = boxes[bIdx];
-        const isSelected = bIdx === selectedBoxIndex;
+        const isSelected = selected.has(bIdx);
         const x = (box.c1 + 0.5) * this.cellW;
         const y = (box.r1 + 0.5) * this.cellH;
         const w = (box.c2 - box.c1) * this.cellW;
@@ -1560,7 +1564,12 @@
       const srcIdx = boxes.findIndex(same);
       const runs = parser.wireRuns(ast);
       const at = Array.from({ length: state.cols }, () => ys.slice());
-      boxes.forEach((b, bi) => {
+      // Inner boxes first, so the outermost box beside src decides for its columns: a
+      // container beside src keeps its size, and so does everything inside it
+      const area = (b) => (b.r2 - b.r1) * (b.c2 - b.c1);
+      const order = boxes.map((b, bi) => bi).sort((p, q) => area(boxes[p]) - area(boxes[q]));
+      order.forEach((bi) => {
+        const b = boxes[bi];
         if (bi === srcIdx || encloses(b)) return;
         if (!ys.some((y) => b.r1 < y && y <= b.r2)) return;
         // A box joined to src by a horizontal arrow moves down by the rows inserted above that
@@ -3035,6 +3044,137 @@
         }
       }
       return done(out.map((l) => l.replace(/\s+$/, '')).join('\n'));
+    }
+
+    /**
+     * Moves block b by any offset (a drag and drop): it is lifted (its cells become blank)
+     * and put down with its top-left at (r1 + dr, c1 + dc). Where it lands on empty space it
+     * is just placed there. Where it would land on something: overwrite mode writes over it;
+     * insert mode makes room by putting the block in as columns there (what's beside it on
+     * those lines moves over), as pasting a block does. Returns { text, cursorR, cursorC, block }.
+     */
+    static dragBlock(rawText, b, dr, dc, opts = {}) {
+      dr = Math.max(dr, -b.r1);
+      dc = Math.max(dc, -b.c1);
+      const block = this.blockText(rawText, b);
+      const lifted = this.clearBlock(rawText, b).text;
+      const moved = { r1: b.r1 + dr, c1: b.c1 + dc, r2: b.r2 + dr, c2: b.c2 + dc };
+      const lines = this.textLines(lifted);
+      let empty = true;
+      for (let r = moved.r1; r <= moved.r2 && empty; r++) {
+        for (let c = moved.c1; c <= moved.c2; c++) if (((lines[r] || '')[c] || ' ') !== ' ') { empty = false; break; }
+      }
+      const res = empty || opts.overwrite
+        ? this.overwriteBlock(lifted, moved.r1, moved.c1, block)
+        : this.insertBlock(lifted, moved.r1, moved.c1, block);
+      return { text: res.text, cursorR: moved.r1, cursorC: moved.c1, block: moved };
+    }
+
+    /**
+     * Deletes the line (connection) through cell (r, c), following it along its straight
+     * runs, round its corners and straight through crossings (the other line keeps its
+     * crossing cell), to its ends. It stops at a box (a '+' port on the wall becomes plain
+     * wall again; a container wall it passed through is mended and the line followed on
+     * inside) and where it meets another line at a T (a '+' left joining a straight line
+     * becomes plain line). Returns { text, cursorR, cursorC, count } or { error }.
+     */
+    static deleteLine(rawText, r, c) {
+      const ast = new DitaaParser().parse(rawText);
+      const lines = this.textLines(rawText);
+      const get = (y, x) => (y < 0 || x < 0 ? ' ' : (lines[y] || '')[x] || ' ');
+      const role = (y, x) => (y < 0 || x < 0 ? 'empty' : (ast.cellRole[y] && ast.cellRole[y][x]) || 'empty');
+      const isWire = (y, x) => role(y, x).startsWith('wire');
+      if (!isWire(r, c)) return { error: 'Right-click on a line to delete it' };
+      const DIRS = [[-1, 0], [0, 1], [1, 0], [0, -1]]; // up right down left
+      const horiz = (d) => d === 1 || d === 3;
+      const H = "-=<>+*.'", V = "|:^v+*.'"; // ('.' and "'" are a line's rounded corners)
+      const JOINS = "+*.'";
+      const fits = (ch, d) => ch !== ' ' && (horiz(d) ? H : V).includes(ch);
+      const isCorner = (y, x) => ast.boxes.some((b) => (y === b.r1 || y === b.r2) && (x === b.c1 || x === b.c2));
+      // Directions a wire cell runs in
+      const dirsOf = (y, x) => {
+        const ch = get(y, x);
+        if ('-=<>'.includes(ch)) return [1, 3];
+        if ('|:^v'.includes(ch)) return [0, 2];
+        // '+' / '*' / a rounded corner: every side something joins it (a line running that
+        // way, or any box wall: a line touching a wall is attached to it)
+        return [0, 1, 2, 3].filter((d) => {
+          const ny = y + DIRS[d][0], nx = x + DIRS[d][1];
+          return (fits(get(ny, nx), d) && isWire(ny, nx)) || role(ny, nx) === 'box-border';
+        });
+      };
+      const gone = new Map(); // "y,x" -> new character
+      const key = (y, x) => `${y},${x}`;
+      const set = (y, x, ch) => gone.set(key(y, x), [y, x, ch]);
+      const wallChar = (y, x, d) => { // the plain wall a port / crossing on it becomes
+        const [a, b] = horiz(d) ? [get(y - 1, x), get(y + 1, x)] : [get(y, x - 1), get(y, x + 1)];
+        if (horiz(d)) return a === ':' || b === ':' ? ':' : '|';
+        return a === '=' || b === '=' ? '=' : '-';
+      };
+      const lineChar = (y, x, d) => { // what a crossing cell becomes when our line (going d) is removed
+        const [a, b] = horiz(d) ? [get(y - 1, x), get(y + 1, x)] : [get(y, x - 1), get(y, x + 1)];
+        if (horiz(d)) return a === ':' || b === ':' ? ':' : '|';
+        return a === '=' || b === '=' ? '=' : '-';
+      };
+      // Walk from (y, x) in direction d until the line ends
+      const walk = (y, x, d) => {
+        for (let guard = 0; guard < 100000; guard++) {
+          let ny = y + DIRS[d][0], nx = x + DIRS[d][1];
+          // a spaced dashed line ('= = = >'): hop over a gap the parser reads as part of the
+          // line (a plain space between two separate lines is not one)
+          if (horiz(d) && get(ny, nx) === ' ' && isWire(ny, nx) && '=<>'.includes(get(ny, nx + DIRS[d][1])) &&
+              get(ny, nx + DIRS[d][1]) !== ' ' && isWire(ny, nx + DIRS[d][1])) {
+            nx += DIRS[d][1];
+          }
+          const ch = get(ny, nx);
+          if (gone.has(key(ny, nx)) || !fits(ch, d)) return;
+          if (role(ny, nx) === 'box-border') {
+            if (isCorner(ny, nx)) return;
+            const beyondY = ny + DIRS[d][0], beyondX = nx + DIRS[d][1];
+            if (ch !== '-' && ch !== '=' && ch !== '|' && ch !== ':') set(ny, nx, wallChar(ny, nx, d));
+            // through a container's wall: follow the line on the other side
+            if (fits(get(beyondY, beyondX), d) && isWire(beyondY, beyondX)) { y = ny; x = nx; continue; }
+            return;
+          }
+          if (!isWire(ny, nx)) return;
+          if (JOINS.includes(ch)) {
+            const ds = dirsOf(ny, nx);
+            const back = (d + 2) % 4;
+            const others = ds.filter((k) => k !== back);
+            if (ds.length >= 4) { // a crossing: keep the other line, go straight on
+              set(ny, nx, lineChar(ny, nx, d));
+              y = ny; x = nx;
+              continue;
+            }
+            if (ds.length === 3) { // a T: stop; a '+' left on a straight line becomes plain line
+              if (others.length === 2 && (others[0] + 2) % 4 === others[1]) set(ny, nx, lineChar(ny, nx, (others[0] + 1) % 4));
+              return;
+            }
+            set(ny, nx, ' ');
+            if (others.length === 1) { y = ny; x = nx; d = others[0]; continue; } // a corner
+            return;
+          }
+          set(ny, nx, ' ');
+          y = ny; x = nx;
+        }
+      };
+      const start = dirsOf(r, c);
+      if (JOINS.includes(get(r, c)) && start.length > 2) {
+        return { error: 'That is where lines meet: right-click on one of the lines instead' };
+      }
+      set(r, c, ' ');
+      for (const d of start) walk(r, c, d);
+      for (const [y, x, ch] of gone.values()) {
+        while (lines.length <= y) lines.push('');
+        const l = lines[y].padEnd(x + 1);
+        lines[y] = l.slice(0, x) + ch + l.slice(x + 1);
+      }
+      const count = [...gone.values()].filter(([, , ch]) => ch === ' ').length;
+      const out = lines.map((l) => l.replace(/\s+$/, ''));
+      const before = this.textLines(rawText);
+      // Lines at the end that only held the deleted line go too (blank lines already there stay)
+      while (out.length > 1 && out[out.length - 1] === '' && (before[out.length - 1] || '').trim() !== '') out.pop();
+      return { text: out.join('\n'), cursorR: Math.min(r, out.length - 1), cursorC: c, count };
     }
 
     /** Blanks the rectangle (overwrite mode cut / delete): nothing else moves. */
