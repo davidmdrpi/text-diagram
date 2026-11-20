@@ -3120,10 +3120,10 @@
       const walk = (y, x, d) => {
         for (let guard = 0; guard < 100000; guard++) {
           let ny = y + DIRS[d][0], nx = x + DIRS[d][1];
-          // a spaced dashed line ('= = = >'): hop over the gap, from a dash or from its arrowhead
-          const cur = get(y, x), hop = get(ny, nx + DIRS[d][1]);
-          if (horiz(d) && get(ny, nx) === ' ' && hop !== ' ' && '=<>'.includes(cur) && '=<>'.includes(hop) &&
-              (cur === '=' || hop === '=') && isWire(ny, nx + DIRS[d][1])) {
+          // a spaced dashed line ('= = = >'): hop over a gap the parser reads as part of the
+          // line (a plain space between two separate lines is not one)
+          if (horiz(d) && get(ny, nx) === ' ' && isWire(ny, nx) && '=<>'.includes(get(ny, nx + DIRS[d][1])) &&
+              get(ny, nx + DIRS[d][1]) !== ' ' && isWire(ny, nx + DIRS[d][1])) {
             nx += DIRS[d][1];
           }
           const ch = get(ny, nx);

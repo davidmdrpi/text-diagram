@@ -2077,3 +2077,13 @@ test('regression (PR #13 review): a spaced dashed arrow is deleted whole from it
   for (const c of [5, 7, 9, 11]) assert.equal(G.deleteLine(t, 1, c).text, '+---+\n| A |\n+---+', `from column ${c}`);
   assert.equal(G.deleteLine('< = = =', 0, 0).text, '');
 });
+
+test('regression (PR #13 re-review): deleting one of two arrows side by side leaves the other exactly as it was', () => {
+  const G = Grid2DEditor;
+  for (const c of [0, 1, 2]) assert.equal(G.deleteLine('==> ==>', 0, c).text, '    ==>', `first arrow, from column ${c}`);
+  for (const c of [4, 5, 6]) assert.equal(G.deleteLine('==> ==>', 0, c).text, '==>', `second arrow, from column ${c}`);
+  assert.equal(G.deleteLine('--> -->', 0, 0).text, '    -->');
+  assert.equal(G.deleteLine('<== <==', 0, 4).text, '<==');
+  // a real spaced dashed line is still deleted whole, from either end
+  for (const c of [0, 6]) assert.equal(G.deleteLine('= = = >', 0, c).text, '');
+});
