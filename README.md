@@ -7,7 +7,8 @@ ASCII diagrams and see them rendered live as SVG, entirely in the browser.
 
 Download **[text-diagram.html](https://github.com/davidmdrpi/text-diagram/raw/main/text-diagram.html)**
 and open it in any browser. It is a single self-contained file: no install, no server, no other
-files, and it works offline.
+files, and it works offline. It never contacts any server (not even for fonts: it uses the fonts on
+your computer), so nothing you draw, import or export leaves your machine.
 
 ## Usage
 

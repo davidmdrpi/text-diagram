@@ -13,7 +13,10 @@ const FILE = 'file://' + path.join(__dirname, '..', 'text-diagram.html');
 async function openPage() {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  await ctx.route(/^https?:/, (r) => r.abort()); // offline, like a downloaded file
+  // Offline, like a downloaded file; every request the page tries anyway is recorded
+  const requests = [];
+  ctx.on('request', (r) => { if (/^(https?|wss?):/i.test(r.url())) requests.push(r.url()); });
+  await ctx.route(/^https?:/, (r) => r.abort());
   let clip = '';
   await ctx.exposeFunction('__clip', () => clip);
   await ctx.addInitScript(() => {
@@ -23,7 +26,7 @@ async function openPage() {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(FILE);
-  return { browser, page, errors, setClipboard: (t) => { clip = t; } };
+  return { browser, page, errors, requests, setClipboard: (t) => { clip = t; } };
 }
 
 // Pixel position of a text cell, from canvas text metrics (independent of the app's own math)
@@ -959,6 +962,41 @@ test('importing pictures of the busier examples finds most of their boxes and co
       assert.ok(got.boxes >= minBoxes, `${preset}: ${got.boxes} boxes\n${got.text}`);
       assert.ok(got.conns >= minConns, `${preset}: ${got.conns} connections\n${got.text}`);
     }
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('nothing is ever fetched from the network: loading, editing, importing, previewing and exporting', { skip }, async () => {
+  const { browser, page, errors, requests } = await openPage();
+  try {
+    for (const preset of ['arch', 'showcase', 'nested']) await page.selectOption('#preset-select', preset);
+    const svg = await page.evaluate(() => {
+      const p = new window.DitaaEngine.DitaaParser();
+      return p.renderSVG(p.parse(document.getElementById('ascii-editor').value));
+    });
+    // import an SVG and a picture
+    await page.setInputFiles('#import-file', { name: 'd.svg', mimeType: 'image/svg+xml', buffer: Buffer.from(svg) });
+    const png = await page.evaluate(async (markup) => {
+      const img = new Image();
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
+      await img.decode();
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      cv.getContext('2d').drawImage(img, 0, 0);
+      return cv.toDataURL('image/png').split(',')[1];
+    }, svg);
+    await page.setInputFiles('#import-file', { name: 'd.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+    await page.waitForFunction(() => /Box 1/.test(document.getElementById('ascii-editor').value));
+    // preview settings, zoom, exports
+    await page.selectOption('#preset-select', 'flowchart');
+    for (const id of ['#toggle-shadows', '#toggle-grid', '#toggle-light-canvas']) await page.click(id);
+    await page.click('#btn-download-svg');
+    await page.click('#btn-download-png');
+    await page.click('#btn-legacy-modal');
+    await page.waitForTimeout(300);
+    assert.deepEqual(requests, [], 'no request to any host');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
