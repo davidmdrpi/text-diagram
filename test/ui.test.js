@@ -992,10 +992,16 @@ test('nothing is ever fetched from the network: loading, editing, importing, pre
     // preview settings, zoom, exports
     await page.selectOption('#preset-select', 'flowchart');
     for (const id of ['#toggle-shadows', '#toggle-grid', '#toggle-light-canvas']) await page.click(id);
-    await page.click('#btn-download-svg');
-    await page.click('#btn-download-png');
+    // each export finishes (its download is complete) before the requests are checked
+    for (const [id, ext] of [['#btn-download-svg', '.svg'], ['#btn-download-png', '.png']]) {
+      const [download] = await Promise.all([page.waitForEvent('download'), page.click(id)]);
+      assert.ok(download.suggestedFilename().endsWith(ext), download.suggestedFilename());
+      assert.ok(await download.path(), `${ext} download completed`);
+      assert.equal(await download.failure(), null);
+    }
     await page.click('#btn-legacy-modal');
-    await page.waitForTimeout(300);
+    await page.locator('#legacy-modal').waitFor({ state: 'visible' });
+    assert.ok((await page.textContent('#legacy-ascii-output')).trim().length > 0, 'the strict ditaa export is shown');
     assert.deepEqual(requests, [], 'no request to any host');
     assert.deepEqual(errors, []);
   } finally {
