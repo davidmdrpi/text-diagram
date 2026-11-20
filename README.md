@@ -7,7 +7,8 @@ ASCII diagrams and see them rendered live as SVG, entirely in the browser.
 
 Download **[text-diagram.html](https://github.com/davidmdrpi/text-diagram/raw/main/text-diagram.html)**
 and open it in any browser. It is a single self-contained file: no install, no server, no other
-files, and it works offline.
+files, and it works offline. It never contacts any server (not even for fonts: it uses the fonts on
+your computer), so nothing you draw, import or export leaves your machine.
 
 ## Usage
 
@@ -63,11 +64,10 @@ of the editor scrolls it (faster the further out you go), and Shift+Arrows keep 
 in view, so a block can reach parts of the diagram that didn't fit. Alt+drag selects lines the usual way (with block mode off it's the other
 way round). Right-click also offers *Select box*, *Select row* and *Select column*.
 
-A block that reaches past the end of the diagram's longest line from its left edge (Shift+End,
-or drag past the text) is **whole rows**; one that reaches past the diagram's last line from its
-top (the legend lines below don't count) is **whole columns**; *Select row* / *Select column*
-pick those directly. Anything else, including *Select box* on a box that happens to span the
-whole diagram, is a rectangle. The status bar says which (`2 rows`, `1 column`, `13×49 block`).
+*Select row* / *Select column* (or, with the keyboard, Shift+End past the longest line from the
+left edge, or Shift+Down past the last line from the top) select **whole rows** / **whole
+columns**. A mouse drag is always a rectangle, even if it goes past the text, and so is *Select
+box*. The status bar says which (`2 rows`, `1 column`, `13×49 block`).
 Rows and columns make room while keeping
 everything joined up: copy a row that vertical lines run through and paste it, and every one of
 them gets a line longer; copy a column that the arrows cross and paste it, and they all stretch.
@@ -158,6 +158,23 @@ dashed `┄┄`, and arrowhead `─▸` or plain line.
 Every toolbar button explains itself on hover (nothing pops up over the drawing: errors show
 in red in the status line under the editor, other messages in the status line under the preview). Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
 
+**Import** (top bar, or drop the file on the editor, or paste it): turns a drawing of boxes and
+arrows into ditaa text, replacing the editor text (Ctrl+Z undoes it).
+
+- **SVG** (from this tool, draw.io and other drawing tools): boxes (`rect`, closed paths and
+  polygons, ellipses), diamonds become `{c}`, cylinders `{s}`, rounded and dashed boxes keep their
+  look, fill colors become color tags, text goes into the box it's in (several lines too; HTML
+  text in `foreignObject` as well), lines are read from `line` / `polyline` / `path` (their
+  horizontal and vertical pieces) and arrowheads from markers or small filled triangles. Our own
+  exported SVGs come back as the same boxes, labels and connections, legend macros included.
+- **PNG / JPEG pictures**: boxes (also rounded ones and cylinders), their fill colors, solid and
+  dashed lines and arrowheads are found from the pixels. Text in a picture can't be read, so a box
+  with writing in it gets a placeholder label (*Box 1*, *Box 2*…) to type over. Shapes other than
+  boxes and cylinders (diamonds, slanted shapes) aren't recognised in pictures.
+
+The drawing's positions are mapped onto the character grid in order, keeping its proportions but
+always leaving room for each box's label and each line.
+
 Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax
 below into plain ditaa that the Java renderer accepts.
 
@@ -200,8 +217,10 @@ Standard ditaa, plus a few extensions:
 text-diagram.html  single-file build for end users (generated, committed)
 index.html         UI shell for development (Tailwind via CDN)
 src/engine.js      parser, SVG renderer, legacy exporter, 2D grid editor (no DOM; runs in Node)
+src/import.js      import: SVG and pictures of boxes and arrows -> ditaa text (no DOM; runs in Node)
 src/app.js         UI controller and preset diagrams
 build.js           inlines src/ and compiled Tailwind CSS into text-diagram.html
+test/fixtures/     an SVG from another tool, and a tiny rasterizer for picture-import tests
 test/              node:test suite
 ```
 

@@ -5,17 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>text-diagram Studio</title>
   <script src="https://cdn.tailwindcss.com/3.4.16"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
   <script>
     if (window.tailwind) tailwind.config = {
       darkMode: 'class',
       theme: {
         extend: {
           fontFamily: {
-            sans: ['Inter', 'system-ui', 'sans-serif'],
-            mono: ['JetBrains Mono', 'monospace'],
+            // local fonts only (nothing is downloaded): Inter / JetBrains Mono if installed
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono', 'monospace'],
           }
         }
       }
@@ -68,6 +66,11 @@
 
       <div class="h-4 w-px bg-slate-800 mx-0.5"></div>
 
+      <button id="btn-import" class="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-md transition bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700" title="Import a diagram from an SVG, or a PNG / JPEG picture of boxes and arrows: it is turned into ditaa text (replaces the editor text; Ctrl+Z to undo). You can also drop the file on the editor, or paste a picture">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+        Import
+      </button>
+      <input id="import-file" type="file" class="hidden" accept=".svg,.png,.jpg,.jpeg,.webp,.gif,image/svg+xml,image/png,image/jpeg,image/webp,image/gif" />
       <button id="btn-legacy-modal" class="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-md transition bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30" title="Export strict ditaa for the Java renderer: inline border arrows are moved onto the adjacent wire so every box is closed">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
         Export ditaa
@@ -251,6 +254,7 @@
   </div>
 
   <script src="src/engine.js"></script>
+  <script src="src/import.js"></script>
   <script src="src/app.js"></script>
 </body>
 </html>
