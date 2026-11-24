@@ -239,6 +239,26 @@ inline-arrow example, or the `+^+` button, turns it on.
 
   Other lines starting with `#` are comments and are not drawn.
 
+### Text: characters to avoid in labels
+
+ditaa decides what is drawing and what is text one character at a time, so some characters in a
+label or note are drawn instead of printed:
+
+| In your text | What ditaa does with it |
+| --- | --- |
+| `-` `=` `\|` `:` | always part of a line, even inside a word: `client-side` gets a short line through it, `a \| b` a line segment, `ratio: 2` a dash mark |
+| `<` `>` `^` | always an arrowhead (`x > y`, `x^2`) |
+| `v` `V` | an arrowhead when a `\|` or `:` is directly above it |
+| `+` `/` `\` | a corner or junction when they touch a line or another corner |
+| `*` | a point marker on a line, or a bullet before text (as is `o`: ` o item`) |
+| `cRED`, `cF00`… and `{c}`, `{s}`… | a color code or shape tag inside a box, not printed |
+
+So in text meant for ditaa, write around them: `client side`, `to` or `→` instead of `->`, `x` or
+`×` instead of `*`, and so on (a non-ASCII character such as `→` or `–` is printed as it is). The
+editor's preview is more forgiving here (it keeps a hyphen between two letters as text, for
+instance), so it won't warn you about all of these; **Export ditaa** reports `<` `>` `^` in a box's
+text.
+
 ## Layout
 
 ```
