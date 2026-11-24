@@ -267,8 +267,7 @@ test('connection: right-click start, then click or right-click a wall to connect
     await rc(5, 3);
     await page.locator('#ctx-menu button', { hasText: 'Connect to here (dashed)' }).click();
     const lines = (await text()).split('\n');
-    assert.equal(lines[3][3], ':');
-    assert.equal(lines[4][3], ':', 'dashed vertical, no arrowhead');
+    assert.deepEqual([lines[3][3], lines[4][3]].sort(), [':', '|'], 'dashed vertical the plain-ditaa way (: and |), no arrowhead');
     // 4. off any wall: a connection can end in empty space (and start on a line)
     await rc(6, 8);
     await page.locator('#ctx-menu button', { hasText: 'Start connection here' }).click();
@@ -279,7 +278,7 @@ test('connection: right-click start, then click or right-click a wall to connect
     await page.mouse.click(free.x, free.y);
     assert.equal(await page.textContent('#conn-status'), '');
     let ls = (await text()).split('\n');
-    assert.equal(ls[6].slice(8, 12), '+===', 'starts on C\'s wall');
+    assert.equal(ls[6].slice(8, 12), '+-=-', 'starts on C\'s wall (dashed: - and =)');
     assert.match(ls[4][22], /[=:+]/, 'ends right on the empty cell clicked');
     // ...a start in empty space, then a click on plain text: cancelled, with a message
     await page.evaluate(() => {
@@ -1003,6 +1002,30 @@ test('nothing is ever fetched from the network: loading, editing, importing, pre
     await page.locator('#legacy-modal').waitFor({ state: 'visible' });
     assert.ok((await page.textContent('#legacy-ascii-output')).trim().length > 0, 'the strict ditaa export is shown');
     assert.deepEqual(requests, [], 'no request to any host');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Extensions are off by default; the inline-arrow example and the +^+ button turn them on', { skip }, async () => {
+  const { browser, page, errors } = await openPage();
+  try {
+    assert.equal(await page.isChecked('#toggle-extensions'), false, 'plain ditaa by default');
+    // the default example is plain ditaa: every box is drawn
+    const shown = () => page.locator('#svg-wrapper .ditaa-box').count();
+    assert.equal(await shown(), 7);
+    await page.selectOption('#preset-select', 'legacy_comparison');
+    assert.equal(await page.isChecked('#toggle-extensions'), true);
+    assert.equal(await shown(), 4);
+    await page.uncheck('#toggle-extensions');
+    assert.ok(await shown() < 4, 'without them, boxes with arrows on their borders are not boxes');
+    await page.selectOption('#preset-select', 'nested');
+    assert.equal(await page.isChecked('#toggle-extensions'), false);
+    const p = await cellXY(page, 4, 30);
+    await page.mouse.click(p.x, p.y); // in App Service
+    await page.click('#stamp-inline-up');
+    assert.equal(await page.isChecked('#toggle-extensions'), true);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

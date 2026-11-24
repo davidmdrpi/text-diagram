@@ -153,7 +153,9 @@ The line is routed with horizontal and vertical segments, leaving and entering t
 angles, around boxes and text. Where it has to cross a container's wall, or another line, the
 crossing becomes a `+`. If the exact end cell can't be reached cleanly, the nearest cell on the
 same wall that can is used. Two toolbar toggles set the style for every connection: solid `──` or
-dashed `┄┄`, and arrowhead `─▸` or plain line.
+dashed `┄┄`, and arrowhead `─▸` or plain line. Everything drawn is plain ditaa: a dashed line
+alternates `-=-=` (or `|:|:`), and an arrowhead always has a shaft (boxes one character apart have
+no room for an arrow, only a plain line).
 
 Every toolbar button explains itself on hover (nothing pops up over the drawing: errors show
 in red in the status line under the editor, other messages in the status line under the preview). Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
@@ -175,14 +177,27 @@ arrows into ditaa text, replacing the editor text (Ctrl+Z undoes it).
 The drawing's positions are mapped onto the character grid in order, keeping its proportions but
 always leaving room for each box's label and each line.
 
-Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax
-below into plain ditaa that the Java renderer accepts.
+Exports: SVG, 2× PNG, and **Export ditaa**, which rewrites the extensions below into plain ditaa
+that the Java renderer accepts: inline border arrows move onto their wire, spaced dashes are
+filled in, runs of only `=` or `:` alternate with `-` or `|`, and an arrowhead without a shaft gets
+one (a line or column is made for it). Text is never changed.
 
 ## Syntax
 
-Standard ditaa, plus a few extensions:
+**Plain ditaa by default**: the preview reads the text exactly as the ditaa renderer will, so what you
+see is what you'll get. In particular:
 
-- **Boxes**: `+--+` corners, `/--\` and `\--/` rounded corners; `=` or `:` in a wall, or `{*}`, makes it dashed.
+- a dashed line is a line with `=` (horizontal) or `:` (vertical) in it, like `---=--->` or a `:`
+  among `|`s; a run of nothing but `=` (or `:`) isn't a line at all, it's text;
+- an arrowhead needs a shaft: at least one `-` (or `|`) behind it, so a lone `v` between two boxes
+  isn't an arrow.
+
+The **Extensions** checkbox above the preview (off by default) also reads this editor's own
+additions, marked *(extension)* below; *Export ditaa* turns them into plain ditaa. Choosing the
+inline-arrow example, or the `+^+` button, turns it on.
+
+- **Boxes**: `+--+` corners, `/--\` and `\--/` rounded corners; `=` or `:` in a wall makes it dashed
+  (`{*}` too, an extension).
 - **Shapes**: `{c}` decision diamond, `{s}` storage, `{d}` document, `{io}` parallelogram, `{mo}` trapezoid, `{o}` pill.
 - **Decision diamonds** (`{c}`, as in ditaa 0.9+, PlantUML and Asciidoctor Diagram): draw an ordinary box with
   `{c}` inside. Put `+` ports at the centre of each wall and they become the diamond's four vertices, so
@@ -200,7 +215,9 @@ Standard ditaa, plus a few extensions:
                  v
   ```
 - **Colors**: `cBLU cGRE cYEL cRED cPNK cBLK`, `c#RRGGBB`, ditaa-style `cRGB` (uppercase hex).
-- **Wires**: `-` `|` solid, `=` `:` dashed, spaced `= = = >` dashed, `*` junction dot, `< > ^ v` arrowheads.
+- **Wires**: `-` `|` solid, a `=` or `:` among them makes the line dashed, `*` junction dot, `< > ^ v`
+  arrowheads (with a shaft). Extensions: spaced `= = = >` dashes, lines of only `=` or `:`, and
+  arrowheads without a shaft.
 - **Inline border arrows** (extension): an arrowhead can sit directly on a box wall, e.g. `+---^---+`, saving a row.
 - **Nested boxes**: a box containing other boxes is a container; its text and wires render normally.
 - **Legend macros** (extension): a small box labelled `[D]` expands to the text defined by a legend line:

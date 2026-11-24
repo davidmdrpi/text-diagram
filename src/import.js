@@ -441,7 +441,9 @@
           }
         }
         const w = x2 - x1 + 1, h = y2 - y1 + 1;
-        if (h >= 4 && h <= 22 && w <= 48) {
+        // (a piece 3 pixels thin or less is a dash or a line, not a letter: a vertical
+        // dashed line's dashes would otherwise look like letters such as 'l')
+        if (h >= 4 && h <= 22 && w <= 48 && w > 3) {
           let longest = 0;
           for (let y = y1; y <= y2; y++) {
             let run = 0;
@@ -823,7 +825,8 @@
     }
     for (const s of segs) {
       xs.push(s.x1, s.x2); ys.push(s.y1, s.y2);
-      if (s.y1 === s.y2) xNeeds.push([s.x1, s.x2, 3]); else yNeeds.push([s.y1, s.y2, 2]);
+      // (room for at least a shaft and an arrowhead between two walls)
+      if (s.y1 === s.y2) xNeeds.push([s.x1, s.x2, 3]); else yNeeds.push([s.y1, s.y2, 3]);
     }
     for (const t of free) {
       const len = t.text.length * t.size * 0.6;
@@ -855,9 +858,10 @@
     // outer boxes first, so inner ones draw over them
     for (const p of placed.slice().sort((p, q) => area(q.b) - area(p.b))) {
       const { b, r1, r2, c1, c2 } = p;
-      const hz = b.dashed ? '=' : '-', vt = b.dashed ? ':' : '|';
-      for (let c = c1 + 1; c < c2; c++) { put(r1, c, hz); put(r2, c, hz); }
-      for (let r = r1 + 1; r < r2; r++) { put(r, c1, vt); put(r, c2, vt); for (let c = c1 + 1; c < c2; c++) put(r, c, ' '); }
+      // (a dashed wall alternates '-=' / '|:': plain ditaa needs both in a dashed line)
+      const hz = (c) => (b.dashed && c % 2 ? '=' : '-'), vt = (r) => (b.dashed && r % 2 ? ':' : '|');
+      for (let c = c1 + 1; c < c2; c++) { put(r1, c, hz(c)); put(r2, c, hz(c)); }
+      for (let r = r1 + 1; r < r2; r++) { put(r, c1, vt(r)); put(r, c2, vt(r)); for (let c = c1 + 1; c < c2; c++) put(r, c, ' '); }
       const corner = b.rounded ? ['/', '\\', '\\', '/'] : ['+', '+', '+', '+'];
       put(r1, c1, corner[0]); put(r1, c2, corner[1]); put(r2, c1, corner[2]); put(r2, c2, corner[3]);
     }
@@ -906,7 +910,7 @@
     for (const v of dirs.values()) {
       if (get(v.r, v.c) !== ' ') continue; // never over a box or its label
       const h = v.bits & 10, vv = v.bits & 5;
-      put(v.r, v.c, h && vv ? '+' : h ? (v.dashed ? '=' : '-') : (v.dashed ? ':' : '|'));
+      put(v.r, v.c, h && vv ? '+' : h ? (v.dashed && v.c % 2 ? '=' : '-') : (v.dashed && v.r % 2 ? ':' : '|'));
     }
     // arrowheads: on the line end nearest each head, pointing its way
     const HEAD = { up: '^', down: 'v', left: '<', right: '>' };

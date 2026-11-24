@@ -3,9 +3,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DitaaParser, Grid2DEditor } = require('../src/engine.js');
 
-const parse = (text, opts) => new DitaaParser(opts).parse(text);
+// Most tests are about the editor, which reads extensions too; plain-ditaa tests say so
+const LENIENT = { extensions: true };
+const parse = (text, opts) => new DitaaParser({ ...LENIENT, ...opts }).parse(text);
 const render = (text, opts) => {
-  const p = new DitaaParser(opts);
+  const p = new DitaaParser({ ...LENIENT, ...opts });
   return p.renderSVG(p.parse(text));
 };
 
@@ -173,9 +175,11 @@ test('legacy export moves inline arrows onto the adjacent wire cell', () => {
   const text = '+----^----+\n| Node    |\n+---------+';
   const flipped = '+---------+\n| Node    |\n+----^----+\n     |\n     +--';
   const res = DitaaParser.exportStrictLegacyDitaa(flipped);
-  assert.equal(res.sanitizedText, '+---------+\n| Node    |\n+----+----+\n     ^\n     +--');
+  // (plain ditaa needs a shaft behind the arrowhead: a line is made for it)
+  assert.equal(res.sanitizedText, '+---------+\n| Node    |\n+----+----+\n     ^\n     |\n     +--');
   assert.equal(res.healedArrowsCount, 1);
-  assert.equal(res.insertedRowsCount, 0);
+  assert.equal(res.shaftsAdded, 1);
+  assert.equal(res.insertedRowsCount, 1);
   // no wire attached → untouched
   assert.equal(DitaaParser.exportStrictLegacyDitaa(text).healedArrowsCount, 0);
 });
@@ -189,9 +193,10 @@ test('legacy export inserts a spacer row when the neighbour is a corner, without
   ].join('\n');
   const res = DitaaParser.exportStrictLegacyDitaa(text);
   const lines = res.sanitizedText.split('\n');
-  assert.equal(res.insertedRowsCount, 1);
+  assert.equal(res.insertedRowsCount, 2, 'one for the arrowhead, one for its shaft');
   assert.equal(lines[2], '+--+--+   |   |');
   assert.equal(lines[3], '   ^      |   |');
+  assert.equal(lines[4], '   |      |   |');
   // Box B is still closed after the insertion
   const ast = parse(res.sanitizedText, { healInlineArrows: false });
   assert.ok(ast.boxes.some((b) => b.lines[0] === 'B'));
@@ -233,7 +238,7 @@ const DIAMOND = [
 ].join('\n');
 
 test('{c} is parsed as a choice diamond and rendered as a polygon through the wall centres', () => {
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(DIAMOND);
   assert.equal(ast.boxes.length, 1);
   const b = ast.boxes[0];
@@ -244,7 +249,7 @@ test('{c} is parsed as a choice diamond and rendered as a polygon through the wa
 });
 
 test('wires attached to the centre ports end exactly on the diamond vertices', () => {
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(DIAMOND);
   const { x, y, w, h, cx, cy } = p.boxGeom(ast.boxes[0]);
   const horiz = ast.wires.filter((wi) => wi.y1 === wi.y2);
@@ -265,7 +270,7 @@ test('a wire hitting a diamond off-centre is clipped to the slanted edge', () =>
     '    |               |',
     '    +-------+-------+'
   ].join('\n');
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(text);
   const { x, cx } = p.boxGeom(ast.boxes[0]);
   const a = ast.arrows.find((ar) => ar.dir === '>');
@@ -294,7 +299,7 @@ test('diamondTemplate has odd dimensions with ports at the wall centres', () => 
 
 test('stamping a diamond on an arrow tip puts the arrow on the left vertex', () => {
   const res = Grid2DEditor.smartStampBox('\n\n------>', 2, 7, Grid2DEditor.diamondTemplate('Ok?'));
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(res.text);
   assert.equal(ast.boxes[0].shape, 'choice');
   assert.equal(ast.arrows[0].tipX, p.boxGeom(ast.boxes[0]).x);
@@ -308,7 +313,7 @@ test('resizing a diamond keeps ports on the vertices and wires attached, and rou
     const res = Grid2DEditor.resizeBox(text, box, dw, dh);
     assert.ok(!res.error, res.error);
     text = res.text;
-    const p = new DitaaParser();
+    const p = new DitaaParser(LENIENT);
     const ast = p.parse(text);
     const b = ast.boxes[0];
     assert.equal((b.c2 - b.c1) % 2, 0, 'odd width');
@@ -358,7 +363,7 @@ test('legacy export keeps {c} (supported by ditaa 0.9+)', () => {
 });
 
 test('stamping a diamond on an arrow near the top adds rows so the arrow still hits the vertex', () => {
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const res = Grid2DEditor.smartStampBox('------>', 0, 7, Grid2DEditor.diamondTemplate('Ok?'));
   const ast = p.parse(res.text);
   const b = ast.boxes[0];
@@ -395,7 +400,7 @@ test('regression (PR #3 review): widening a diamond never splits another box lab
 
 test('regression (PR #3 review): arrows near a diamond corner end on the slanted edge', () => {
   const text = ' |\n v\n' + Grid2DEditor.diamondTemplate('OK?').join('\n');
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(text);
   const { cx, cy, w, h } = p.boxGeom(ast.boxes[0]);
   const ax = 1.5 * p.cellW;
@@ -634,7 +639,7 @@ test('typing in a diamond keeps it a diamond: ports on vertices, text centred, o
   const k = text.split('\n')[2].indexOf('?');
   let res = type(text, 2, k, { type: 'insert', text: ' really long question' });
   const check = (t) => {
-    const p = new DitaaParser();
+    const p = new DitaaParser(LENIENT);
     const ast = p.parse(t);
     const b = ast.boxes[0];
     assert.equal(b.shape, 'choice');
@@ -918,7 +923,7 @@ test('insertShapeAt only uses empty space', () => {
 
 // Which boxes each wire connects, by label: endpoint identity, not just counts
 const connectionsByLabel = (text, rename = {}) => {
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(text);
   const name = (b) => { const n = b.lines[0] || b.macroKey || '?'; return rename[n] || n; };
   return p.connections(ast).map((ids) => ids.map((i) => name(ast.boxes[i])).sort().join(' – ')).sort();
@@ -1008,7 +1013,7 @@ test('inserting below a box moves boxes that straddle the line down whole instea
   }
   // [D] -> new box -> [A]: the existing connection is spliced, not broken
   const conn = (t) => {
-    const p = new DitaaParser();
+    const p = new DitaaParser(LENIENT);
     const ast = p.parse(t);
     return p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].macroKey || ast.boxes[i].lines[0]).sort().join('-')).sort();
   };
@@ -1040,7 +1045,7 @@ test('inserting right of the top-left box of the pipeline example splices into i
   assert.ok(!res.error, res.error);
   // Attached on the line the existing wire leaves from, not the middle line
   assert.ok(res.text.split('\n')[2].startsWith('|    cBLU           +--->|  Component  +'));
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(res.text);
   const conn = p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].lines[0] || ast.boxes[i].macroKey).sort().join(' – '));
   assert.ok(conn.includes('API Gateway – Component'));
@@ -1091,7 +1096,7 @@ test('a right-click near a nested box picks it; inserting left/above inside a co
   for (const b of ast.boxes.filter((x) => !x.isContainer)) {
     assert.ok(b.r1 > cluster.r1 && b.r2 < cluster.r2 && b.c1 > cluster.c1 && b.c2 < cluster.c2, `${b.lines[0]} stays inside Cluster`);
   }
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const conn = p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].lines[0]).sort().join(' – ')).sort();
   assert.deepEqual(conn, ['App Service – Database', 'App Service – Ingress', 'Component – Ingress', 'Component – Ingress']);
 });
@@ -1112,7 +1117,7 @@ const READ_NEXT = [
 
 const geom = (t) => Object.fromEntries(parse(t).boxes.map((b) => [b.lines[0], [b.r1, b.c1, b.r2, b.c2]]));
 const wiring = (t, rename = {}) => {
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(t);
   return p.connections(ast).map((ids) => ids.map((i) => rename[ast.boxes[i].lines[0]] || ast.boxes[i].lines[0]).sort().join(' – ')).sort();
 };
@@ -1184,7 +1189,7 @@ test('regression (PR #8 review): Enter in [Q] and [S] of the pipeline example su
   const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
   const { arch } = new Function(presetSrc + '\nreturn PRESETS;')();
   const byKey = (t) => {
-    const p = new DitaaParser();
+    const p = new DitaaParser(LENIENT);
     const ast = p.parse(t);
     return p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].macroKey || ast.boxes[i].lines[0]).sort().join(' – ')).sort();
   };
@@ -1208,7 +1213,7 @@ test('Enter at the end of the first line of every box in every preset succeeds a
   const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
   const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
   const sig = (t) => {
-    const p = new DitaaParser();
+    const p = new DitaaParser(LENIENT);
     const ast = p.parse(t);
     const name = (b) => JSON.stringify([b.lines, b.macroKey, b.colorKey, b.shape]);
     return p.connections(ast).map((ids) => ids.map((i) => name(ast.boxes[i])).sort().join(' – ')).sort();
@@ -1381,7 +1386,7 @@ test('regression (PR #9 review): a new route never joins an unrelated line by to
     '            | A ++',
     '            +---+'
   ].join('\n');
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const boxes = p.parse(t).boxes;
   const C = boxes.find((b) => b.lines[0] === 'C');
   const D = boxes.find((b) => b.lines[0] === 'D');
@@ -1401,7 +1406,7 @@ test('moving boxes in the examples keeps every connection (typed ASCII arrows ar
   const PRESETS = new Function(presetSrc + '\nreturn PRESETS;')();
   const nm = (b) => b.macroKey || b.lines[0];
   const byName = (t) => {
-    const p = new DitaaParser();
+    const p = new DitaaParser(LENIENT);
     const ast = p.parse(t);
     return p.connections(ast).map((ids) => ids.map((i) => nm(ast.boxes[i])).sort().join(' – ')).sort();
   };
@@ -1541,7 +1546,7 @@ test('a connection from an arrowhead continues the arrow; one can end in empty s
   assert.ok(!res.error, res.error);
   assert.equal(res.text.split('\n')[1], '| A +----------->', 'the old arrowhead becomes line; the new one is at the end');
   const dashed = Grid2DEditor.connectTo(t, { r: 1, c: 10 }, 1, 16, { arrow: false, dashed: true });
-  assert.equal(dashed.text.split('\n')[1], '| A +------======', 'the old line keeps its style');
+  assert.equal(dashed.text.split('\n')[1], '| A +-------=-=-=', 'the old arrowhead becomes line; the new line is dashed the plain-ditaa way');
 });
 
 test('connection ends: text is refused; a click inside a box or next to it goes to the wall', () => {
@@ -1737,7 +1742,7 @@ test('right-click insert in overwrite mode draws over a container wall instead o
 /* ---------------- PR #11 review ---------------- */
 
 const conns = (t) => {
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse(t);
   return p.connections(ast).map((ids) => ids.map((i) => ast.boxes[i].lines[0] || 'container').sort().join('–')).sort();
 };
@@ -1872,8 +1877,12 @@ test('moving a block moves its characters together; lines attached behind it str
   const v = '+---+\n| A |\n+-+-+\n  |\n  v\n+-+-+\n| B |\n+---+';
   const B2 = { r1: 5, c1: 0, r2: 7, c2: 4 };
   assert.deepEqual(G.moveBlock(v, B2, 1, 0).text.split('\n').slice(3, 6), ['  |', '  |', '  v']);
-  assert.deepEqual(G.moveBlock(v, B2, -1, 0).text.split('\n').slice(3, 4), ['  v']);
-  for (const [dr, dc] of [[1, 0], [-1, 0]]) assert.equal(conns(G.moveBlock(v, B2, dr, dc).text).join(), 'A–B');
+  // moving into it would leave a bare 'v' (plain ditaa needs a shaft): INS refuses, OVR writes over
+  assert.match(G.moveBlock(v, B2, -1, 0).error, /in the way above/);
+  assert.equal(conns(G.moveBlock(v, B2, 1, 0).text).join(), 'A–B');
+  // a longer arrow is shortened, keeping its shaft
+  const v3 = '+---+\n| A |\n+-+-+\n  |\n  |\n  v\n+-+-+\n| B |\n+---+';
+  assert.deepEqual(G.moveBlock(v3, { r1: 6, c1: 0, r2: 8, c2: 4 }, -1, 0).text.split('\n').slice(3, 5), ['  |', '  v']);
   // At the top / left edge there is nowhere to go
   assert.match(G.moveBlock(t, A, 0, -1).error, /left edge/);
   assert.match(G.moveBlock(t, A, -1, 0).error, /top/);
@@ -2040,7 +2049,7 @@ test('dragging a block: placed on empty space; on something, OVR writes over it 
 });
 
 test('the preview can show several boxes selected (a block selection)', () => {
-  const p = new DitaaParser();
+  const p = new DitaaParser(LENIENT);
   const ast = p.parse('+---+ +---+ +---+\n| A | | B | | C |\n+---+ +---+ +---+');
   const marks = (svg) => (svg.match(/stroke="#6366f1" stroke-width="2.5" stroke-dasharray="4,2"/g) || []).length;
   assert.equal(marks(p.renderSVG(ast, 1)), 1);
@@ -2086,4 +2095,111 @@ test('regression (PR #13 re-review): deleting one of two arrows side by side lea
   assert.equal(G.deleteLine('<== <==', 0, 4).text, '<==');
   // a real spaced dashed line is still deleted whole, from either end
   for (const c of [0, 6]) assert.equal(G.deleteLine('= = = >', 0, c).text, '');
+});
+
+/* ---------------- Plain ditaa by default ---------------- */
+
+const STRICT = new DitaaParser();
+const strictRoles = (t) => STRICT.parse(t).cellRole.map((row) => row.map((x) => (x.startsWith('wire') ? 'w' : x === 'empty' ? '.' : x[4])).join('')).join('/');
+const presetsAll = () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/app.js'), 'utf8');
+  const presetSrc = src.slice(src.indexOf('const PRESETS = {'), src.indexOf('};', src.indexOf('const PRESETS = {')) + 2);
+  return new Function(presetSrc + '\nreturn PRESETS;')();
+};
+
+test('plain ditaa by default: a dashed line needs - (or |) as well as = (or :), and an arrowhead needs a shaft', () => {
+  assert.equal(new DitaaParser().extensions, false);
+  assert.equal(new DitaaParser().healInlineArrows, false, 'inline border arrows are never on by default');
+  // horizontal
+  assert.equal(strictRoles('====='), '.....', '===== is text');
+  assert.equal(strictRoles('--=--'), 'wwwww');
+  assert.equal(STRICT.parse('--=--').wires[0].dashed, true);
+  assert.equal(strictRoles('x = = = > y'), '...........', 'spaced dashes are an extension');
+  // vertical
+  assert.equal(strictRoles(' :\n :\n v'), '../../..', 'a column of : is text, and so is the v under it');
+  assert.equal(strictRoles(' :\n |\n v'), '.w/.w/.w');
+  assert.equal(STRICT.parse(' :\n |\n v').wires[0].dashed, true);
+  // arrowheads need a shaft
+  const oneCell = '+---+\n| A |\n+-+-+\n  v\n+-+-+\n| B |\n+---+';
+  assert.equal(STRICT.parse(oneCell).arrows.length, 0, 'a bare v is not an arrow');
+  assert.equal(STRICT.connections(STRICT.parse(oneCell)).length, 0);
+  const shafted = '+---+\n| A |\n+-+-+\n  |\n  v\n+-+-+\n| B |\n+---+';
+  assert.equal(STRICT.parse(shafted).arrows.length, 1);
+  assert.equal(STRICT.connections(STRICT.parse(shafted)).length, 1);
+  assert.equal(STRICT.parse('+---+ +---+\n| A |>| B |\n+---+ +---+').arrows.length, 0);
+  assert.equal(STRICT.parse('-->').arrows.length, 1);
+  // inline border arrows break the box in plain ditaa
+  assert.equal(STRICT.parse('+---+\n| A |\n+-^-+\n  |').boxes.length, 0);
+  // ...and with the extensions on, all of it reads as before
+  const X = new DitaaParser({ extensions: true });
+  assert.equal(X.parse('=====').wires.length, 1);
+  assert.equal(X.parse(oneCell).arrows.length, 1);
+  assert.equal(X.parse('+---+\n| A |\n+-^-+\n  |').boxes.length, 1);
+});
+
+test('the examples are plain ditaa (except the inline-arrow one): strict and lenient readings agree', () => {
+  const X = new DitaaParser({ extensions: true });
+  for (const [k, text] of Object.entries(presetsAll())) {
+    if (k === 'legacy_comparison') continue;
+    const a = STRICT.parse(text), b = X.parse(text);
+    assert.equal(a.boxes.length, b.boxes.length, `${k}: boxes`);
+    assert.equal(STRICT.connections(a).length, X.connections(b).length, `${k}: connections`);
+    assert.equal(a.arrows.length, b.arrows.length, `${k}: arrowheads`);
+    assert.equal(a.wires.filter((w) => w.dashed).length, b.wires.filter((w) => w.dashed).length, `${k}: dashed lines`);
+    assert.ok(!/= =/.test(text) && !/\{\*\}/.test(text) && !/[-+][\^v][-+]/.test(text), `${k}: no extension syntax`);
+  }
+});
+
+test('what the editor draws is plain ditaa: dashed connections and stamps alternate, arrows always have a shaft', () => {
+  const G = Grid2DEditor;
+  // a dashed connection
+  const t = '+---+          +---+\n| A |          | B |\n+---+          +---+';
+  const start = G.placePort(t, { box: parse(t).boxes[0], sides: ['right'] }, 1, 4);
+  const res = G.connectPorts(start.text, start.port, { r: 1, c: 15 }, { dashed: true, arrow: true });
+  const row = res.text.split('\n')[1].slice(5, 15);
+  assert.ok(row.includes('-') && row.includes('=') && row.endsWith('>'), row);
+  assert.equal(STRICT.connections(STRICT.parse(res.text)).length, 1);
+  assert.equal(STRICT.parse(res.text).wires[0].dashed, true);
+  // a vertical dashed one
+  const v = '+---+\n| A |\n+---+\n\n\n\n+---+\n| B |\n+---+';
+  const sv = G.placePort(v, { box: parse(v).boxes[0], sides: ['below'] }, 2, 2);
+  const rv = G.connectPorts(sv.text, sv.port, { r: 6, c: 2 }, { dashed: true, arrow: true });
+  const col = rv.text.split('\n').slice(3, 6).map((l) => l[2]).join('');
+  assert.ok(col.includes(':') && col.includes('|') && col.endsWith('v'), col);
+  // the arrowhead always has a shaft: one cell apart there is no room for an arrow
+  const close = '+---+ +---+\n| A | | B |\n+---+ +---+';
+  const sc = G.placePort(close, { box: parse(close).boxes[0], sides: ['right'] }, 1, 4);
+  assert.match(G.connectPorts(sc.text, sc.port, { r: 1, c: 6 }, { arrow: true }).error, /No route/);
+  assert.equal(G.connectPorts(sc.text, sc.port, { r: 1, c: 6 }, { arrow: false }).text.split('\n')[1], '| A +-+ B |');
+  // a route that turns right before the end still has a straight shaft into it
+  const turn = '+---+\n| A |\n+---+\n\n        +---+\n        | B |\n        +---+';
+  const st = G.placePort(turn, { box: parse(turn).boxes[0], sides: ['right'] }, 1, 4);
+  const rt = G.connectPorts(st.text, st.port, { r: 4, c: 10 }, { arrow: true });
+  assert.equal(STRICT.connections(STRICT.parse(rt.text)).length, 1, rt.text);
+  // the dashed stamp arrow
+  const stamp = G.smartStampArrow('', 0, 0, null, 'dashed-right').text;
+  assert.ok(stamp.includes('-') && stamp.includes('=') && stamp.endsWith('>'), stamp);
+  assert.equal(STRICT.parse(stamp).arrows.length, 1);
+});
+
+test('Export ditaa makes the extensions plain ditaa: dashes, : columns, spaced dashes, bare arrowheads, inline arrows', () => {
+  const ex = (t) => DitaaParser.exportStrictLegacyDitaa(t).sanitizedText;
+  assert.equal(ex('A =====> B'), 'A -=-=-> B');
+  assert.equal(ex('x = = = > y'), 'x =-=-=-> y');
+  assert.equal(ex('  :\n  :\n  v'), '  |\n  :\n  v');
+  assert.equal(ex('+=====+\n| A   |\n+=====+'), '+-=-=-+\n| A   |\n+-=-=-+');
+  assert.equal(ex('+---+ +---+\n| A |>| B |\n+---+ +---+'), '+---+  +---+\n| A |->| B |\n+---+  +---+');
+  const one = ex('+---+\n| A |\n+-+-+\n  v\n+-+-+\n| B |\n+---+');
+  assert.equal(STRICT.connections(STRICT.parse(one)).length, 1, one);
+  const inline = ex('+---+\n| A |\n+-^-+\n  |\n+-+-+\n| B |\n+---+');
+  assert.equal(STRICT.parse(inline).boxes.length, 2, inline);
+  assert.equal(STRICT.connections(STRICT.parse(inline)).length, 1, inline);
+  // the inline-arrow example exports to plain ditaa with every box and connection
+  const legacy = presetsAll().legacy_comparison;
+  const out = ex(legacy);
+  const X = new DitaaParser({ extensions: true });
+  assert.equal(STRICT.parse(out).boxes.length, X.parse(legacy).boxes.length, out);
+  assert.equal(STRICT.connections(STRICT.parse(out)).length, X.connections(X.parse(legacy)).length, out);
+  // text is never changed
+  assert.equal(ex('a == b, c :: d, v1.2 and x -> y'), 'a == b, c :: d, v1.2 and x -> y');
 });
