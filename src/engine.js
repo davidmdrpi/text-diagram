@@ -466,7 +466,8 @@
       const isVertWireConnectable = (r, c) => {
         if (r < 0 || r >= numRows || c < 0 || c >= numCols) return false;
         if (cellRole[r][c] === 'box-interior' || !isLineCell(r, c)) return false;
-        return '|:+*^v.\''.includes(grid[r][c]) || cellRole[r][c] === 'box-border';
+        // (an upper-case V is an arrowhead in plain ditaa, like v)
+        return '|:+*^v.\''.includes(grid[r][c]) || (grid[r][c] === 'V' && !this.extensions) || cellRole[r][c] === 'box-border';
       };
       // Plain ditaa: '>', '<' and '^' are arrowheads wherever they are (even in text); 'v' and
       // 'V' only with '|' or ':' right above them
@@ -1001,11 +1002,14 @@
       // box markup that only this editor reads
       const legends = ast.legends || {};
       const expanded = new Set(), kept = new Set();
-      for (const b of ast.boxes) {
+      const area = (b) => (b.r2 - b.r1) * (b.c2 - b.c1);
+      // a tag belongs to the innermost box it is written in
+      const owner = (r, c) => ast.boxes.filter((k) => r > k.r1 && r < k.r2 && c > k.c1 && c < k.c2).sort((p, q) => area(p) - area(q))[0];
+      for (const b of ast.boxes.slice().sort((p, q) => area(p) - area(q))) {
         for (let r = b.r1 + 1; r < b.r2; r++) {
           const inner = (lines[r] || '').slice(b.c1 + 1, b.c2);
           // {*}: a dashed wall instead
-          if (/\{\*\}/.test(inner)) {
+          if (/\{\*\}/.test(inner) && owner(r, b.c1 + 1 + inner.indexOf('{*}')) === b) {
             const c = b.c1 + 1 + inner.indexOf('{*}');
             for (let k = 0; k < 3; k++) set(r, c + k, ' ');
             const top = [...Array(b.c2 - b.c1 - 1).keys()].map((k) => b.c1 + 1 + k).find((cc) => get(b.r1, cc) === '-');
@@ -1017,9 +1021,10 @@
             tags++;
           }
           // c#RRGGBB: the nearest ditaa cRGB (ditaa has no six-digit colors)
-          const hex = (lines[r] || '').slice(b.c1 + 1, b.c2).match(/c#([0-9a-fA-F]{6})\b/);
-          if (hex) {
-            const c = b.c1 + 1 + (lines[r] || '').slice(b.c1 + 1, b.c2).indexOf(hex[0]);
+          // (the same token boundaries as the parser's: "abc#FF0000" is a label, not a color)
+          const hex = (lines[r] || '').slice(b.c1 + 1, b.c2).match(/\bc#([0-9a-fA-F]{6})\b/);
+          if (hex && owner(r, b.c1 + 1 + hex.index) === b) {
+            const c = b.c1 + 1 + hex.index;
             const rgb = [0, 2, 4].map((k) => Math.round(parseInt(hex[1].slice(k, k + 2), 16) / 17).toString(16).toUpperCase()).join('');
             const rep = ('c' + rgb).padEnd(hex[0].length);
             [...rep].forEach((ch, k) => set(r, c + k, ch));
@@ -1034,7 +1039,7 @@
             const at = inner.indexOf(`[${b.macroKey}]`);
             if (at < 0) continue;
             const rest = inner.slice(at).replace(`[${b.macroKey}]`, full);
-            if (inner.slice(0, at).length + rest.replace(/\s+$/, '').length <= b.c2 - b.c1 - 2) {
+            if (inner.slice(0, at).length + rest.replace(/\s+$/, '').length <= b.c2 - b.c1 - 1) {
               const text = (inner.slice(0, at) + rest).padEnd(b.c2 - b.c1 - 1).slice(0, b.c2 - b.c1 - 1);
               [...text].forEach((ch, k) => set(r, b.c1 + 1 + k, ch));
               macros++;

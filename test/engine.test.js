@@ -2246,3 +2246,32 @@ test('Export ditaa: plain ditaa stays as it is; the extensions are converted, an
   // what the preview draws as lines or arrowheads is left for ditaa to draw the same way
   assert.equal(text('a == b and x -> y'), 'a == b and x -> y');
 });
+
+test('regression (PR #15 re-review): export keeps labels, puts a tag in its own box, fits exactly; V takes a : above it', () => {
+  const ex = (t) => DitaaParser.exportStrictLegacyDitaa(t);
+  // a color only where the parser reads one (the same token boundaries)
+  const label = '+------------+\n| abc#FF0000 |\n+------------+';
+  assert.equal(parse(label).boxes[0].lines[0], 'abc#FF0000');
+  assert.equal(ex(label).sanitizedText, label);
+  assert.equal(ex(label).colorsConverted, 0);
+  // {*} in a box inside a container dashes that box, not the container
+  const nest = '+---------------+\n|  +---------+  |\n|  | A {*}   |  |\n|  +---------+  |\n+---------------+';
+  const before = STRICT.parse(nest).boxes.map((b) => [b.r1, b.dashedBorder]).sort();
+  const after = STRICT.parse(ex(nest).sanitizedText).boxes.map((b) => [b.r1, b.dashedBorder]).sort();
+  assert.deepEqual(before, [[0, false], [1, true]]);
+  assert.deepEqual(after, before);
+  const nestColor = '+-------------------+\n|  +-------------+  |\n|  | A c#FF0000  |  |\n|  +-------------+  |\n+-------------------+';
+  const colored = STRICT.parse(ex(nestColor).sanitizedText).boxes.find((b) => b.r1 === 1);
+  assert.equal(colored.customHex, '#ff0000', 'the color stays on the inner box');
+  // a ':' above an upper-case V is a dashed shaft, as above a lower-case v
+  for (const t of ['  :\n  V', '  :\n  v']) {
+    const a = STRICT.parse(t);
+    assert.deepEqual(a.wires.map((w) => w.dashed), [true], JSON.stringify(t));
+    assert.deepEqual(a.arrows.map((x) => x.dir), ['v'], JSON.stringify(t));
+  }
+  // a legend text exactly as wide as the box's inside fits
+  const fit = ex('+----------+\n|[A]       |\n+----------+\n\n# [A] = 1234567890');
+  assert.equal(fit.sanitizedText, '+----------+\n|1234567890|\n+----------+');
+  assert.deepEqual(fit.notes, []);
+  assert.match(ex('+----------+\n|[A]       |\n+----------+\n\n# [A] = 12345678901').notes.join(), /doesn't fit/, 'one more does not');
+});
