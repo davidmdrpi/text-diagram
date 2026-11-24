@@ -175,11 +175,9 @@ test('legacy export moves inline arrows onto the adjacent wire cell', () => {
   const text = '+----^----+\n| Node    |\n+---------+';
   const flipped = '+---------+\n| Node    |\n+----^----+\n     |\n     +--';
   const res = DitaaParser.exportStrictLegacyDitaa(flipped);
-  // (plain ditaa needs a shaft behind the arrowhead: a line is made for it)
-  assert.equal(res.sanitizedText, '+---------+\n| Node    |\n+----+----+\n     ^\n     |\n     +--');
+  assert.equal(res.sanitizedText, '+---------+\n| Node    |\n+----+----+\n     ^\n     +--');
   assert.equal(res.healedArrowsCount, 1);
-  assert.equal(res.shaftsAdded, 1);
-  assert.equal(res.insertedRowsCount, 1);
+  assert.equal(res.insertedRowsCount, 0, "ditaa reads ^ as an arrowhead anywhere: no shaft needed");
   // no wire attached → untouched
   assert.equal(DitaaParser.exportStrictLegacyDitaa(text).healedArrowsCount, 0);
 });
@@ -193,10 +191,9 @@ test('legacy export inserts a spacer row when the neighbour is a corner, without
   ].join('\n');
   const res = DitaaParser.exportStrictLegacyDitaa(text);
   const lines = res.sanitizedText.split('\n');
-  assert.equal(res.insertedRowsCount, 2, 'one for the arrowhead, one for its shaft');
+  assert.equal(res.insertedRowsCount, 1);
   assert.equal(lines[2], '+--+--+   |   |');
   assert.equal(lines[3], '   ^      |   |');
-  assert.equal(lines[4], '   |      |   |');
   // Box B is still closed after the insertion
   const ast = parse(res.sanitizedText, { healInlineArrows: false });
   assert.ok(ast.boxes.some((b) => b.lines[0] === 'B'));
@@ -2107,34 +2104,55 @@ const presetsAll = () => {
   return new Function(presetSrc + '\nreturn PRESETS;')();
 };
 
-test('plain ditaa by default: a dashed line needs - (or |) as well as = (or :), and an arrowhead needs a shaft', () => {
+test('plain ditaa by default, read as ditaa 0.10 does (the same as 0.9 and 0.11): dashed lines', () => {
   assert.equal(new DitaaParser().extensions, false);
   assert.equal(new DitaaParser().healInlineArrows, false, 'inline border arrows are never on by default');
-  // horizontal
-  assert.equal(strictRoles('====='), '.....', '===== is text');
-  assert.equal(strictRoles('--=--'), 'wwwww');
-  assert.equal(STRICT.parse('--=--').wires[0].dashed, true);
-  assert.equal(strictRoles('x = = = > y'), '...........', 'spaced dashes are an extension');
-  // vertical
-  assert.equal(strictRoles(' :\n :\n v'), '../../..', 'a column of : is text, and so is the v under it');
-  assert.equal(strictRoles(' :\n |\n v'), '.w/.w/.w');
-  assert.equal(STRICT.parse(' :\n |\n v').wires[0].dashed, true);
-  // arrowheads need a shaft
+  const dashed = (t) => STRICT.parse(t).wires.map((w) => (w.dashed ? 'D' : 's')).join('');
+  // '=' and ':' are line characters; one of them dashes the line
+  assert.equal(dashed('====>'), 'D', '====> is a dashed arrow');
+  assert.equal(dashed('-=-=>'), 'D');
+  assert.equal(dashed('-------=---------->'), 'D');
+  assert.equal(dashed('---->'), 's');
+  assert.equal(dashed('  :\n  :\n  :\n  :'), 'D', 'a column of : is a dashed line');
+  assert.equal(dashed('  :\n  |\n  |'), 'D');
+  // ...and the whole connected line, round its bends
+  assert.equal(dashed('----+\n    :\n    |\n    v'), 'DD');
+  assert.equal(dashed('-=--+\n    |\n    |\n    v'), 'DD');
+  assert.equal(dashed('----+\n    |\n    v'), 'ss');
+  // a lone '=' or ':' draws nothing; spaced dashes are an extension (each '=' is alone)
+  assert.equal(strictRoles('='), '.');
+  assert.equal(strictRoles(' : '), '...');
+  assert.equal(STRICT.parse('x = = = = y').wires.length, 0);
+});
+
+test('plain ditaa by default, read as ditaa 0.10 does: arrowheads, direction by direction', () => {
+  const heads = (t) => STRICT.parse(t).arrows.map((a) => a.dir).join('');
+  // east, west and north arrowheads are arrowheads wherever they are, even on their own
+  assert.equal(heads('   >'), '>');
+  assert.equal(heads('   <'), '<');
+  assert.equal(heads('   ^'), '^');
+  assert.equal(heads('---->'), '>');
+  assert.equal(heads('<----'), '<');
+  assert.equal(heads('  ^\n  |'), '^');
+  assert.equal(heads('+-^-+'), '^', 'even on a box border (which breaks the box)');
+  // south only with '|' or ':' right above, lower case or upper case
+  assert.equal(heads('  |\n  v'), 'v');
+  assert.equal(heads('  :\n  v'), 'v');
+  assert.equal(heads('  |\n  V'), 'v', 'V is an arrowhead too');
+  assert.equal(heads('   v'), '', 'a lone v is a letter');
+  assert.equal(heads('  +\n  v'), '', 'not under a corner');
+  assert.equal(heads('  -\n  v'), '');
   const oneCell = '+---+\n| A |\n+-+-+\n  v\n+-+-+\n| B |\n+---+';
-  assert.equal(STRICT.parse(oneCell).arrows.length, 0, 'a bare v is not an arrow');
-  assert.equal(STRICT.connections(STRICT.parse(oneCell)).length, 0);
+  assert.equal(STRICT.parse(oneCell).arrows.length, 0);
   const shafted = '+---+\n| A |\n+-+-+\n  |\n  v\n+-+-+\n| B |\n+---+';
-  assert.equal(STRICT.parse(shafted).arrows.length, 1);
   assert.equal(STRICT.connections(STRICT.parse(shafted)).length, 1);
-  assert.equal(STRICT.parse('+---+ +---+\n| A |>| B |\n+---+ +---+').arrows.length, 0);
-  assert.equal(STRICT.parse('-->').arrows.length, 1);
   // inline border arrows break the box in plain ditaa
   assert.equal(STRICT.parse('+---+\n| A |\n+-^-+\n  |').boxes.length, 0);
-  // ...and with the extensions on, all of it reads as before
+  // ...and with the extensions on, the editor's lenient reading is as before
   const X = new DitaaParser({ extensions: true });
-  assert.equal(X.parse('=====').wires.length, 1);
   assert.equal(X.parse(oneCell).arrows.length, 1);
   assert.equal(X.parse('+---+\n| A |\n+-^-+\n  |').boxes.length, 1);
+  assert.equal(X.parse('x = = = > y').wires.length, 1);
 });
 
 test('the examples are plain ditaa (except the inline-arrow one): strict and lenient readings agree', () => {
@@ -2182,24 +2200,42 @@ test('what the editor draws is plain ditaa: dashed connections and stamps altern
   assert.equal(STRICT.parse(stamp).arrows.length, 1);
 });
 
-test('Export ditaa makes the extensions plain ditaa: dashes, : columns, spaced dashes, bare arrowheads, inline arrows', () => {
-  const ex = (t) => DitaaParser.exportStrictLegacyDitaa(t).sanitizedText;
-  assert.equal(ex('A =====> B'), 'A -=-=-> B');
-  assert.equal(ex('x = = = > y'), 'x =-=-=-> y');
-  assert.equal(ex('  :\n  :\n  v'), '  |\n  :\n  v');
-  assert.equal(ex('+=====+\n| A   |\n+=====+'), '+-=-=-+\n| A   |\n+-=-=-+');
-  assert.equal(ex('+---+ +---+\n| A |>| B |\n+---+ +---+'), '+---+  +---+\n| A |->| B |\n+---+  +---+');
-  const one = ex('+---+\n| A |\n+-+-+\n  v\n+-+-+\n| B |\n+---+');
-  assert.equal(STRICT.connections(STRICT.parse(one)).length, 1, one);
-  const inline = ex('+---+\n| A |\n+-^-+\n  |\n+-+-+\n| B |\n+---+');
+test('Export ditaa: plain ditaa stays as it is; the extensions are converted, and what cannot be is reported', () => {
+  const ex = (t) => DitaaParser.exportStrictLegacyDitaa(t);
+  const text = (t) => ex(t).sanitizedText;
+  // already plain ditaa: untouched (no dash marker is ever lost)
+  for (const t of ['A =====> B', 'X => Y', '=>', '  :\n  :\n  v', '+=====+\n| A   |\n+=====+', '-=-=-=->', '  ^\n  +']) {
+    assert.equal(text(t), t, JSON.stringify(t));
+  }
+  // spaced dashes are filled in
+  assert.equal(text('x = = = > y'), 'x =-=-=-> y');
+  // a v under something other than | or : gets a |, so ditaa reads it as an arrowhead
+  const one = text('+---+\n| A |\n+-+-+\n  v\n+-+-+\n| B |\n+---+');
+  assert.equal(one, '+---+\n| A |\n+-+-+\n  |\n  v\n+-+-+\n| B |\n+---+');
+  assert.equal(STRICT.connections(STRICT.parse(one)).length, 1);
+  // inline arrows move onto their line
+  const inline = text('+---+\n| A |\n+-^-+\n  |\n+-+-+\n| B |\n+---+');
   assert.equal(STRICT.parse(inline).boxes.length, 2, inline);
-  assert.equal(STRICT.connections(STRICT.parse(inline)).length, 1, inline);
+  // {*}, c#RRGGBB and legend macros
+  assert.equal(text('+-------+\n| A {*} |\n+-------+'), '+=------+\n| A     |\n+-------+');
+  assert.equal(STRICT.parse(text('+-------+\n| A {*} |\n+-------+')).boxes[0].dashedBorder, true);
+  assert.equal(text('+------------+\n| c#FF0000 A |\n+------------+'), '+------------+\n| cF00     A |\n+------------+');
+  assert.equal(STRICT.parse(text('+------------+\n| c#E0E7FF A |\n+------------+')).boxes[0].customHex, '#ddeeff', 'the nearest ditaa color, cDEF');
+  assert.match(text('+------------+\n| c#E0E7FF A |\n+------------+'), /cDEF /);
+  const fits = ex('+----------------+\n| [D]            |\n+----------------+\n\n# [D] = Diagram Engine');
+  assert.equal(fits.sanitizedText, '+----------------+\n| Diagram Engine |\n+----------------+');
+  assert.deepEqual(fits.notes, []);
+  const tight = ex('+-----+\n| [D] |\n+-----+\n\n# [D] = Diagram Engine');
+  assert.match(tight.sanitizedText, /\| \[D\] \|/);
+  assert.ok(tight.notes.some((n) => /doesn't fit/.test(n)) && tight.notes.some((n) => /legend lines/.test(n)), tight.notes.join('; '));
+  // ditaa draws < > ^ in a box's text as arrowheads: reported
+  assert.ok(ex('+-------+\n| a > b |\n+-------+').notes.some((n) => /arrowhead/.test(n)));
   // the inline-arrow example exports to plain ditaa with every box and connection
   const legacy = presetsAll().legacy_comparison;
-  const out = ex(legacy);
+  const out = text(legacy);
   const X = new DitaaParser({ extensions: true });
   assert.equal(STRICT.parse(out).boxes.length, X.parse(legacy).boxes.length, out);
   assert.equal(STRICT.connections(STRICT.parse(out)).length, X.connections(X.parse(legacy)).length, out);
-  // text is never changed
-  assert.equal(ex('a == b, c :: d, v1.2 and x -> y'), 'a == b, c :: d, v1.2 and x -> y');
+  // free text is never changed
+  assert.equal(text('a == b, c :: d, v1.2 and x -> y'), 'a == b, c :: d, v1.2 and x -> y');
 });

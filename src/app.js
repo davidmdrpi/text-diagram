@@ -881,11 +881,18 @@
   function openModal() {
     const res = DitaaParser.exportStrictLegacyDitaa(editor.value);
     legacyOutput.textContent = res.sanitizedText;
-    legacyDiffSummary.textContent =
-      `Healed ${res.healedArrowsCount} inline arrow(s) • Inserted ${res.insertedRowsCount} spacer row(s)` +
-      (res.dashesFixed ? ` • ${res.dashesFixed} dashed-line character(s) made plain ditaa` : '') +
-      (res.shaftsAdded ? ` • ${res.shaftsAdded} arrowhead(s) given a shaft` : '') +
-      (res.droppedArrowsCount ? ` • ${res.droppedArrowsCount} arrow(s) could not be kept` : '');
+    const done = [
+      `Healed ${res.healedArrowsCount} inline arrow(s)`,
+      `Inserted ${res.insertedRowsCount} spacer row(s)`,
+      res.dashesFixed && `filled ${res.dashesFixed} gap(s) in spaced dashes`,
+      res.shaftsAdded && `gave ${res.shaftsAdded} v arrowhead(s) a | above`,
+      res.tagsConverted && `${res.tagsConverted} {*} made a dashed wall`,
+      res.colorsConverted && `${res.colorsConverted} c#RRGGBB made cRGB`,
+      res.macrosExpanded && `${res.macrosExpanded} legend macro(s) written out in their box`,
+      res.droppedArrowsCount && `${res.droppedArrowsCount} arrow(s) could not be kept`
+    ].filter(Boolean);
+    // what ditaa will show differently (nothing silently lost)
+    legacyDiffSummary.textContent = done.join(' • ') + ((res.notes || []).length ? ` • Note: ${res.notes.join('; ')}` : '');
     legacyModal.classList.remove('hidden');
     legacyModal.classList.add('flex');
   }

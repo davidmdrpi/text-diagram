@@ -173,7 +173,7 @@
       <!-- Parser Feature Toggles & Zoom Controls Bar -->
       <div class="px-3 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
         <div class="flex items-center gap-3 flex-wrap text-xs">
-          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white" title="Off (the default): the preview reads plain ditaa, exactly as the ditaa renderer will. On: it also reads this editor's extensions: arrows on a box's border (+--^--+), spaced dashed lines (= = = >), lines made only of = or :, and arrowheads without a shaft. Use Export ditaa to turn those into plain ditaa">
+          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white" title="Off (the default): the preview reads plain ditaa, as Java ditaa 0.10 (and 0.9 / 0.11) will. On: it also reads this editor's extensions: arrows on a box's border (+--^--+), spaced dashed lines (= = = >), and arrowheads only where they join a line (so a > in text stays text). Export ditaa turns them into plain ditaa">
             <input id="toggle-extensions" type="checkbox" class="rounded bg-slate-800 border-slate-700 text-indigo-500 focus:ring-0" />
             <span>Extensions <code class="text-emerald-400">+--^--+</code></span>
           </label>

@@ -178,19 +178,29 @@ The drawing's positions are mapped onto the character grid in order, keeping its
 always leaving room for each box's label and each line.
 
 Exports: SVG, 2× PNG, and **Export ditaa**, which rewrites the extensions below into plain ditaa
-that the Java renderer accepts: inline border arrows move onto their wire, spaced dashes are
-filled in, runs of only `=` or `:` alternate with `-` or `|`, and an arrowhead without a shaft gets
-one (a line or column is made for it). Text is never changed.
+and leaves what is plain ditaa already as it is: inline border arrows move onto their wire, spaced
+dashes are filled in, a `v` that isn't under `|` or `:` gets one, `{*}` becomes a `=` in the box's
+wall, `c#RRGGBB` the nearest `cRGB`, and a legend macro box shows its text when it fits (its
+`# [X] = ...` line is then dropped). What can't be carried over is listed in the export window: a
+macro that doesn't fit, legend lines (ditaa prints them as text), and `<` `>` `^` in a box's text
+(ditaa draws them as arrowheads). Free text is never changed.
 
 ## Syntax
 
-**Plain ditaa by default**: the preview reads the text exactly as the ditaa renderer will, so what you
-see is what you'll get. In particular:
+**Plain ditaa by default**: the preview reads the text the way the ditaa renderer does (Java ditaa
+0.10; 0.9 and 0.11 read lines, dashes, arrowheads and colors the same way), so what you see is
+what you'll get. In particular:
 
-- a dashed line is a line with `=` (horizontal) or `:` (vertical) in it, like `---=--->` or a `:`
-  among `|`s; a run of nothing but `=` (or `:`) isn't a line at all, it's text;
-- an arrowhead needs a shaft: at least one `-` (or `|`) behind it, so a lone `v` between two boxes
-  isn't an arrow.
+- `=` and `:` are line characters like `-` and `|`, and a single one makes the whole connected line
+  dashed, round its bends too (`====>`, `---=--->` and a column of `:` are all dashed); a lone `=`
+  or `:` on its own draws nothing;
+- `>`, `<` and `^` are arrowheads wherever they are, even in text; `v` (or `V`) is an arrowhead only
+  with `|` or `:` right above it, so a lone `v` between two boxes is just a letter;
+- colors are `cRGB` (upper-case hex) and `cRED cGRE cBLU cYEL cPNK cBLK`; tags `{c} {d} {s} {io}
+  {mo} {o}`.
+
+What the editor draws itself is written so that any ditaa reads it: dashed lines alternate `-=-=`,
+and an arrowhead always has a straight shaft.
 
 The **Extensions** checkbox above the preview (off by default) also reads this editor's own
 additions, marked *(extension)* below; *Export ditaa* turns them into plain ditaa. Choosing the
@@ -214,10 +224,11 @@ inline-arrow example, or the `+^+` button, turns it on.
                  | yes
                  v
   ```
-- **Colors**: `cBLU cGRE cYEL cRED cPNK cBLK`, `c#RRGGBB`, ditaa-style `cRGB` (uppercase hex).
-- **Wires**: `-` `|` solid, a `=` or `:` among them makes the line dashed, `*` junction dot, `< > ^ v`
-  arrowheads (with a shaft). Extensions: spaced `= = = >` dashes, lines of only `=` or `:`, and
-  arrowheads without a shaft.
+- **Colors**: `cBLU cGRE cYEL cRED cPNK cBLK`, ditaa-style `cRGB` (uppercase hex), and `c#RRGGBB`
+  (extension: Export ditaa turns it into the nearest `cRGB`).
+- **Wires**: `-` `|` solid, `=` `:` dashed (one dashes the whole connected line), `*` junction dot,
+  `< > ^` arrowheads, `v` under `|` or `:`. Extensions: spaced `= = = >` dashes, and arrowheads read
+  only where they join a line (so `x > y` in text stays text).
 - **Inline border arrows** (extension): an arrowhead can sit directly on a box wall, e.g. `+---^---+`, saving a row.
 - **Nested boxes**: a box containing other boxes is a container; its text and wires render normally.
 - **Legend macros** (extension): a small box labelled `[D]` expands to the text defined by a legend line:
