@@ -1282,7 +1282,8 @@
             const inner = (lines[r] || '').slice(b.c1 + 1, b.c2);
             const at = inner.indexOf(`[${b.macroKey}]`);
             if (at < 0) continue;
-            const rest = inner.slice(at).replace(`[${b.macroKey}]`, full);
+            // (a function, so '$' sequences in the legend text are used as they are)
+            const rest = inner.slice(at).replace(`[${b.macroKey}]`, () => full);
             if (inner.slice(0, at).length + rest.replace(/\s+$/, '').length <= b.c2 - b.c1 - 1) {
               const text = (inner.slice(0, at) + rest).padEnd(b.c2 - b.c1 - 1).slice(0, b.c2 - b.c1 - 1);
               text.split('').forEach((ch, k) => set(r, b.c1 + 1 + k, ch)); // (UTF-16 units, as cells are counted)

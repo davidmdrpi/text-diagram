@@ -2287,3 +2287,16 @@ test('regression (PR #15 review 4): text after an emoji is matched cell for cell
   assert.equal(ex(wire).sanitizedText, '😀 x‐y ---->', 'the line after it keeps every character');
   assert.equal(STRICT.parse(ex(wire).sanitizedText).arrows.length, 1);
 });
+
+test('regression (PR #15 review 5): a legend text with $ sequences is written into its box exactly as it is', () => {
+  const ex = (t) => DitaaParser.exportStrictLegacyDitaa(t);
+  for (const value of ['Cost $$5', '😀 $&', "$' and $`", '$1 each']) {
+    const src = `+------------+\n|[A]         |\n+------------+\n\n# [A] = ${value}`;
+    assert.equal(parse(src).legends.A, value);
+    const out = ex(src);
+    // (12 cells inside, counted as the editor counts them: an emoji takes two)
+    assert.equal(out.sanitizedText, `+------------+\n|${value + ' '.repeat(12 - value.length)}|\n+------------+`, value);
+    assert.deepEqual(out.notes, [], 'its legend line is dropped, nothing to report');
+    assert.equal(out.macrosExpanded, 1);
+  }
+});
