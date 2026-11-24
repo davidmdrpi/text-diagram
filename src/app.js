@@ -7,23 +7,24 @@
    * PRESET DIAGRAMS
    *************************************************************************/
   const PRESETS = {
-    arch: `+-------------------+        = = = = = >       /-------------------\\
-|    API Gateway    |     dashed/dotted wire   |   Auth Verifier   |
-|    cBLU           +------=------------------>|   {mo} cYEL       |
-+---------+---^-----+                          \\---------+---------/
-          |   |                                          :
-          |   | inline '^' on border                     : dashed vertical
-          |   | (zero extra line wasted!)                v
-          |   +--------------------------------+---------+---------+
-          |                                    |   Session Cache   |
-          v                                    |   {s} cPNK {*}    |
-+---------+---------+                          +-------------------+
+    arch: `+-------------------+     dashed wire     /-------------------\\
+|    API Gateway    |  ----=----=---->    |   Auth Verifier   |
+|    cBLU           +------=------------->|   {mo} cYEL       |
++---------+---+-----+                     \\---------+---------/
+          |   ^                                     :
+          |   |  arrow up into the box              |  dashed vertical
+          |   |                                     v
+          |   +---------------------------+---------+---------+
+          |                               |   Session Cache   |
+          v                               :   {s} cPNK        |
++---------+---------+                     +-------------------+
 |     [D] cGRE      |
 +---------+---------+       +-----+       +-----+       /-----+-----\\
           |                 | [A] +------>| [Q] +------>| [S] {d}   |
           +---------------->|cYEL |       |cBLU |       | cGRE      |
                             +-----+       +--+--+       \\-----------/
                                 ^            |
+                                |            |
                                 +-----=------+
 
 # Legend Macros (Automatically expands compact 4x4 boxes above!):
@@ -37,7 +38,7 @@
 |  cBLU              |                     |  cGRE              |
 +---------+----------+                     \\---------+----------/
           |                                          :
-          |                           dashed wire    :
+          |                           dashed wire    |
           v                                          v
 +---------+----------+     dashed arrow    +---------+----------+
 |  Storage Cylinder  +---------=---------->|  Document Shape    |
@@ -47,22 +48,23 @@
 +--------------------+                     +--------------------+
 |  I/O Parallelogram |     junction dot    |  Manual Trapezoid  |
 |  {io} cRED         +----------*--------->|  {mo} cBLU         |
-+--------------------+          |          +---------^----------+
++--------------------+          |          +---------+----------+
+                                |                    ^
                                 |                    |
                                 |          /---------+----------\\
                                 +--------->|  Pill / Ellipse    |
-                                           |  {o} {*} cYEL      |
-                                           \\--------------------/`,
+                                           |  {o} cYEL          |
+                                           \\--------=-----------/`,
 
     microservices: `      +-----+         +-----+         +-----+         +-----+
       | [G] +-------->| [A] +-------->| [R] +-------->| [W] |
       |cBLU |         |cYEL |         |cGRE |         |cPNK |
-      +--+--+         +--+--+         +--+--^         +--+--+
-         |               |               |  |            :
-         |               v               |  +------------+
-         |            +--+--+            v
-         +----------->| [L] |         +--+--+
-                      | {d} |         | [D] |
+      +--+--+         +--+--+         +--+--+         +--+--+
+         |               |               |               :
+         |               v               |               |
+         |            +--+--+            v               |
+         +----------->| [L] |         +--+--+            |
+                      | {d} |         | [D] +<-----------+
                       +-----+         | {s} |
                                       +-----+
 
@@ -150,7 +152,7 @@
   const toastEl = $('toast-indicator');
   const zoomLabel = $('zoom-label');
 
-  const toggleInlineArrows = $('toggle-inline-arrows');
+  const toggleExtensions = $('toggle-extensions');
   const selectLegendMode = $('select-legend-mode');
   const toggleShadows = $('toggle-shadows');
   const toggleGrid = $('toggle-grid');
@@ -167,7 +169,7 @@
 
   function makeParser() {
     return new DitaaParser({
-      healInlineArrows: toggleInlineArrows.checked,
+      extensions: toggleExtensions.checked,
       legendMode: selectLegendMode.value,
       showShadows: toggleShadows.checked,
       showGrid: toggleGrid.checked,
@@ -507,10 +509,15 @@
 
   presetSelect.addEventListener('change', (e) => {
     const key = e.target.value;
+    // the inline-arrow example is written with an extension: show it the way it's meant
+    if (key === 'legacy_comparison' && !toggleExtensions.checked) {
+      toggleExtensions.checked = true;
+      showToast('Extensions turned on: this example uses arrows on box borders');
+    }
     if (PRESETS[key]) setEditorText(PRESETS[key]);
   });
 
-  [toggleInlineArrows, selectLegendMode, toggleShadows, toggleGrid, toggleLightCanvas].forEach((el) => {
+  [toggleExtensions, selectLegendMode, toggleShadows, toggleGrid, toggleLightCanvas].forEach((el) => {
     el.addEventListener('change', refresh);
   });
 
@@ -576,6 +583,8 @@
   $('stamp-arrow-down').addEventListener('click', stampArrow('solid-down', 'Attached down arrow (click +Box+ next)'));
 
   $('stamp-inline-up').addEventListener('click', () => {
+    // an extension, not plain ditaa: show it as it's meant (Export ditaa converts it)
+    if (!toggleExtensions.checked) { toggleExtensions.checked = true; refresh(); }
     const box = activeBox();
     if (box) {
       applyGridOperationResult(Grid2DEditor.addInlineUpArrow(editor.value, box), 'Added inline ^ on bottom border');
@@ -872,9 +881,19 @@
   function openModal() {
     const res = DitaaParser.exportStrictLegacyDitaa(editor.value);
     legacyOutput.textContent = res.sanitizedText;
-    legacyDiffSummary.textContent =
-      `Healed ${res.healedArrowsCount} inline arrow(s) • Inserted ${res.insertedRowsCount} spacer row(s)` +
-      (res.droppedArrowsCount ? ` • ${res.droppedArrowsCount} arrow(s) could not be kept` : '');
+    const done = [
+      `Healed ${res.healedArrowsCount} inline arrow(s)`,
+      `Inserted ${res.insertedRowsCount} spacer row(s)`,
+      res.dashesFixed && `filled ${res.dashesFixed} gap(s) in spaced dashes`,
+      res.shaftsAdded && `gave ${res.shaftsAdded} v arrowhead(s) a | above`,
+      res.tagsConverted && `${res.tagsConverted} {*} made a dashed wall`,
+      res.colorsConverted && `${res.colorsConverted} c#RRGGBB made cRGB`,
+      res.macrosExpanded && `${res.macrosExpanded} legend macro(s) written out in their box`,
+      res.textSwapped && `${res.textSwapped} character(s) in text swapped for look-alikes`,
+      res.droppedArrowsCount && `${res.droppedArrowsCount} arrow(s) could not be kept`
+    ].filter(Boolean);
+    // what ditaa will show differently (nothing silently lost)
+    legacyDiffSummary.textContent = done.join(' • ') + ((res.notes || []).length ? ` • Note: ${res.notes.join('; ')}` : '');
     legacyModal.classList.remove('hidden');
     legacyModal.classList.add('flex');
   }

@@ -59,7 +59,11 @@
     constructor(options = {}) {
       this.cellW = options.cellW || 10;
       this.cellH = options.cellH || 18;
-      this.healInlineArrows = options.healInlineArrows !== false;
+      // Plain ditaa by default. With `extensions` the editor's own additions are read too:
+      // arrows drawn on a box's border (+--^--+), spaced dashed lines (= = = >), lines made only
+      // of '=' or ':', and arrowheads without a shaft. (healInlineArrows can still be set alone.)
+      this.extensions = options.extensions === true;
+      this.healInlineArrows = options.healInlineArrows !== undefined ? options.healInlineArrows !== false : this.extensions;
       this.legendMode = options.legendMode || 'both';
       this.showShadows = options.showShadows !== false;
       this.showGrid = options.showGrid || false;
@@ -437,19 +441,40 @@
       // A glyph flanked by a letter/digit is part of a word ("v1.2", "it's"), not a wire.
       const inWord = (r, c) => isAlnum(at(r, c - 1)) || isAlnum(at(r, c + 1));
 
+      // Plain ditaa (0.9 to 0.11 read lines the same way): '=' and ':' are line characters
+      // like '-' and '|' (one of them makes the whole connected line dashed, see below), but a
+      // lone '=' or ':' cell on its own draws nothing.
+      const notLine = new Set();
+      if (!this.extensions) {
+        const lineCh = (r, c, set) => set.includes(at(r, c)) && at(r, c) !== ' ' && cellRole[r] && cellRole[r][c] !== 'box-interior';
+        for (let r = 0; r < numRows; r++) {
+          for (let c = 0; c < numCols; c++) {
+            if (cellRole[r][c] !== 'empty' || (grid[r][c] !== '=' && grid[r][c] !== ':')) continue;
+            const alone = !lineCh(r, c - 1, '-=+*<>') && !lineCh(r, c + 1, '-=+*<>') &&
+              !lineCh(r - 1, c, '|:+*^vV') && !lineCh(r + 1, c, '|:+*^vV');
+            if (alone) notLine.add(r * numCols + c);
+          }
+        }
+      }
+      const isLineCell = (r, c) => !notLine.has(r * numCols + c);
+
       const isHorizWireConnectable = (r, c) => {
         if (r < 0 || r >= numRows || c < 0 || c >= numCols) return false;
-        if (cellRole[r][c] === 'box-interior') return false;
+        if (cellRole[r][c] === 'box-interior' || !isLineCell(r, c)) return false;
         return '-=+*><.\''.includes(grid[r][c]) || cellRole[r][c] === 'box-border';
       };
       const isVertWireConnectable = (r, c) => {
         if (r < 0 || r >= numRows || c < 0 || c >= numCols) return false;
-        if (cellRole[r][c] === 'box-interior') return false;
-        return '|:+*^v.\''.includes(grid[r][c]) || cellRole[r][c] === 'box-border';
+        if (cellRole[r][c] === 'box-interior' || !isLineCell(r, c)) return false;
+        // (an upper-case V is an arrowhead in plain ditaa, like v)
+        return '|:+*^v.\''.includes(grid[r][c]) || (grid[r][c] === 'V' && !this.extensions) || cellRole[r][c] === 'box-border';
       };
+      // Plain ditaa: '>', '<' and '^' are arrowheads wherever they are (even in text); 'v' and
+      // 'V' only with '|' or ':' right above them
+      const ditaaHead = (r, c, ch) => (ch === 'v' || ch === 'V' ? at(r - 1, c) === '|' || at(r - 1, c) === ':' : true);
 
-      // Spaced dashed wires such as "= = = = >" or "< = = =".
-      for (let r = 0; r < numRows; r++) {
+      // Spaced dashed wires such as "= = = = >" or "< = = =" (an extension).
+      for (let r = 0; r < numRows && this.extensions; r++) {
         let s = '';
         for (let c = 0; c < numCols; c++) s += cellRole[r][c] === 'empty' ? grid[r][c] : '\u0000';
         for (const m of s.matchAll(/(?:< ?)?=(?: =)+(?: ?>)?/g)) {
@@ -471,7 +496,7 @@
         for (let c = 0; c < numCols; c++) {
           if (cellRole[r][c] !== 'empty') continue;
           const ch = grid[r][c];
-          if (ch === ' ') continue;
+          if (ch === ' ' || !isLineCell(r, c)) continue;
 
           if (ch === '-' || ch === '=') {
             // Not a hyphen inside a word like "client-side"
@@ -493,15 +518,50 @@
                 cellRole[r][c] = 'wire-corner';
               }
             }
-          } else if (ch === '>' || ch === '<' || ch === '^' || ch === 'v') {
-            if ((ch === '^' || ch === 'v') && inWord(r, c)) continue;
-            const connected =
-              ((ch === '>' || ch === '<') && (isHorizWireConnectable(r, c - 1) || isHorizWireConnectable(r, c + 1))) ||
-              ((ch === '^' || ch === 'v') && (isVertWireConnectable(r - 1, c) || isVertWireConnectable(r + 1, c)));
-            if (connected) {
-              cellRole[r][c] = 'wire-arrow';
-              arrows.push({ r, c, dir: ch, inline: false });
+          } else if (ch === '>' || ch === '<' || ch === '^' || ch === 'v' || (ch === 'V' && !this.extensions)) {
+            let head;
+            if (this.extensions) {
+              // the editor's lenient reading: an arrowhead is one joined to a line
+              if ((ch === '^' || ch === 'v') && inWord(r, c)) continue;
+              head = ((ch === '>' || ch === '<') && (isHorizWireConnectable(r, c - 1) || isHorizWireConnectable(r, c + 1))) ||
+                ((ch === '^' || ch === 'v') && (isVertWireConnectable(r - 1, c) || isVertWireConnectable(r + 1, c)));
+            } else {
+              head = ditaaHead(r, c, ch);
             }
+            if (head) {
+              cellRole[r][c] = 'wire-arrow';
+              arrows.push({ r, c, dir: ch === 'V' ? 'v' : ch, inline: false });
+            }
+          }
+        }
+      }
+
+      // A '=' or ':' makes the whole connected line dashed, round its corners too (as ditaa
+      // "infects" the rest of an open shape)
+      const dashedCell = new Uint8Array(numRows * numCols);
+      {
+        const isWireRole = (r, c) => r >= 0 && c >= 0 && r < numRows && c < numCols && /^wire/.test(cellRole[r][c]);
+        const hOk = (r, c) => isWireRole(r, c) && '-=+*<>.\''.includes(grid[r][c]);
+        const vOk = (r, c) => isWireRole(r, c) && '|:+*^vV.\''.includes(grid[r][c]);
+        const seen = new Uint8Array(numRows * numCols);
+        for (let r0 = 0; r0 < numRows; r0++) {
+          for (let c0 = 0; c0 < numCols; c0++) {
+            if (!isWireRole(r0, c0) || seen[r0 * numCols + c0]) continue;
+            const comp = [], stack = [[r0, c0]];
+            seen[r0 * numCols + c0] = 1;
+            let dashed = false;
+            while (stack.length) {
+              const [r, c] = stack.pop();
+              comp.push(r * numCols + c);
+              if (grid[r][c] === '=' || grid[r][c] === ':') dashed = true;
+              const nb = [];
+              if (hOk(r, c)) nb.push([r, c - 1, hOk], [r, c + 1, hOk]);
+              if (vOk(r, c)) nb.push([r - 1, c, vOk], [r + 1, c, vOk]);
+              for (const [nr, nc, ok] of nb) {
+                if (ok(nr, nc) && !seen[nr * numCols + nc]) { seen[nr * numCols + nc] = 1; stack.push([nr, nc]); }
+              }
+            }
+            if (dashed) for (const k of comp) dashedCell[k] = 1;
           }
         }
       }
@@ -518,7 +578,7 @@
         while (c < numCols) {
           if (isHorizNode(r, c)) {
             const startC = c;
-            let dashed = grid[r][c] === '=';
+            let dashed = grid[r][c] === '=' || dashedCell[r * numCols + c] === 1;
             while (c + 1 < numCols && isHorizNode(r, c + 1)) {
               c++;
               if (grid[r][c] === '=') dashed = true;
@@ -546,14 +606,14 @@
         if (r < 0 || r >= numRows || c < 0 || c >= numCols) return false;
         const role = cellRole[r][c];
         if (role === 'wire-v' || role === 'wire-corner' || role === 'wire-junction') return true;
-        return role === 'wire-arrow' && (grid[r][c] === '^' || grid[r][c] === 'v');
+        return role === 'wire-arrow' && (grid[r][c] === '^' || grid[r][c] === 'v' || grid[r][c] === 'V');
       };
       for (let c = 0; c < numCols; c++) {
         let r = 0;
         while (r < numRows) {
           if (isVertNode(r, c)) {
             const startR = r;
-            let dashed = grid[r][c] === ':';
+            let dashed = grid[r][c] === ':' || dashedCell[r * numCols + c] === 1;
             while (r + 1 < numRows && isVertNode(r + 1, c)) {
               r++;
               if (grid[r][c] === ':') dashed = true;
@@ -898,12 +958,138 @@
         out.splice(k + 1, 0, sp.join('').replace(/\s+$/, ''));
       }
 
+      const fixed = DitaaParser.plainDitaaFixups(out.join('\n'));
       return {
-        sanitizedText: out.join('\n'),
+        sanitizedText: fixed.text,
         healedArrowsCount,
-        insertedRowsCount: afterRows.length,
-        droppedArrowsCount
+        insertedRowsCount: afterRows.length + fixed.insertedRows,
+        droppedArrowsCount,
+        dashesFixed: fixed.dashes,
+        shaftsAdded: fixed.shafts,
+        tagsConverted: fixed.tags,
+        colorsConverted: fixed.colors,
+        macrosExpanded: fixed.macros,
+        textSwapped: fixed.swapped,
+        notes: fixed.notes
       };
+    }
+
+    /**
+     * Makes the editor's extensions plain ditaa (0.9 to 0.11 read the same way); what's plain
+     * ditaa already is left as it is.
+     *  - spaced dashes (= = = >) get their gaps filled with '-' (on their own, the '=' cells
+     *    would draw nothing);
+     *  - a 'v' without '|' or ':' right above it gets one (a line is made for it), since ditaa
+     *    only reads it as an arrowhead then ('>', '<' and '^' need nothing);
+     *  - {*} in a box becomes a '=' (or ':') in its wall; c#RRGGBB becomes the nearest cRGB;
+     *  - a legend macro box [D] shows its full text when that fits in the box;
+     *  - in text, characters ditaa would draw (- = | : < > ^ *) get a look-alike it prints.
+     * Anything that can't be carried over, and every look-alike swap, is listed in `notes`.
+     */
+    static plainDitaaFixups(rawText) {
+      const lenient = new DitaaParser({ extensions: true });
+      let lines = rawText.replace(/\r\n?/g, '\n').split('\n');
+      let ast = lenient.parse(lines.join('\n'));
+      const role = (r, c) => (ast.cellRole[r] && ast.cellRole[r][c]) || 'empty';
+      const set = (r, c, ch) => { const l = lines[r].padEnd(c + 1); lines[r] = l.slice(0, c) + ch + l.slice(c + 1); };
+      const get = (r, c) => (lines[r] || '')[c] || ' ';
+      const notes = [];
+      let dashes = 0, tags = 0, colors = 0, macros = 0;
+      // spaced dashes: fill the gaps
+      for (let r = 0; r < lines.length; r++) {
+        for (let c = 0; c < lines[r].length; c++) if (get(r, c) === ' ' && role(r, c) === 'wire-h') { set(r, c, '-'); dashes++; }
+      }
+      // box markup that only this editor reads
+      const legends = ast.legends || {};
+      const expanded = new Set(), kept = new Set();
+      const area = (b) => (b.r2 - b.r1) * (b.c2 - b.c1);
+      // a tag belongs to the innermost box it is written in
+      const owner = (r, c) => ast.boxes.filter((k) => r > k.r1 && r < k.r2 && c > k.c1 && c < k.c2).sort((p, q) => area(p) - area(q))[0];
+      for (const b of ast.boxes.slice().sort((p, q) => area(p) - area(q))) {
+        for (let r = b.r1 + 1; r < b.r2; r++) {
+          const inner = (lines[r] || '').slice(b.c1 + 1, b.c2);
+          // {*}: a dashed wall instead
+          if (/\{\*\}/.test(inner) && owner(r, b.c1 + 1 + inner.indexOf('{*}')) === b) {
+            const c = b.c1 + 1 + inner.indexOf('{*}');
+            for (let k = 0; k < 3; k++) set(r, c + k, ' ');
+            const top = [...Array(b.c2 - b.c1 - 1).keys()].map((k) => b.c1 + 1 + k).find((cc) => get(b.r1, cc) === '-');
+            if (top !== undefined) set(b.r1, top, '=');
+            else {
+              const side = [...Array(b.r2 - b.r1 - 1).keys()].map((k) => b.r1 + 1 + k).find((rr) => get(rr, b.c1) === '|');
+              if (side !== undefined) set(side, b.c1, ':');
+            }
+            tags++;
+          }
+          // c#RRGGBB: the nearest ditaa cRGB (ditaa has no six-digit colors)
+          // (the same token boundaries as the parser's: "abc#FF0000" is a label, not a color)
+          const hex = (lines[r] || '').slice(b.c1 + 1, b.c2).match(/\bc#([0-9a-fA-F]{6})\b/);
+          if (hex && owner(r, b.c1 + 1 + hex.index) === b) {
+            const c = b.c1 + 1 + hex.index;
+            const rgb = [0, 2, 4].map((k) => Math.round(parseInt(hex[1].slice(k, k + 2), 16) / 17).toString(16).toUpperCase()).join('');
+            const rep = ('c' + rgb).padEnd(hex[0].length);
+            [...rep].forEach((ch, k) => set(r, c + k, ch));
+            colors++;
+          }
+        }
+        // a legend macro: its text in the box when it fits, else the key stays (with its legend line)
+        if (b.macroKey && legends[b.macroKey] !== undefined) {
+          const full = legends[b.macroKey];
+          for (let r = b.r1 + 1; r < b.r2; r++) {
+            const inner = (lines[r] || '').slice(b.c1 + 1, b.c2);
+            const at = inner.indexOf(`[${b.macroKey}]`);
+            if (at < 0) continue;
+            // (a function, so '$' sequences in the legend text are used as they are)
+            const rest = inner.slice(at).replace(`[${b.macroKey}]`, () => full);
+            if (inner.slice(0, at).length + rest.replace(/\s+$/, '').length <= b.c2 - b.c1 - 1) {
+              const text = (inner.slice(0, at) + rest).padEnd(b.c2 - b.c1 - 1).slice(0, b.c2 - b.c1 - 1);
+              text.split('').forEach((ch, k) => set(r, b.c1 + 1 + k, ch)); // (UTF-16 units, as cells are counted)
+              macros++;
+              expanded.add(b.macroKey);
+            } else {
+              kept.add(b.macroKey);
+              notes.push(`[${b.macroKey}] stays as it is: "${full}" doesn't fit in its box (make the box wider to show it)`);
+            }
+            break;
+          }
+        }
+      }
+      // a legend line whose boxes all show their text now isn't needed (ditaa would print it)
+      const legendKey = (l) => { const m = l.match(/^\s*#\s*\[([^\]]+)\]\s*=/); return m && m[1]; };
+      lines = lines.filter((l) => { const k = legendKey(l); return !(k && expanded.has(k) && !kept.has(k)); });
+      while (lines.length > 1 && lines[lines.length - 1].trim() === '') lines.pop();
+      if (lines.some((l) => legendKey(l))) notes.push('the legend lines (# [X] = ...) are shown as plain text by ditaa');
+      // a 'v' needs '|' or ':' above it
+      let shafts = 0, insertedRows = 0;
+      for (let guard = 0; guard < 500; guard++) {
+        ast = lenient.parse(lines.join('\n'));
+        const bare = ast.arrows.find((a) => !a.inline && a.dir === 'v' && get(a.r - 1, a.c) !== '|' && get(a.r - 1, a.c) !== ':');
+        if (!bare) break;
+        Grid2DEditor.insertContinuingRow(lines, bare.r);
+        set(bare.r, bare.c, '|');
+        insertedRows++;
+        shafts++;
+      }
+      // Text: what the preview shows as text, ditaa would partly draw ('-' '=' '|' ':' are always
+      // line, '<' '>' '^' always arrowheads, '*' a marker). Those characters get a look-alike
+      // that ditaa prints (one character each, so nothing moves).
+      const LOOK = { '-': '\u2010', '=': '\u2550', '|': '\u2502', ':': '\u2236', '<': '\u2039', '>': '\u203A', '^': '\u02C6', '*': '\u2217' };
+      let swapped = 0;
+      const shown = new DitaaParser().parse(lines.join('\n'));
+      lines = lines.map((line, r) => {
+        if (DitaaParser.isLegendOrCommentLine(line)) { // ditaa prints these lines as text too
+          return line.split('').map((ch) => (LOOK[ch] && line.trim().startsWith('#') ? (swapped++, LOOK[ch]) : ch)).join('');
+        }
+        const roles = shown.cellRole[r] || [];
+        // (by UTF-16 offset, as the parser counts cells: an emoji takes two)
+        let out = '';
+        for (let c = 0; c < line.length; c++) {
+          const ch = line[c], ro = roles[c] || 'empty';
+          if (LOOK[ch] && (ro === 'empty' || ro === 'box-interior')) { swapped++; out += LOOK[ch]; } else out += ch;
+        }
+        return out;
+      });
+      if (swapped) notes.push(`${swapped} character(s) in text (- = | : < > ^ *) were swapped for look-alikes (‐ ═ │ ∶ ‹ › ˆ ∗) so ditaa prints them instead of drawing them`);
+      return { text: lines.map((l) => l.replace(/\s+$/, '')).join('\n'), dashes, shafts, insertedRows, tags, colors, macros, notes, swapped };
     }
 
     escapeXml(unsafe) {
@@ -1070,23 +1256,33 @@
     }
 
     /** Attaches an arrow to the active box (right wall / bottom wall) or draws it at the cursor. */
+    /**
+     * The character for cell i of a straight line. A dashed line alternates ('-=-=', '|:|:'):
+     * in plain ditaa a line needs '=' (or ':') to be dashed, and a run of nothing but '='
+     * (or ':') isn't a line at all.
+     */
+    static lineChar(horizontal, dashed, i) {
+      if (horizontal) return dashed && i % 2 ? '=' : '-';
+      return dashed && i % 2 ? ':' : '|';
+    }
+
     static smartStampArrow(rawText, cursorR, cursorC, activeBox, type = 'solid-right') {
       const arrowLen = 7;
       const state = this.toGridState(rawText);
 
       if (type === 'solid-right' || type === 'dashed-right') {
-        const wireChar = type === 'dashed-right' ? '=' : '-';
+        const wireChar = (i) => this.lineChar(true, type === 'dashed-right', i);
         if (activeBox) {
           const startR = Math.floor((activeBox.r1 + activeBox.r2) / 2);
           const startC = activeBox.c2;
           this.ensureSize(state, startR + 1, startC + arrowLen + 1);
           state.grid[startR][startC] = '+';
-          for (let i = 1; i < arrowLen; i++) state.grid[startR][startC + i] = wireChar;
+          for (let i = 1; i < arrowLen; i++) state.grid[startR][startC + i] = wireChar(i);
           state.grid[startR][startC + arrowLen] = '>';
           return { text: this.fromGridState(state), cursorR: startR, cursorC: startC + arrowLen + 1 };
         }
         this.ensureSize(state, cursorR + 1, cursorC + arrowLen);
-        for (let i = 0; i < arrowLen - 1; i++) state.grid[cursorR][cursorC + i] = wireChar;
+        for (let i = 0; i < arrowLen - 1; i++) state.grid[cursorR][cursorC + i] = wireChar(i);
         state.grid[cursorR][cursorC + arrowLen - 1] = '>';
         return { text: this.fromGridState(state), cursorR, cursorC: cursorC + arrowLen };
       }
@@ -1133,7 +1329,7 @@
     static toggleTag(rawText, box, tag) {
       const state = this.toGridState(rawText);
       const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
-      const children = new DitaaParser().parse(rawText).boxes.filter(
+      const children = new DitaaParser({ extensions: true }).parse(rawText).boxes.filter(
         (b) => !same(b, box) && b.r1 >= box.r1 && b.r2 <= box.r2 && b.c1 >= box.c1 && b.c2 <= box.c2
       );
       const owned = (r, c) => !children.some((b) => r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2);
@@ -1470,7 +1666,7 @@
      * right of x (it moves or stretches as a whole, so it is never torn).
      */
     static columnBand(state, x, lo, hi) {
-      const parser = new DitaaParser();
+      const parser = new DitaaParser({ extensions: true });
       const ast = parser.parse(this.fromGridState(state));
       const boxes = ast.boxes;
       const runs = parser.wireRuns(ast);
@@ -1532,7 +1728,7 @@
      * moved box stretch to follow it. Boxes enclosing `src` (containers) still stretch.
      */
     static insertRowsMovingBoxes(state, y, k, src) {
-      const boxes = new DitaaParser().parse(this.fromGridState(state)).boxes;
+      const boxes = new DitaaParser({ extensions: true }).parse(this.fromGridState(state)).boxes;
       this.normalizeWidth(state);
       const encloses = (b) => b.r1 <= src.r1 && b.r2 >= src.r2 && b.c1 <= src.c1 && b.c2 >= src.c2;
       const at = Array(state.cols).fill(y);
@@ -1556,7 +1752,7 @@
      * it is, so it keeps its connection to the box beside it.
      */
     static growRowsInPlace(state, ys, src) {
-      const parser = new DitaaParser();
+      const parser = new DitaaParser({ extensions: true });
       const ast = parser.parse(this.fromGridState(state));
       const boxes = ast.boxes;
       this.normalizeWidth(state);
@@ -1598,7 +1794,7 @@
      */
     static insertRowsPerColumn(state, at) {
       const old = state.grid.map((row) => row.slice());
-      const roles = new DitaaParser().parse(this.fromGridState(state)).cellRole;
+      const roles = new DitaaParser({ extensions: true }).parse(this.fromGridState(state)).cellRole;
       const role = (r, c) => (roles[r] && roles[r][c]) || 'empty';
       const k = at[0] ? at[0].length : 0;
       const ch = (r, c) => (old[r] || [])[c] || ' ';
@@ -1657,7 +1853,7 @@
     }
 
     static balanceForDiamonds(state, positions, axis, band = null) {
-      const diamonds = new DitaaParser().parse(this.fromGridState(state)).boxes
+      const diamonds = new DitaaParser({ extensions: true }).parse(this.fromGridState(state)).boxes
         .filter((b) => b.shape === 'choice' && (!band || (b.r1 >= band.lo && b.r2 <= band.hi)));
       const out = [...positions];
       for (let iter = 0; iter < 20; iter++) {
@@ -1682,7 +1878,7 @@
 
     /** Error if removing columns/rows `positions` would make a diamond other than `self` lopsided. */
     static diamondRemovalError(state, positions, axis, self, verb, band = null) {
-      const diamonds = new DitaaParser().parse(this.fromGridState(state)).boxes
+      const diamonds = new DitaaParser({ extensions: true }).parse(this.fromGridState(state)).boxes
         .filter((b) => b.shape === 'choice' && (!band || (b.r2 >= band.lo && b.r1 <= band.hi)));
       for (const d of diamonds) {
         if (self && d.r1 === self.r1 && d.c1 === self.c1 && d.r2 === self.r2 && d.c2 === self.c2) continue;
@@ -1750,7 +1946,7 @@
       if (!res || res.error) return res;
       const sig = (b) => JSON.stringify([b.lines, b.colorKey, b.customHex, b.shape, b.macroKey, b.dashedBorder]);
       const same = (a, b) => a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
-      const parser = new DitaaParser();
+      const parser = new DitaaParser({ extensions: true });
       const beforeAst = parser.parse(rawText);
       const afterAst = parser.parse(res.text);
 
@@ -1827,7 +2023,7 @@
       const state = this.toGridState(rawText, box.r2 + 2, box.c2 + 2);
       const g = state.grid;
       const at = (r, c) => (g[r] && g[r][c]) || ' ';
-      const outerName = this.boxName(new DitaaParser().parse(rawText), outer);
+      const outerName = this.boxName(new DitaaParser({ extensions: true }).parse(rawText), outer);
       const name = outerName && outerName !== 'box' ? `“${outerName}”` : 'the box around it';
       const noRoom = { error: `Not enough empty space inside ${name}: make it bigger first` };
       const blank = (r1, c1, r2, c2) => {
@@ -1917,7 +2113,7 @@
       // A box inside another box grows into the empty space inside it; the outer box never
       // changes (the user makes it bigger first if needed). Shortening a rectangle is already
       // local (its bottom wall moves up), so it keeps the generic path.
-      const outer = this.enclosingBox(new DitaaParser().parse(rawText).boxes, box);
+      const outer = this.enclosingBox(new DitaaParser({ extensions: true }).parse(rawText).boxes, box);
       if (outer && !(box.shape !== 'choice' && dh < 0 && dw === 0)) {
         const diamond = box.shape === 'choice';
         const min = diamond ? 4 : 3;
@@ -2029,7 +2225,7 @@
      * { error } when the edit would break another box, else { text, cursorR, cursorC }.
      */
     static typeInBox(rawText, caret, sel, op) {
-      const parser = new DitaaParser();
+      const parser = new DitaaParser({ extensions: true });
       const boxes = parser.parse(rawText).boxes;
       const box = this.boxAtCaret(boxes, caret.r, caret.c);
       if (!box) return null; // the only "use normal editing" answer
@@ -2112,7 +2308,7 @@
 
     /** Parses `text` and returns { state, boxes, box, run } for the caret, or null. */
     static caretContext(text, cur) {
-      const boxes = new DitaaParser().parse(text).boxes;
+      const boxes = new DitaaParser({ extensions: true }).parse(text).boxes;
       const box = this.boxAtCaret(boxes, cur.r, cur.c);
       if (!box) return null;
       const run = this.ownedRun(boxes, box, cur.r, cur.c);
@@ -2407,7 +2603,7 @@
      * Returns { box, sides, name } or null.
      */
     static hitBoxSides(rawText, r, c) {
-      const ast = new DitaaParser().parse(rawText);
+      const ast = new DitaaParser({ extensions: true }).parse(rawText);
       const area = (b) => (b.r2 - b.r1) * (b.c2 - b.c1);
       const boxes = ast.boxes.slice().sort((a, b) => area(a) - area(b));
       const out = (b, sides) => ({ box: b, sides, name: this.boxName(ast, b) });
@@ -2523,7 +2719,7 @@
       // Left/above of a box inside a container whose own wall is in the way: the container
       // grows to make room, the way typing spaces (or Enter) before the box would.
       if (!overwrite && (side === 'left' || side === 'above')) {
-        const encl = new DitaaParser().parse(this.fromGridState(state)).boxes
+        const encl = new DitaaParser({ extensions: true }).parse(this.fromGridState(state)).boxes
           .filter((p) => p.r1 < b.r1 && p.r2 > b.r2 && p.c1 < b.c1 && p.c2 > b.c2)
           .sort((p, q) => (p.r2 - p.r1) * (p.c2 - p.c1) - (q.r2 - q.r1) * (q.c2 - q.c1))[0];
         if (encl) {
@@ -2617,7 +2813,7 @@
       if (overwrite) return res;
       const checked = this.guardOtherBoxes(rawText, res, 'insert here', null, tpl ? 1 : 0);
       if (!checked.error && tpl &&
-          new DitaaParser().parse(checked.text).boxes.length !== new DitaaParser().parse(rawText).boxes.length + 1) {
+          new DitaaParser({ extensions: true }).parse(checked.text).boxes.length !== new DitaaParser({ extensions: true }).parse(rawText).boxes.length + 1) {
         return { error: 'Cannot insert here: the new shape would overlap something' };
       }
       return checked;
@@ -2843,7 +3039,7 @@
     static insertContinuingColumn(lines, at, n, keep = null) {
       let roleAt = () => 'empty', boxes = [];
       if (keep) {
-        const ast = new DitaaParser().parse(lines.join('\n'));
+        const ast = new DitaaParser({ extensions: true }).parse(lines.join('\n'));
         roleAt = (r, c) => (ast.cellRole[r] && ast.cellRole[r][c]) || 'empty';
         boxes = ast.boxes.slice().sort((p, q) => (p.r2 - p.r1) * (p.c2 - p.c1) - (q.r2 - q.r1) * (q.c2 - q.c1));
       }
@@ -2978,7 +3174,7 @@
       const get = (r, c) => (r < 0 || c < 0 ? ' ' : (lines[r] || '')[c] || ' ');
       const inside = (r, c) => r >= b.r1 && r <= b.r2 && c >= b.c1 && c <= b.c2;
       // Only what the parser reads as a line counts as one (a 'v' or '-' in prose is text)
-      const roles = new DitaaParser().parse(rawText).cellRole;
+      const roles = new DitaaParser({ extensions: true }).parse(rawText).cellRole;
       const wire = (r, c) => r >= 0 && c >= 0 && /^wire/.test((roles[r] && roles[r][c]) || '');
       const edge = (ch) => ch !== ' ' && '|:+-=<>^v/\\*'.includes(ch);
       const along = dc ? '-=<>' : '|:^v'; // line characters running the way the block moves
@@ -2992,7 +3188,8 @@
           const ch = get(r, c);
           if (ch === ' ') continue;
           // A line attached to the block's edge, running on past this cell: it gets shorter
-          if (isAlong(r, c) && isAlong(r + dr, c + dc) && edge(get(r - dr, c - dc))) {
+          // (two cells must be left, so an arrow keeps a shaft behind its arrowhead)
+          if (isAlong(r, c) && isAlong(r + dr, c + dc) && isAlong(r + 2 * dr, c + 2 * dc) && edge(get(r - dr, c - dc))) {
             if ('<>^v'.includes(ch)) heads.push([r + dr, c + dc, ch]);
             continue;
           }
@@ -3080,7 +3277,7 @@
      * becomes plain line). Returns { text, cursorR, cursorC, count } or { error }.
      */
     static deleteLine(rawText, r, c) {
-      const ast = new DitaaParser().parse(rawText);
+      const ast = new DitaaParser({ extensions: true }).parse(rawText);
       const lines = this.textLines(rawText);
       const get = (y, x) => (y < 0 || x < 0 ? ' ' : (lines[y] || '')[x] || ' ');
       const role = (y, x) => (y < 0 || x < 0 ? 'empty' : (ast.cellRole[y] && ast.cellRole[y][x]) || 'empty');
@@ -3267,7 +3464,7 @@
      * empty cell clicked. Returns { kind: 'wall', hit } | { kind: 'wire' | 'free' } | null.
      */
     static connectionTarget(rawText, r, c) {
-      const ast = new DitaaParser().parse(rawText);
+      const ast = new DitaaParser({ extensions: true }).parse(rawText);
       const g = this.toGridState(rawText, r + 1, c + 1).grid;
       const kind = this.endpointKind(ast, g, { r, c });
       if (kind === 'wire') return { kind };
@@ -3343,7 +3540,7 @@
      * opts: { dashed, arrow }. Returns { text, cursorR, cursorC } or { error }.
      */
     static connectPorts(rawText, a, b, opts = {}) {
-      const parser = new DitaaParser();
+      const parser = new DitaaParser({ extensions: true });
       const ast0 = parser.parse(rawText);
       const g0 = this.toGridState(rawText).grid;
       const kindA = this.endpointKind(ast0, g0, a);
@@ -3420,6 +3617,7 @@
       });
       // Dijkstra over (cell, direction)
       const TURN = 3;
+      const withHead = opts.arrow !== false && kindB !== 'wire';
       const key = (r, c, d) => (r * C + c) * 4 + d;
       const dist = new Map(), prev = new Map(), crossAt = new Set();
       const heap = [];
@@ -3473,7 +3671,9 @@
         const [cost, r, c, d] = pop();
         const k = key(r, c, d);
         if (cost > dist.get(k)) continue;
-        if (goals.has(k) && !crossAt.has(r * C + c)) { found = k; break; }
+        // (plain ditaa: an arrowhead needs a shaft, so the head can't be the route's only cell)
+        const headOnly = withHead && prev.get(k) === null && kindA !== 'free';
+        if (goals.has(k) && !crossAt.has(r * C + c) && !headOnly) { found = k; break; }
         const here = crossAt.has(r * C + c);
         for (let nd = 0; nd < 4; nd++) {
           if (nd === (d + 2) % 4) continue;
@@ -3483,6 +3683,8 @@
           const e = enter(nr, nc, nd);
           if (!e) continue;
           const nk = key(nr, nc, nd);
+          // the cell before the arrowhead is its shaft: straight on into it, not a corner or crossing
+          if (withHead && goals.has(nk) && (nd !== d || here)) continue;
           const ncost = cost + e.cost + (nd !== d ? TURN : 0) + (nearWall(nr, nc) ? 2 : 0);
           if (ncost < (dist.has(nk) ? dist.get(nk) : Infinity)) {
             dist.set(nk, ncost);
@@ -3523,8 +3725,7 @@
         const crossing = crossAt.has(cell.r * C + cell.c) && role(cell.r, cell.c) !== 'empty';
         let ch;
         if (crossing || inD !== outD) ch = '+';
-        else if (horiz(inD)) ch = opts.dashed ? '=' : '-';
-        else ch = opts.dashed ? ':' : '|';
+        else ch = Grid2DEditor.lineChar(horiz(inD), opts.dashed, i);
         if (i === cells.length - 1 && opts.arrow !== false && kindB !== 'wire') ch = HEAD[intoB];
         g[cell.r][cell.c] = ch;
       });

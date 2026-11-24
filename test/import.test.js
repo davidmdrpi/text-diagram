@@ -48,7 +48,9 @@ test('a generic SVG: rounded and diamond shapes, colors, text lines, a dashed be
   assert.equal(byLabel['OK?'].shape, 'choice');
   assert.equal(byLabel.Start.customHex.toLowerCase(), '#fff2cc');
   assert.match(res.text, /^\/-+\\/m, 'the rounded box keeps rounded corners');
-  assert.match(res.text, /\|<=+\+/, 'the dashed connector with its arrowhead into Retry');
+  const into = res.text.match(/\|<([-=]+)\+/);
+  assert.ok(into, 'the dashed connector with its arrowhead into Retry');
+  assert.ok(into[1].includes('-') && into[1].includes('='), `dashed the plain-ditaa way: ${into[1]}`);
   assert.match(res.text, /-+>\|/, 'the arrow into the diamond');
   assert.match(res.text, /Note: free text/, 'text outside boxes, inline HTML on one line');
   assert.equal(P.connections(ast).length, 2);
@@ -157,4 +159,21 @@ test('regression (PR #14 review): only one branch of an SVG switch is read (an H
   // a switch whose first branch is the text works the same
   const textFirst = svg.replace(/<switch>(<foreignObject[\s\S]*?<\/foreignObject>)(<text[\s\S]*?<\/text>)<\/switch>/, '<switch>$2$1</switch>');
   assert.deepEqual(P.parse(I.importDiagram(textFirst).text).boxes.map((b) => b.lines.join(' / ')), ['Start']);
+});
+
+test('what import writes is plain ditaa: dashed boxes and lines alternate, arrowheads have a shaft', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg">' +
+    '<rect x="10" y="10" width="160" height="60" fill="none" stroke="#000" stroke-dasharray="4 2"/>' +
+    '<text x="90" y="44" text-anchor="middle" font-size="12">Dashed</text>' +
+    '<rect x="10" y="130" width="160" height="60" fill="none" stroke="#000"/>' +
+    '<line x1="90" y1="70" x2="90" y2="130" stroke="#000" stroke-dasharray="4 2"/>' +
+    '<polygon points="90,129 85,120 95,120" fill="#000"/></svg>';
+  const res = I.importDiagram(svg);
+  const ast = P.parse(res.text); // P: plain ditaa
+  assert.equal(ast.boxes.length, 2, res.text);
+  assert.equal(ast.boxes.find((b) => b.lines[0] === 'Dashed').dashedBorder, true);
+  assert.equal(ast.arrows.length, 1, `the arrow reads in plain ditaa:\n${res.text}`);
+  assert.equal(P.connections(ast).length, 1);
+  assert.ok(ast.wires.some((w) => w.dashed), 'the dashed line too');
+  assert.ok(!/={2,}|:\n *:/.test(res.text), `no run of only = or :\n${res.text}`);
 });

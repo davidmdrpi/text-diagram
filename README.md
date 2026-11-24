@@ -153,7 +153,9 @@ The line is routed with horizontal and vertical segments, leaving and entering t
 angles, around boxes and text. Where it has to cross a container's wall, or another line, the
 crossing becomes a `+`. If the exact end cell can't be reached cleanly, the nearest cell on the
 same wall that can is used. Two toolbar toggles set the style for every connection: solid `──` or
-dashed `┄┄`, and arrowhead `─▸` or plain line.
+dashed `┄┄`, and arrowhead `─▸` or plain line. Everything drawn is plain ditaa: a dashed line
+alternates `-=-=` (or `|:|:`), and an arrowhead always has a shaft (boxes one character apart have
+no room for an arrow, only a plain line).
 
 Every toolbar button explains itself on hover (nothing pops up over the drawing: errors show
 in red in the status line under the editor, other messages in the status line under the preview). Stamp buttons chain: `+Box+` → `──>` → `+Box+` places each new box on the arrow tip.
@@ -175,14 +177,37 @@ arrows into ditaa text, replacing the editor text (Ctrl+Z undoes it).
 The drawing's positions are mapped onto the character grid in order, keeping its proportions but
 always leaving room for each box's label and each line.
 
-Exports: SVG, 2× PNG, and **Export Strict Backend ditaa**, which rewrites the extended syntax
-below into plain ditaa that the Java renderer accepts.
+Exports: SVG, 2× PNG, and **Export ditaa**, which rewrites the extensions below into plain ditaa
+and leaves what is plain ditaa already as it is: inline border arrows move onto their wire, spaced
+dashes are filled in, a `v` that isn't under `|` or `:` gets one, `{*}` becomes a `=` in the box's
+wall, `c#RRGGBB` the nearest `cRGB`, and a legend macro box shows its text when it fits (its
+`# [X] = ...` line is then dropped), and characters in text that ditaa would draw get printable
+look-alikes (see *Text* below). The export window lists every change, and what can't be carried
+over: a macro that doesn't fit, and legend lines (ditaa prints them as text).
 
 ## Syntax
 
-Standard ditaa, plus a few extensions:
+**Plain ditaa by default**: the preview reads the text the way the ditaa renderer does (Java ditaa
+0.10; 0.9 and 0.11 read lines, dashes, arrowheads and colors the same way), so what you see is
+what you'll get. In particular:
 
-- **Boxes**: `+--+` corners, `/--\` and `\--/` rounded corners; `=` or `:` in a wall, or `{*}`, makes it dashed.
+- `=` and `:` are line characters like `-` and `|`, and a single one makes the whole connected line
+  dashed, round its bends too (`====>`, `---=--->` and a column of `:` are all dashed); a lone `=`
+  or `:` on its own draws nothing;
+- `>`, `<` and `^` are arrowheads wherever they are, even in text; `v` (or `V`) is an arrowhead only
+  with `|` or `:` right above it, so a lone `v` between two boxes is just a letter;
+- colors are `cRGB` (upper-case hex) and `cRED cGRE cBLU cYEL cPNK cBLK`; tags `{c} {d} {s} {io}
+  {mo} {o}`.
+
+What the editor draws itself is written so that any ditaa reads it: dashed lines alternate `-=-=`,
+and an arrowhead always has a straight shaft.
+
+The **Extensions** checkbox above the preview (off by default) also reads this editor's own
+additions, marked *(extension)* below; *Export ditaa* turns them into plain ditaa. Choosing the
+inline-arrow example, or the `+^+` button, turns it on.
+
+- **Boxes**: `+--+` corners, `/--\` and `\--/` rounded corners; `=` or `:` in a wall makes it dashed
+  (`{*}` too, an extension).
 - **Shapes**: `{c}` decision diamond, `{s}` storage, `{d}` document, `{io}` parallelogram, `{mo}` trapezoid, `{o}` pill.
 - **Decision diamonds** (`{c}`, as in ditaa 0.9+, PlantUML and Asciidoctor Diagram): draw an ordinary box with
   `{c}` inside. Put `+` ports at the centre of each wall and they become the diamond's four vertices, so
@@ -199,8 +224,11 @@ Standard ditaa, plus a few extensions:
                  | yes
                  v
   ```
-- **Colors**: `cBLU cGRE cYEL cRED cPNK cBLK`, `c#RRGGBB`, ditaa-style `cRGB` (uppercase hex).
-- **Wires**: `-` `|` solid, `=` `:` dashed, spaced `= = = >` dashed, `*` junction dot, `< > ^ v` arrowheads.
+- **Colors**: `cBLU cGRE cYEL cRED cPNK cBLK`, ditaa-style `cRGB` (uppercase hex), and `c#RRGGBB`
+  (extension: Export ditaa turns it into the nearest `cRGB`).
+- **Wires**: `-` `|` solid, `=` `:` dashed (one dashes the whole connected line), `*` junction dot,
+  `< > ^` arrowheads, `v` under `|` or `:`. Extensions: spaced `= = = >` dashes, and arrowheads read
+  only where they join a line (so `x > y` in text stays text).
 - **Inline border arrows** (extension): an arrowhead can sit directly on a box wall, e.g. `+---^---+`, saving a row.
 - **Nested boxes**: a box containing other boxes is a container; its text and wires render normally.
 - **Legend macros** (extension): a small box labelled `[D]` expands to the text defined by a legend line:
@@ -210,6 +238,28 @@ Standard ditaa, plus a few extensions:
   ```
 
   Other lines starting with `#` are comments and are not drawn.
+
+### Text: characters to avoid in labels
+
+ditaa decides what is drawing and what is text one character at a time, so some characters in a
+label or note are drawn instead of printed:
+
+| In your text | What ditaa does with it |
+| --- | --- |
+| `-` `=` `\|` `:` | always part of a line, even inside a word: `client-side` gets a short line through it, `a \| b` a line segment, `ratio: 2` a dash mark |
+| `<` `>` `^` | always an arrowhead (`x > y`, `x^2`) |
+| `v` `V` | an arrowhead when a `\|` or `:` is directly above it |
+| `+` `/` `\` | a corner or junction when they touch a line or another corner |
+| `*` | a point marker on a line, or a bullet before text (as is `o`: ` o item`) |
+| `cRED`, `cF00`… and `{c}`, `{s}`… | a color code or shape tag inside a box, not printed |
+
+The editor's preview is more forgiving: it shows `client-side` and a `>` in a box's label as text.
+So **Export ditaa** does the rest for you: wherever the preview shows one of `-` `=` `|` `:` `<` `>`
+`^` `*` as text, the export writes a look-alike that ditaa prints (`‐` `═` `│` `∶` `‹` `›` `ˆ` `∗`,
+one character each, so nothing moves), in labels, notes and legend lines, and says how many it
+swapped. Where the preview draws one as a line or arrowhead, ditaa will too, so it's left as it is.
+If you'd rather choose the wording yourself, write around them (`client side`, `to` or `→`
+instead of `->`); any non-ASCII character is printed as it is.
 
 ## Layout
 
