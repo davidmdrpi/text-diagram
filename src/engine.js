@@ -968,6 +968,7 @@
         tagsConverted: fixed.tags,
         colorsConverted: fixed.colors,
         macrosExpanded: fixed.macros,
+        textSwapped: fixed.swapped,
         notes: fixed.notes
       };
     }
@@ -980,9 +981,9 @@
      *  - a 'v' without '|' or ':' right above it gets one (a line is made for it), since ditaa
      *    only reads it as an arrowhead then ('>', '<' and '^' need nothing);
      *  - {*} in a box becomes a '=' (or ':') in its wall; c#RRGGBB becomes the nearest cRGB;
-     *  - a legend macro box [D] shows its full text when that fits in the box.
-     * Only cells the editor reads as lines, walls or box labels are changed; free text never is.
-     * Anything that can't be carried over is listed in `notes`.
+     *  - a legend macro box [D] shows its full text when that fits in the box;
+     *  - in text, characters ditaa would draw (- = | : < > ^ *) get a look-alike it prints.
+     * Anything that can't be carried over, and every look-alike swap, is listed in `notes`.
      */
     static plainDitaaFixups(rawText) {
       const lenient = new DitaaParser({ extensions: true });
@@ -1045,14 +1046,6 @@
             break;
           }
         }
-        // ditaa draws '<', '>' and '^' as arrowheads even inside a box's text
-        for (let r = b.r1 + 1; r < b.r2; r++) {
-          const inner = (lines[r] || '').slice(b.c1 + 1, b.c2);
-          const kids = ast.boxes.some((k) => k !== b && k.r1 <= r && k.r2 >= r && k.c1 > b.c1 && k.c2 < b.c2);
-          if (!kids && /[<>^]/.test(inner.replace(/\{[a-z]+\}/g, ''))) {
-            notes.push(`line ${r + 1}: ditaa draws the <, > or ^ in “${inner.trim()}” as an arrowhead`);
-          }
-        }
       }
       // a legend line whose boxes all show their text now isn't needed (ditaa would print it)
       const legendKey = (l) => { const m = l.match(/^\s*#\s*\[([^\]]+)\]\s*=/); return m && m[1]; };
@@ -1070,7 +1063,25 @@
         insertedRows++;
         shafts++;
       }
-      return { text: lines.map((l) => l.replace(/\s+$/, '')).join('\n'), dashes, shafts, insertedRows, tags, colors, macros, notes };
+      // Text: what the preview shows as text, ditaa would partly draw ('-' '=' '|' ':' are always
+      // line, '<' '>' '^' always arrowheads, '*' a marker). Those characters get a look-alike
+      // that ditaa prints (one character each, so nothing moves).
+      const LOOK = { '-': '\u2010', '=': '\u2550', '|': '\u2502', ':': '\u2236', '<': '\u2039', '>': '\u203A', '^': '\u02C6', '*': '\u2217' };
+      let swapped = 0;
+      const shown = new DitaaParser().parse(lines.join('\n'));
+      lines = lines.map((line, r) => {
+        if (DitaaParser.isLegendOrCommentLine(line)) { // ditaa prints these lines as text too
+          return [...line].map((ch) => (LOOK[ch] && line.trim().startsWith('#') ? (swapped++, LOOK[ch]) : ch)).join('');
+        }
+        const roles = shown.cellRole[r] || [];
+        return [...line].map((ch, c) => {
+          const ro = roles[c] || 'empty';
+          if (LOOK[ch] && (ro === 'empty' || ro === 'box-interior')) { swapped++; return LOOK[ch]; }
+          return ch;
+        }).join('');
+      });
+      if (swapped) notes.push(`${swapped} character(s) in text (- = | : < > ^ *) were swapped for look-alikes (‐ ═ │ ∶ ‹ › ˆ ∗) so ditaa prints them instead of drawing them`);
+      return { text: lines.map((l) => l.replace(/\s+$/, '')).join('\n'), dashes, shafts, insertedRows, tags, colors, macros, notes, swapped };
     }
 
     escapeXml(unsafe) {

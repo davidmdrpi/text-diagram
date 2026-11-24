@@ -181,9 +181,9 @@ Exports: SVG, 2× PNG, and **Export ditaa**, which rewrites the extensions below
 and leaves what is plain ditaa already as it is: inline border arrows move onto their wire, spaced
 dashes are filled in, a `v` that isn't under `|` or `:` gets one, `{*}` becomes a `=` in the box's
 wall, `c#RRGGBB` the nearest `cRGB`, and a legend macro box shows its text when it fits (its
-`# [X] = ...` line is then dropped). What can't be carried over is listed in the export window: a
-macro that doesn't fit, legend lines (ditaa prints them as text), and `<` `>` `^` in a box's text
-(ditaa draws them as arrowheads). Free text is never changed.
+`# [X] = ...` line is then dropped), and characters in text that ditaa would draw get printable
+look-alikes (see *Text* below). The export window lists every change, and what can't be carried
+over: a macro that doesn't fit, and legend lines (ditaa prints them as text).
 
 ## Syntax
 
@@ -253,11 +253,13 @@ label or note are drawn instead of printed:
 | `*` | a point marker on a line, or a bullet before text (as is `o`: ` o item`) |
 | `cRED`, `cF00`… and `{c}`, `{s}`… | a color code or shape tag inside a box, not printed |
 
-So in text meant for ditaa, write around them: `client side`, `to` or `→` instead of `->`, `x` or
-`×` instead of `*`, and so on (a non-ASCII character such as `→` or `–` is printed as it is). The
-editor's preview is more forgiving here (it keeps a hyphen between two letters as text, for
-instance), so it won't warn you about all of these; **Export ditaa** reports `<` `>` `^` in a box's
-text.
+The editor's preview is more forgiving: it shows `client-side` and a `>` in a box's label as text.
+So **Export ditaa** does the rest for you: wherever the preview shows one of `-` `=` `|` `:` `<` `>`
+`^` `*` as text, the export writes a look-alike that ditaa prints (`‐` `═` `│` `∶` `‹` `›` `ˆ` `∗`,
+one character each, so nothing moves), in labels, notes and legend lines, and says how many it
+swapped. Where the preview draws one as a line or arrowhead, ditaa will too, so it's left as it is.
+If you'd rather choose the wording yourself, write around them (`client side`, `to` or `→`
+instead of `->`); any non-ASCII character is printed as it is.
 
 ## Layout
 

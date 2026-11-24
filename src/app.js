@@ -889,6 +889,7 @@
       res.tagsConverted && `${res.tagsConverted} {*} made a dashed wall`,
       res.colorsConverted && `${res.colorsConverted} c#RRGGBB made cRGB`,
       res.macrosExpanded && `${res.macrosExpanded} legend macro(s) written out in their box`,
+      res.textSwapped && `${res.textSwapped} character(s) in text swapped for look-alikes`,
       res.droppedArrowsCount && `${res.droppedArrowsCount} arrow(s) could not be kept`
     ].filter(Boolean);
     // what ditaa will show differently (nothing silently lost)

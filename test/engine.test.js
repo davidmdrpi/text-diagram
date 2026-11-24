@@ -2228,14 +2228,21 @@ test('Export ditaa: plain ditaa stays as it is; the extensions are converted, an
   const tight = ex('+-----+\n| [D] |\n+-----+\n\n# [D] = Diagram Engine');
   assert.match(tight.sanitizedText, /\| \[D\] \|/);
   assert.ok(tight.notes.some((n) => /doesn't fit/.test(n)) && tight.notes.some((n) => /legend lines/.test(n)), tight.notes.join('; '));
-  // ditaa draws < > ^ in a box's text as arrowheads: reported
-  assert.ok(ex('+-------+\n| a > b |\n+-------+').notes.some((n) => /arrowhead/.test(n)));
+  // characters ditaa would draw in text are swapped for look-alikes it prints (and reported)
+  const swap = ex('+---------------+\n| client-side   |\n| a > b | x^2   |\n+---------------+\n\nnote: a|b *x* client-side');
+  assert.equal(swap.sanitizedText, '+---------------+\n| client\u2010side   |\n| a \u203A b \u2502 x\u02C62   |\n+---------------+\n\nnote\u2236 a|b \u2217x\u2217 client\u2010side');
+  assert.equal(swap.textSwapped, 8);
+  // (the | in "a|b" outside a box is a line in the preview too, as in ditaa: left alone)
+  assert.ok(swap.notes.some((n) => /look-alikes/.test(n)));
+  assert.equal(STRICT.parse(swap.sanitizedText).boxes.length, 1, 'the box is untouched');
+  // ...also in legend lines, which ditaa prints as text
+  assert.match(ex('+-----+\n| [D] |\n+-----+\n\n# [D] = Diagram Engine').sanitizedText, /^# \[D\] \u2550 Diagram Engine$/m);
   // the inline-arrow example exports to plain ditaa with every box and connection
   const legacy = presetsAll().legacy_comparison;
   const out = text(legacy);
   const X = new DitaaParser({ extensions: true });
   assert.equal(STRICT.parse(out).boxes.length, X.parse(legacy).boxes.length, out);
   assert.equal(STRICT.connections(STRICT.parse(out)).length, X.connections(X.parse(legacy)).length, out);
-  // free text is never changed
-  assert.equal(text('a == b, c :: d, v1.2 and x -> y'), 'a == b, c :: d, v1.2 and x -> y');
+  // what the preview draws as lines or arrowheads is left for ditaa to draw the same way
+  assert.equal(text('a == b and x -> y'), 'a == b and x -> y');
 });
