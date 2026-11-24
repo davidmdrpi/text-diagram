@@ -2275,3 +2275,15 @@ test('regression (PR #15 re-review): export keeps labels, puts a tag in its own 
   assert.deepEqual(fit.notes, []);
   assert.match(ex('+----------+\n|[A]       |\n+----------+\n\n# [A] = 12345678901').notes.join(), /doesn't fit/, 'one more does not');
 });
+
+test('regression (PR #15 review 4): text after an emoji is matched cell for cell (UTF-16, as the parser counts)', () => {
+  const ex = (t) => DitaaParser.exportStrictLegacyDitaa(t);
+  const box = '+----------+\n| 😀       |\n+----------+';
+  assert.equal(ex(box).sanitizedText, box, 'the wall stays ASCII');
+  assert.equal(STRICT.parse(ex(box).sanitizedText).boxes.length, 1);
+  const label = '+------------+\n| 😀 a-b     |\n+------------+';
+  assert.equal(ex(label).sanitizedText, '+------------+\n| 😀 a‐b     |\n+------------+', 'only the hyphen is swapped');
+  const wire = '😀 x-y ---->';
+  assert.equal(ex(wire).sanitizedText, '😀 x‐y ---->', 'the line after it keeps every character');
+  assert.equal(STRICT.parse(ex(wire).sanitizedText).arrows.length, 1);
+});

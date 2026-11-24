@@ -1041,7 +1041,7 @@
             const rest = inner.slice(at).replace(`[${b.macroKey}]`, full);
             if (inner.slice(0, at).length + rest.replace(/\s+$/, '').length <= b.c2 - b.c1 - 1) {
               const text = (inner.slice(0, at) + rest).padEnd(b.c2 - b.c1 - 1).slice(0, b.c2 - b.c1 - 1);
-              [...text].forEach((ch, k) => set(r, b.c1 + 1 + k, ch));
+              text.split('').forEach((ch, k) => set(r, b.c1 + 1 + k, ch)); // (UTF-16 units, as cells are counted)
               macros++;
               expanded.add(b.macroKey);
             } else {
@@ -1076,14 +1076,16 @@
       const shown = new DitaaParser().parse(lines.join('\n'));
       lines = lines.map((line, r) => {
         if (DitaaParser.isLegendOrCommentLine(line)) { // ditaa prints these lines as text too
-          return [...line].map((ch) => (LOOK[ch] && line.trim().startsWith('#') ? (swapped++, LOOK[ch]) : ch)).join('');
+          return line.split('').map((ch) => (LOOK[ch] && line.trim().startsWith('#') ? (swapped++, LOOK[ch]) : ch)).join('');
         }
         const roles = shown.cellRole[r] || [];
-        return [...line].map((ch, c) => {
-          const ro = roles[c] || 'empty';
-          if (LOOK[ch] && (ro === 'empty' || ro === 'box-interior')) { swapped++; return LOOK[ch]; }
-          return ch;
-        }).join('');
+        // (by UTF-16 offset, as the parser counts cells: an emoji takes two)
+        let out = '';
+        for (let c = 0; c < line.length; c++) {
+          const ch = line[c], ro = roles[c] || 'empty';
+          if (LOOK[ch] && (ro === 'empty' || ro === 'box-interior')) { swapped++; out += LOOK[ch]; } else out += ch;
+        }
+        return out;
       });
       if (swapped) notes.push(`${swapped} character(s) in text (- = | : < > ^ *) were swapped for look-alikes (‐ ═ │ ∶ ‹ › ˆ ∗) so ditaa prints them instead of drawing them`);
       return { text: lines.map((l) => l.replace(/\s+$/, '')).join('\n'), dashes, shafts, insertedRows, tags, colors, macros, notes, swapped };
